@@ -214,6 +214,18 @@ class GitHubClient:
             if len(result) < 100:
                 break
 
+        if not records:
+            latest_url = (
+                "https://api.github.com/repos/"
+                f"{quote(owner, safe='')}/{quote(repository, safe='')}/releases/latest"
+            )
+            try:
+                latest = self.http.get_json(latest_url, cache_seconds=0 if refresh else 600)
+            except DownloadError:
+                latest = None
+            if isinstance(latest, dict):
+                records.append(latest)
+
         include_prerelease = bool(package.release.get("include_prerelease"))
         releases: list[ReleaseInfo] = []
         for record in records:
