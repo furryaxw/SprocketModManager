@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.sprocket-jitter-fix",
+  "name": "SprocketJitterFix",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/SprocketJitterFix",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "Laying Drive Jitter Fix",
+    "zh": "火炮俯仰抖动修复"
+  },
+  "description": {
+    "en": "Stabilizes high-sensitivity laying drives near their target angle.",
+    "zh": "改善高灵敏度火炮俯仰机构接近目标角度时的过冲和反复震荡。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketJitterFix.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "utility",
+  "tags": ["weapons", "laying-drive", "stability", "jitter-fix"]
+}

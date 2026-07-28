@@ -146,6 +146,13 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
         errors.append(str(exc))
         releases_available = False
         releases = []
+    if releases_available and releases == []:
+        try:
+            latest = api.get(f"/repos/{encoded}/releases/latest")
+        except RuntimeError:
+            latest = None
+        if isinstance(latest, dict):
+            releases = [latest]
     if releases_available and (not isinstance(releases, list) or not matching_release_assets(meta, releases)):
         errors.append("no compatible GitHub Release asset matches release.assets")
     return errors

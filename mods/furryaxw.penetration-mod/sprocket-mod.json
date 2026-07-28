@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.penetration-mod",
+  "name": "PenetrationMod",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/PenetrationMod",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "Penetration Limit Modifier",
+    "zh": "穿深上限修改器"
+  },
+  "description": {
+    "en": "Raises the Sprocket designer limits for cannon penetration and caliber.",
+    "zh": "提高 Sprocket 设计器中火炮穿深与口径的可调上限。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["PenetrationMod.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "gameplay",
+  "tags": ["weapons", "designer", "penetration", "caliber"]
+}
