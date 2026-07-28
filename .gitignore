@@ -2,8 +2,6 @@
 .venv/
 artifacts/
 __pycache__/
-/mods/*
-!/mods/.gitkeep
 *.pyc
 build/
 dist/
