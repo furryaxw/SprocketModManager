@@ -22,6 +22,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test Pages release lookup
+        run: |
+          node --check site/app.js
+          node --check site/release-api.js
+          node tests/site_release_api.test.js
       - name: Validate metadata and public sources
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

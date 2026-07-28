@@ -38,6 +38,19 @@ class SiteUiTests(unittest.TestCase):
         )
         self.assertIn('data-i18n="downloadClient"', html)
 
+    def test_release_lookup_loads_fallback_before_application(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertLess(html.index("./release-api.js"), html.index("./app.js"))
+        self.assertIn("SprocketReleaseApi.fetchRepositoryReleases", script)
+        self.assertIn("sprocket-release:v2:", script)
+        self.assertIn(
+            "if (release) localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), release }));",
+            script,
+        )
+        self.assertIn("else localStorage.removeItem(cacheKey);", script)
+
     def test_pages_custom_domain_is_packaged_with_the_site(self):
         cname = (SITE_ROOT / "CNAME").read_text(encoding="utf-8")
 
