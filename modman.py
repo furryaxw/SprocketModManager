@@ -15,7 +15,7 @@ from sprocket_mod_manager.preparer import PlanPreparer
 from sprocket_mod_manager.service import DEFAULT_INDEX_URL, ModManagerService, default_app_dir
 
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 
 def _prepared_dict(prepared: PreparedPlan) -> dict:
@@ -184,7 +184,7 @@ def cli_main(argv: list[str] | None = None) -> int:
                 print(f"Updated {package_id}: {current or '-'} -> {latest}")
                 changed += 1
             if not changed:
-                print("All requested packages are up to date")
+                print("No updates available")
         return 0
     except ModManagerError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -33,7 +33,8 @@ class ModalDialog(ctk.CTkToplevel):
         self._drag_offset = (0, 0)
         self._palette = palette
         self._tone_color = palette["danger"] if tone == "danger" else palette["accent"]
-        self._tone_hover = palette["danger_hover"] if tone == "danger" else palette["accent_hover"]
+        self._button_color = palette["danger"] if tone == "danger" else palette.get("button_accent", palette["accent"])
+        self._button_hover = palette["danger_hover"] if tone == "danger" else palette.get("button_accent_hover", palette["accent_hover"])
 
         height, scrollable = _dialog_layout(message)
         self._dialog_width = 520
@@ -152,8 +153,8 @@ class ModalDialog(ctk.CTkToplevel):
             width=104,
             height=36,
             corner_radius=3,
-            fg_color=self._tone_color,
-            hover_color=self._tone_hover,
+            fg_color=self._button_color,
+            hover_color=self._button_hover,
             text_color=palette["text"],
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._confirm,

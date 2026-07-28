@@ -38,6 +38,8 @@ COLORS = {
     "accent": "#DD5B43",
     "accent_hover": "#EB6B52",
     "accent_quiet": "#3A221E",
+    "button_accent": "#B6402D",
+    "button_accent_hover": "#BE4430",
     "green": "#69B982",
     "green_quiet": "#17271D",
     "danger": "#A9443D",
@@ -55,6 +57,8 @@ CATEGORY_KEYS = {
 }
 
 MANAGER_REPOSITORY = "furryaxw/sprocket-mods"
+MANAGER_REPOSITORY_URL = f"https://github.com/{MANAGER_REPOSITORY}"
+REGISTRY_WEBSITE_URL = "https://sprocketmods.furryaxw.top"
 
 TEXT = {
     "en": {
@@ -63,12 +67,25 @@ TEXT = {
         "browse": "Catalog",
         "installed": "Installed",
         "settings": "Settings",
+        "about": "About",
         "catalog_title": "Mod catalog",
         "catalog_subtitle": "Packages sourced directly from GitHub Releases",
         "installed_title": "Managed installation",
         "installed_subtitle": "Packages tracked for the selected Sprocket directory",
         "settings_title": "Application settings",
         "settings_subtitle": "Game location and registry source",
+        "about_title": "About the manager",
+        "about_subtitle": "Version, project links and distribution information",
+        "current_version": "Current version",
+        "latest_version": "Latest version",
+        "source_repository": "Source repository",
+        "registry_website": "Registry website",
+        "open_registry": "Open Registry",
+        "check_updates": "Check updates",
+        "checking_updates": "Checking...",
+        "view_update": "View update",
+        "manager_up_to_date": "Up to date",
+        "update_unavailable": "Unavailable",
         "search": "Search name, author or tag",
         "refresh": "Refresh",
         "install": "Install",
@@ -103,7 +120,7 @@ TEXT = {
         "settings_saved": "Settings saved",
         "install_done": "Installed {name}",
         "remove_done": "Removed: {names}",
-        "up_to_date": "All requested packages are up to date",
+        "all_mods_up_to_date": "No updates available",
         "updates_done": "Updated {count} package(s)",
         "game_path_required": "Set a valid Sprocket game path in Settings first.",
         "available": "Available {version}",
@@ -123,7 +140,7 @@ TEXT = {
         "release_state": "RELEASE STATE",
         "package_info": "PACKAGE INFORMATION",
         "dependency_info": "DEPENDENCY REQUIREMENTS",
-        "requested": "Requested package",
+        "requested": "User-installed",
         "dependency": "Installed dependency",
         "not_set": "Not set",
         "version_label": "VERSION {version}",
@@ -145,12 +162,25 @@ TEXT = {
         "browse": "模组目录",
         "installed": "已安装",
         "settings": "设置",
+        "about": "关于",
         "catalog_title": "模组目录",
         "catalog_subtitle": "软件包直接取自 GitHub Releases",
         "installed_title": "安装管理",
         "installed_subtitle": "当前 Sprocket 目录中由管理器追踪的软件包",
         "settings_title": "应用设置",
         "settings_subtitle": "游戏位置与 Registry 来源",
+        "about_title": "关于模组管理器",
+        "about_subtitle": "版本、项目链接与分发信息",
+        "current_version": "当前版本",
+        "latest_version": "最新版本",
+        "source_repository": "源码仓库",
+        "registry_website": "Registry 网站",
+        "open_registry": "打开 Registry",
+        "check_updates": "检查更新",
+        "checking_updates": "正在检查…",
+        "view_update": "获取更新",
+        "manager_up_to_date": "已是最新",
+        "update_unavailable": "暂不可用",
         "search": "搜索名称、作者或标签",
         "refresh": "刷新",
         "install": "安装",
@@ -185,7 +215,7 @@ TEXT = {
         "settings_saved": "设置已保存",
         "install_done": "已安装 {name}",
         "remove_done": "已卸载：{names}",
-        "up_to_date": "所有主动安装的模组均为最新版",
+        "all_mods_up_to_date": "没有可用更新",
         "updates_done": "已更新 {count} 个模组",
         "game_path_required": "请先在设置中填写有效的 Sprocket 游戏路径。",
         "available": "可用版本 {version}",
@@ -205,7 +235,7 @@ TEXT = {
         "release_state": "RELEASE 状态",
         "package_info": "软件包信息",
         "dependency_info": "依赖要求",
-        "requested": "主动安装",
+        "requested": "用户安装",
         "dependency": "依赖安装",
         "not_set": "未设置",
         "version_label": "版本 {version}",
@@ -253,6 +283,16 @@ def _bind_click_tree(widget: object, command: Callable[[], None]) -> None:
     widget.bind("<Button-1>", lambda _event: command(), add="+")  # type: ignore[attr-defined]
     for child in widget.winfo_children():  # type: ignore[attr-defined]
         _bind_click_tree(child, command)
+
+
+def _set_primary_button_enabled(button: object, enabled: bool) -> None:
+    button.configure(  # type: ignore[attr-defined]
+        state="normal" if enabled else "disabled",
+        fg_color=COLORS["button_accent"] if enabled else COLORS["surface_high"],
+        hover_color=COLORS["button_accent_hover"] if enabled else COLORS["surface_high"],
+        text_color=COLORS["text"] if enabled else COLORS["muted"],
+        text_color_disabled=COLORS["muted"],
+    )
 
 
 class ModManagerApp(ctk.CTk):
@@ -368,7 +408,12 @@ class ModManagerApp(ctk.CTk):
         navigation.grid_columnconfigure(0, weight=1)
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
         for row, (name, key) in enumerate(
-            (("browse", "browse"), ("installed", "installed"), ("settings", "settings"))
+            (
+                ("browse", "browse"),
+                ("installed", "installed"),
+                ("settings", "settings"),
+                ("about", "about"),
+            )
         ):
             button = ctk.CTkButton(
                 navigation,
@@ -487,6 +532,8 @@ class ModManagerApp(ctk.CTk):
             self._build_installed()
         elif name == "settings":
             self._build_settings()
+        elif name == "about":
+            self._build_about()
 
     def _page_header(self, page: ctk.CTkFrame, title: str, subtitle: str) -> ctk.CTkFrame:
         header = ctk.CTkFrame(page, fg_color="transparent", corner_radius=0)
@@ -711,8 +758,10 @@ class ModManagerApp(ctk.CTk):
             width=92,
             height=36,
             corner_radius=3,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
+            fg_color=COLORS["surface_high"],
+            hover_color=COLORS["surface_high"],
+            text_color=COLORS["muted"],
+            text_color_disabled=COLORS["muted"],
             command=self.begin_install,
             state="disabled",
         )
@@ -759,8 +808,10 @@ class ModManagerApp(ctk.CTk):
             width=110,
             height=36,
             corner_radius=3,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
+            fg_color=COLORS["button_accent"],
+            hover_color=COLORS["button_accent_hover"],
+            text_color=COLORS["text"],
+            text_color_disabled=COLORS["text"],
             command=self.update_all,
         )
         self.update_all_button.grid(row=0, column=1, rowspan=2, padx=(16, 0))
@@ -886,10 +937,111 @@ class ModManagerApp(ctk.CTk):
             width=120,
             height=38,
             corner_radius=3,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
+            fg_color=COLORS["button_accent"],
+            hover_color=COLORS["button_accent_hover"],
+            text_color=COLORS["text"],
             command=self.save_settings,
         ).grid(row=5, column=0, sticky="w", pady=(28, 0))
+
+    def _build_about(self) -> None:
+        page = self._new_page("about")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+
+        header = self._page_header(page, self.tr("about_title"), self.tr("about_subtitle"))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+
+        card = ctk.CTkFrame(
+            page,
+            corner_radius=4,
+            fg_color=COLORS["surface"],
+            border_width=1,
+            border_color=COLORS["line"],
+        )
+        card.grid(row=1, column=0, sticky="nsew")
+        card.grid_columnconfigure(0, weight=1)
+
+        content = ctk.CTkFrame(card, width=720, fg_color="transparent", corner_radius=0)
+        content.grid(row=0, column=0, sticky="new", padx=28, pady=26)
+        content.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            content,
+            text="SPROCKET MOD MANAGER",
+            anchor="w",
+            text_color=COLORS["text"],
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
+
+        details = (
+            (self.tr("current_version"), self.version),
+            (self.tr("latest_version"), self.tr("checking_updates")),
+            (self.tr("source_repository"), MANAGER_REPOSITORY_URL),
+            (self.tr("registry_website"), REGISTRY_WEBSITE_URL),
+            (self.tr("license"), "AGPL-3.0"),
+        )
+        detail_values = {}
+        for row, (label, value) in enumerate(details, start=1):
+            ctk.CTkLabel(
+                content,
+                text=label.upper(),
+                width=150,
+                anchor="w",
+                text_color=COLORS["muted"],
+                font=ctk.CTkFont(family="Cascadia Mono", size=11, weight="bold"),
+            ).grid(row=row, column=0, sticky="w", pady=8)
+            value_label = ctk.CTkLabel(
+                content,
+                text=value,
+                anchor="w",
+                text_color=COLORS["text_soft"],
+                font=ctk.CTkFont(size=13),
+            )
+            value_label.grid(row=row, column=1, sticky="ew", padx=(18, 0), pady=8)
+            detail_values[label] = value_label
+        self.about_latest_version = detail_values[self.tr("latest_version")]
+
+        actions = ctk.CTkFrame(content, fg_color="transparent", corner_radius=0)
+        actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(24, 0))
+        self.about_update_button = ctk.CTkButton(
+            actions,
+            text=self.tr("checking_updates"),
+            width=118,
+            height=38,
+            corner_radius=3,
+            fg_color=COLORS["surface_high"],
+            hover_color=COLORS["surface_high"],
+            text_color=COLORS["muted"],
+            text_color_disabled=COLORS["muted"],
+            command=self.refresh_about_release,
+            state="disabled",
+        )
+        self.about_update_button.grid(row=0, column=0)
+        ctk.CTkButton(
+            actions,
+            text=self.tr("repository"),
+            width=118,
+            height=38,
+            corner_radius=3,
+            fg_color=COLORS["surface_high"],
+            hover_color=COLORS["surface_hover"],
+            border_width=1,
+            border_color=COLORS["line"],
+            command=self.open_manager_repository,
+        ).grid(row=0, column=1, padx=(8, 0))
+        ctk.CTkButton(
+            actions,
+            text=self.tr("open_registry"),
+            width=118,
+            height=38,
+            corner_radius=3,
+            fg_color=COLORS["surface_high"],
+            hover_color=COLORS["surface_hover"],
+            border_width=1,
+            border_color=COLORS["line"],
+            command=self.open_registry_website,
+        ).grid(row=0, column=2, padx=(8, 0))
+        self.refresh_about_release()
 
     def change_language(self, value: str) -> None:
         mode_by_value = {
@@ -956,7 +1108,7 @@ class ModManagerApp(ctk.CTk):
         if "browse" in self.pages:
             self.refresh_button.configure(state=state)
         if "installed" in self.pages:
-            self.update_all_button.configure(state=state)
+            _set_primary_button_enabled(self.update_all_button, not value)
         if hasattr(self, "status_indicator"):
             self.status_indicator.configure(text_color=COLORS["accent"] if value else COLORS["green"])
         if hasattr(self, "connection_label"):
@@ -967,7 +1119,7 @@ class ModManagerApp(ctk.CTk):
         if "browse" not in self.pages:
             return
         if value:
-            self.install_button.configure(state="disabled")
+            _set_primary_button_enabled(self.install_button, False)
             self.remove_button.configure(state="disabled")
         elif self.selected:
             self.select_package(self.selected)
@@ -1203,9 +1355,11 @@ class ModManagerApp(ctk.CTk):
         if release and not self.busy:
             action = "update" if installed and installed.get("version") != str(release.version) else "install"
             disabled = bool(installed and installed.get("version") == str(release.version))
-            self.install_button.configure(text=self.tr(action), state="disabled" if disabled else "normal")
+            self.install_button.configure(text=self.tr(action))
+            _set_primary_button_enabled(self.install_button, not disabled)
         else:
-            self.install_button.configure(text=self.tr("install"), state="disabled")
+            self.install_button.configure(text=self.tr("install"))
+            _set_primary_button_enabled(self.install_button, False)
         for package_id, row in self.package_rows.items():
             selected = package_id == package.id
             row.configure(
@@ -1387,7 +1541,7 @@ class ModManagerApp(ctk.CTk):
 
         def success(result: object) -> None:
             changed = int(result)
-            self.set_status("updates_done", count=changed) if changed else self.set_status("up_to_date")
+            self.set_status("updates_done", count=changed) if changed else self.set_status("all_mods_up_to_date")
             self.populate_packages()
             self.populate_installed()
 
@@ -1396,6 +1550,71 @@ class ModManagerApp(ctk.CTk):
     def open_repository(self) -> None:
         if self.selected:
             webbrowser.open(f"https://github.com/{self.selected.repository}")
+
+    def open_manager_repository(self) -> None:
+        webbrowser.open(MANAGER_REPOSITORY_URL)
+
+    def open_registry_website(self) -> None:
+        webbrowser.open(REGISTRY_WEBSITE_URL)
+
+    def refresh_about_release(self) -> None:
+        if "about" not in self.pages:
+            return
+        self.about_latest_version.configure(text=self.tr("checking_updates"))
+        self.about_update_button.configure(
+            text=self.tr("checking_updates"),
+            state="disabled",
+            command=self.refresh_about_release,
+        )
+        github = self.service.github
+
+        def run() -> None:
+            try:
+                release = github.latest_repository_release(MANAGER_REPOSITORY)
+            except DownloadError:
+                release = None
+            try:
+                self.after(0, lambda result=release: self._about_release_loaded(result))
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _about_release_loaded(self, release: RepositoryRelease | None) -> None:
+        if "about" not in self.pages:
+            return
+        if release is None:
+            self.about_latest_version.configure(text=self.tr("update_unavailable"))
+            self.about_update_button.configure(
+                text=self.tr("check_updates"),
+                state="normal",
+                command=self.refresh_about_release,
+            )
+            return
+
+        self.about_latest_version.configure(text=str(release.version))
+        try:
+            newer = release.version > Version.parse(self.version)
+        except ValueError:
+            newer = False
+        if newer:
+            self.about_update_button.configure(
+                text=self.tr("view_update"),
+                state="normal",
+                fg_color=COLORS["button_accent"],
+                hover_color=COLORS["button_accent_hover"],
+                text_color=COLORS["text"],
+                command=lambda: webbrowser.open(release.page_url),
+            )
+        else:
+            self.about_update_button.configure(
+                text=self.tr("manager_up_to_date"),
+                state="disabled",
+                fg_color=COLORS["surface_high"],
+                hover_color=COLORS["surface_high"],
+                text_color_disabled=COLORS["muted"],
+                command=self.refresh_about_release,
+            )
 
     def select_game_path(self) -> None:
         selected = filedialog.askdirectory(title=self.tr("game_path"))
