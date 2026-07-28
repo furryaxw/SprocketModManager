@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from sprocket_mod_manager.errors import DownloadError
 from sprocket_mod_manager.github import GitHubClient, HttpClient
-from sprocket_mod_manager.models import ReleaseAsset
+from sprocket_mod_manager.models import RegistryPackage, ReleaseAsset
 
 
 class FakeResponse:
@@ -116,6 +116,65 @@ class GitHubDownloadTests(unittest.TestCase):
 
         with self.assertRaisesRegex(DownloadError, "release page URL"):
             GitHubClient(JsonHttp()).latest_repository_release("furryaxw/sprocket-mods")
+
+    def test_package_release_falls_back_to_latest_when_list_is_empty(self):
+        class JsonHttp:
+            def __init__(self):
+                self.calls = []
+
+            def get_json(self, url, *, cache_seconds=600):
+                self.calls.append((url, cache_seconds))
+                if url.endswith("/releases?per_page=100&page=1"):
+                    return []
+                if url.endswith("/releases/latest"):
+                    return {
+                        "id": 1,
+                        "tag_name": "v1.3.1",
+                        "draft": False,
+                        "prerelease": False,
+                        "published_at": "2026-07-25T14:57:10Z",
+                        "assets": [
+                            {
+                                "id": 2,
+                                "name": "TestMod.dll",
+                                "size": 4,
+                                "browser_download_url": (
+                                    "https://github.com/example/TestMod/releases/"
+                                    "download/v1.3.1/TestMod.dll"
+                                ),
+                                "digest": "sha256:test",
+                                "updated_at": "2026-07-25T14:57:10Z",
+                            }
+                        ],
+                    }
+                raise AssertionError(f"unexpected URL: {url}")
+
+        package = RegistryPackage.from_dict(
+            {
+                "id": "example.test-mod",
+                "name": "TestMod",
+                "authors": ["example"],
+                "repository": "example/TestMod",
+                "license": "GPL-3.0-only",
+                "display_name": {"en": "Test Mod"},
+                "release": {
+                    "include_prerelease": False,
+                    "version_pattern": r"^v?([0-9]+\.[0-9]+\.[0-9]+)$",
+                    "assets": {"include": ["TestMod.dll"], "exclude": []},
+                },
+                "dependencies": [],
+                "install": {"scan_dlls": True, "exclude": [], "overrides": []},
+                "category": "utility",
+                "tags": [],
+            }
+        )
+        http = JsonHttp()
+
+        releases = GitHubClient(http).releases(package)
+
+        self.assertEqual([str(release.version) for release in releases], ["1.3.1"])
+        self.assertEqual([asset.name for asset in releases[0].assets], ["TestMod.dll"])
+        self.assertEqual(len(http.calls), 2)
 
 
 if __name__ == "__main__":
