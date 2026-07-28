@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.melonloader-tree-fix",
+  "name": "MelonLoaderTreeFix",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/MelonLoaderTreeFix",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "MelonLoader Tree Fix",
+    "zh": "MelonLoader 植被渲染修复"
+  },
+  "description": {
+    "en": "Fixes tree and terrain-grass rendering problems when Sprocket runs through MelonLoader.",
+    "zh": "修复 Sprocket 通过 MelonLoader 启动时的树木与地表植被渲染问题。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["MelonLoaderTreeFix.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "visual",
+  "tags": ["rendering", "trees", "vegetation", "terrain"]
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.sprocket-depth",
+  "name": "SprocketDepth",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/SprocketDepth",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "Sprocket Depth",
+    "zh": "Sprocket 深度库"
+  },
+  "description": {
+    "en": "Shared HDRP depth library for Sprocket mods.",
+    "zh": "供 Sprocket 模组使用的 HDRP 深度共享库。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketDepth.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "library",
+  "tags": ["library", "hdrp", "depth"]
+}

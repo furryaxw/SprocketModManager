@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.cannon-smoke-suppressor",
+  "name": "CannonSmokeSuppressor",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/CannonSmokeSuppressor",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "Cannon Smoke Suppressor",
+    "zh": "火炮烟雾抑制器"
+  },
+  "description": {
+    "en": "Limits persistent engine and muzzle-smoke accumulation while preserving normal effects.",
+    "zh": "限制长期堆积的引擎与炮口烟，同时保留正常烟雾、炮口焰和命中特效。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["CannonSmokeSuppressor.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "visual",
+  "tags": ["effects", "smoke", "cannon", "performance"]
+}
