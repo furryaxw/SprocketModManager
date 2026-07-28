@@ -1,0 +1,35 @@
+import unittest
+from pathlib import Path
+
+
+SITE_ROOT = Path(__file__).resolve().parents[1] / "site"
+
+
+class SiteUiTests(unittest.TestCase):
+    def test_pages_custom_domain_is_packaged_with_the_site(self):
+        cname = (SITE_ROOT / "CNAME").read_text(encoding="utf-8")
+
+        self.assertEqual(cname, "sprocketmods.furryaxw.top\n")
+
+    def test_language_pickers_use_the_sort_select_structure_without_inputs(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertEqual(html.count('class="language-picker select-control"'), 2)
+        self.assertEqual(html.count('data-lucide="chevron-down" aria-hidden="true"'), 3)
+        self.assertNotIn('data-field="custom-language"', html)
+        self.assertNotIn('value="__custom__"', html)
+
+    def test_language_picker_options_are_data_driven(self):
+        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("const SUBMISSION_LANGUAGES = [", script)
+        self.assertIn("populateLanguageOptions(languageSelect);", script)
+        self.assertNotIn("updateCustomLanguage", script)
+
+    def test_localized_fields_match_catalog_tool_font_size(self):
+        styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".localized-row input, .localized-row textarea, .localized-row select { font-size: 13px; }",
+            styles,
+        )

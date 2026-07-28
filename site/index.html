@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111415" />
+    <title>Sprocket Mod Registry</title>
+    <link rel="preconnect" href="https://github.com" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Sprocket Mod Registry">
+        <span class="brand-mark"><i data-lucide="nut"></i></span>
+        <span class="brand-copy"><strong>SPROCKET</strong><small>MOD REGISTRY</small></span>
+      </a>
+      <div class="system-state">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span id="top-status" data-i18n="registryOnline">Registry online</span>
+      </div>
+      <nav class="top-actions" aria-label="Primary navigation" data-i18n-aria="primaryNav">
+        <div class="language-switch" role="group" aria-label="Language" data-i18n-aria="language">
+          <button type="button" data-language="zh">中文</button>
+          <button type="button" data-language="en">EN</button>
+        </div>
+        <a class="icon-command" href="https://github.com/furryaxw/sprocket-mods"
+          title="GitHub repository" data-i18n-title="githubRepository">
+          <i data-lucide="github"></i><span class="desktop-label">GitHub</span>
+        </a>
+        <button class="primary-command" id="open-submit" type="button">
+          <i data-lucide="package-plus"></i><span data-i18n="submitMod">Submit mod</span>
+        </button>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <aside class="filter-rail" aria-label="Catalog filters" data-i18n-aria="catalogFilters">
+        <div class="rail-heading">
+          <span data-i18n="browseBy">Browse by</span>
+          <strong data-i18n="category">Category</strong>
+        </div>
+        <nav id="category-filter" class="category-list" aria-label="Category" data-i18n-aria="category">
+          <button class="active" type="button" data-category="all">
+            <i data-lucide="layout-list"></i><span data-i18n="categoryAll">All mods</span><b id="count-all">0</b>
+          </button>
+          <button type="button" data-category="gameplay">
+            <i data-lucide="gamepad-2"></i><span data-i18n="categoryGameplay">Gameplay</span><b id="count-gameplay">0</b>
+          </button>
+          <button type="button" data-category="utility">
+            <i data-lucide="wrench"></i><span data-i18n="categoryUtility">Utility</span><b id="count-utility">0</b>
+          </button>
+          <button type="button" data-category="library">
+            <i data-lucide="blocks"></i><span data-i18n="categoryLibrary">Libraries</span><b id="count-library">0</b>
+          </button>
+          <button type="button" data-category="visual">
+            <i data-lucide="eye"></i><span data-i18n="categoryVisual">Visual</span><b id="count-visual">0</b>
+          </button>
+          <button type="button" data-category="audio">
+            <i data-lucide="audio-lines"></i><span data-i18n="categoryAudio">Audio</span><b id="count-audio">0</b>
+          </button>
+          <button type="button" data-category="other">
+            <i data-lucide="ellipsis"></i><span data-i18n="categoryOther">Other</span><b id="count-other">0</b>
+          </button>
+        </nav>
+        <div class="rail-summary">
+          <span data-i18n="registrySummary">Registry summary</span>
+          <dl>
+            <div><dt data-i18n="packages">Packages</dt><dd id="package-count">-</dd></div>
+            <div><dt data-i18n="releases">Releases</dt><dd id="release-count">-</dd></div>
+          </dl>
+          <p id="registry-status" role="status" data-i18n="loadingRegistry">Loading Registry...</p>
+        </div>
+      </aside>
+
+      <section class="catalog-pane" aria-labelledby="catalog-title">
+        <header class="catalog-header">
+          <div>
+            <p class="eyebrow" data-i18n="openSourceDistribution">OPEN-SOURCE DISTRIBUTION</p>
+            <h1 id="catalog-title" data-i18n="catalogTitle">Mod catalog</h1>
+            <p class="catalog-intro" data-i18n="catalogIntro">Versioned packages sourced directly from verified GitHub Releases.</p>
+          </div>
+          <span class="registry-seal"><i data-lucide="shield-check"></i><span data-i18n="metadataValidated">Metadata validated</span></span>
+        </header>
+
+        <div class="catalog-tools">
+          <label class="search-control">
+            <i data-lucide="search"></i>
+            <input id="search" type="search" placeholder="Search name, author or tag"
+              data-i18n-placeholder="searchPlaceholder" autocomplete="off" />
+          </label>
+          <label class="sort-control">
+            <span class="sort-label" data-i18n="sortBy">Sort</span>
+            <span class="select-control">
+              <select id="sort" aria-label="Sort packages" data-i18n-aria="sortPackages">
+                <option value="name" data-i18n="sortName">Name</option>
+                <option value="release" data-i18n="sortRelease">Latest release</option>
+                <option value="category" data-i18n="sortCategory">Category</option>
+              </select>
+              <i data-lucide="chevron-down" aria-hidden="true"></i>
+            </span>
+          </label>
+          <button class="icon-only" id="refresh" type="button" title="Refresh releases"
+            aria-label="Refresh releases" data-i18n-title="refreshReleases" data-i18n-aria="refreshReleases">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+        </div>
+        <div class="result-bar">
+          <span><strong id="result-count">0</strong> <span data-i18n="results">results</span></span>
+          <span data-i18n="selectForDetails">Select a package to inspect its release and dependencies</span>
+        </div>
+        <section class="mod-grid" id="mod-grid" aria-live="polite"></section>
+        <div class="empty-state" id="empty-state" hidden>
+          <i data-lucide="package-search"></i>
+          <strong data-i18n="noMatchingMods">No matching mods</strong>
+          <p data-i18n="tryAnotherFilter">Try another category or search term.</p>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="mod-detail" class="sheet-dialog">
+      <div class="dialog-header">
+        <div class="dialog-kicker">
+          <span data-i18n="packageDetails">PACKAGE DETAILS</span>
+          <strong data-i18n="releaseRecord">Release record</strong>
+        </div>
+        <button class="icon-only close-dialog" type="button" title="Close" aria-label="Close"
+          data-i18n-title="close" data-i18n-aria="close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="detail-hero">
+        <img id="detail-avatar" alt="" />
+        <div class="detail-identity">
+          <span class="status-line"><i data-lucide="badge-check"></i><span data-i18n="registryVerified">Registry verified</span></span>
+          <h2 id="detail-title"></h2>
+          <p id="detail-repository"></p>
+        </div>
+      </div>
+      <p class="detail-description" id="detail-description"></p>
+      <dl class="detail-grid" id="detail-grid"></dl>
+      <div class="dependency-block">
+        <div class="section-heading">
+          <h3 data-i18n="dependencies">Dependencies</h3>
+          <span data-i18n="resolvedAtInstall">Resolved at install time</span>
+        </div>
+        <div id="detail-dependencies"></div>
+      </div>
+      <div class="dialog-actions">
+        <a class="secondary-command" id="detail-repo-link" target="_blank" rel="noreferrer">
+          <i data-lucide="code-2"></i><span data-i18n="sourceCode">Source code</span>
+        </a>
+        <a class="primary-command" id="detail-release-link" target="_blank" rel="noreferrer">
+          <i data-lucide="external-link"></i><span data-i18n="viewRelease">View release</span>
+        </a>
+      </div>
+    </dialog>
+
+    <dialog id="submit-dialog" class="submit-dialog">
+      <div class="dialog-header">
+        <div class="dialog-kicker">
+          <span data-i18n="registrySubmission">REGISTRY SUBMISSION</span>
+          <strong data-i18n="submitOpenSourceMod">Submit an open-source mod</strong>
+        </div>
+        <button class="icon-only close-dialog" type="button" title="Close" aria-label="Close"
+          data-i18n-title="close" data-i18n-aria="close"><i data-lucide="x"></i></button>
+      </div>
+      <form id="submit-form">
+        <aside class="form-steps" aria-label="Submission steps" data-i18n-aria="submissionSteps">
+          <button class="active" type="button" data-step-target="0">
+            <span>01</span><span><b data-i18n="stepBasics">Basics</b><small data-i18n="stepBasicsHint">Package identity</small></span>
+          </button>
+          <button type="button" data-step-target="1">
+            <span>02</span><span><b data-i18n="stepListing">Listing</b><small data-i18n="stepListingHint">Flexible languages</small></span>
+          </button>
+          <button type="button" data-step-target="2">
+            <span>03</span><span><b data-i18n="stepRelease">Release</b><small data-i18n="stepReleaseHint">Assets and dependencies</small></span>
+          </button>
+          <button type="button" data-step-target="3">
+            <span>04</span><span><b data-i18n="stepPreview">Preview</b><small data-i18n="stepPreviewHint">Review metadata</small></span>
+          </button>
+        </aside>
+
+        <div class="form-workspace">
+          <section class="form-step active" data-step="0">
+            <div class="step-header"><span>01 / 04</span><h3 data-i18n="packageIdentity">Package identity</h3>
+              <p data-i18n="packageIdentityIntro">Canonical identifiers used by the registry and dependency solver.</p></div>
+            <div class="form-grid">
+              <label><span data-i18n="packageId">Package ID</span>
+                <input name="id" required pattern="[a-z0-9]+([.\-][a-z0-9]+)+" placeholder="author.mod-name" /></label>
+              <label><span data-i18n="assemblyName">Assembly name</span>
+                <input name="name" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]+" placeholder="MySprocketMod" /></label>
+              <label class="wide"><span data-i18n="githubRepository">GitHub repository</span>
+                <input name="repository" required pattern="[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+" placeholder="owner/repository" /></label>
+              <label><span data-i18n="authors">Authors</span><input name="authors" required placeholder="author, contributor" /></label>
+              <label><span data-i18n="license">License</span>
+                <select name="license" required>
+                  <option value="MIT">MIT</option><option value="Apache-2.0">Apache-2.0</option>
+                  <option value="GPL-3.0-only">GPL-3.0-only</option><option value="LGPL-3.0-only">LGPL-3.0-only</option>
+                  <option value="MPL-2.0">MPL-2.0</option>
+                </select></label>
+              <label><span data-i18n="category">Category</span>
+                <select name="category" required>
+                  <option value="gameplay" data-i18n="categoryGameplay">Gameplay</option>
+                  <option value="utility" data-i18n="categoryUtility">Utility</option>
+                  <option value="library" data-i18n="categoryLibrary">Libraries</option>
+                  <option value="visual" data-i18n="categoryVisual">Visual</option>
+                  <option value="audio" data-i18n="categoryAudio">Audio</option>
+                  <option value="other" data-i18n="categoryOther">Other</option>
+                </select></label>
+              <label><span data-i18n="tags">Tags</span><input name="tags" placeholder="example" /></label>
+            </div>
+          </section>
+
+          <section class="form-step" data-step="1" hidden>
+            <div class="step-header"><span>02 / 04</span><h3 data-i18n="localizedListing">Localized listing</h3>
+              <p data-i18n="localizedListingIntro">Add at least one display name. Descriptions are optional.</p></div>
+            <div class="localized-editors">
+              <section class="localized-editor" data-localized-field="display_name">
+                <div class="section-heading">
+                  <div><h3 data-i18n="displayNames">Display names</h3><span data-i18n="required">Required</span></div>
+                  <button class="icon-only" id="add-display-name" type="button" title="Add display name"
+                    aria-label="Add display name" data-i18n-title="addDisplayName" data-i18n-aria="addDisplayName">
+                    <i data-lucide="plus"></i></button>
+                </div>
+                <div class="localized-labels" aria-hidden="true">
+                  <span data-i18n="languageTag">Language tag</span><span data-i18n="displayName">Display name</span><span></span>
+                </div>
+                <div id="display-name-rows"></div>
+              </section>
+              <section class="localized-editor" data-localized-field="description">
+                <div class="section-heading">
+                  <div><h3 data-i18n="descriptions">Descriptions</h3><span data-i18n="optional">Optional</span></div>
+                  <button class="icon-only" id="add-description" type="button" title="Add description"
+                    aria-label="Add description" data-i18n-title="addDescription" data-i18n-aria="addDescription">
+                    <i data-lucide="plus"></i></button>
+                </div>
+                <div class="localized-labels" aria-hidden="true">
+                  <span data-i18n="languageTag">Language tag</span><span data-i18n="description">Description</span><span></span>
+                </div>
+                <div id="description-rows"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="form-step" data-step="2" hidden>
+            <div class="step-header"><span>03 / 04</span><h3 data-i18n="releaseRules">Release rules</h3>
+              <p data-i18n="releaseRulesIntro">Select installable GitHub Release assets and declare package dependencies.</p></div>
+            <div class="form-grid release-fields">
+              <label class="wide"><span data-i18n="releaseAssets">Release assets</span>
+                <input name="asset_include" required value="*.dll, *.zip" />
+                <small data-i18n="commaSeparatedGlobs">Comma-separated glob patterns</small></label>
+            </div>
+            <div class="dependency-editor">
+              <div class="section-heading">
+                <div><h3 data-i18n="dependencyRules">Dependency rules</h3>
+                  <span data-i18n="dependencyRulesHint">Package ID, required version, applicable version</span></div>
+                <button class="icon-only" id="add-dependency" type="button" title="Add dependency"
+                  aria-label="Add dependency" data-i18n-title="addDependency" data-i18n-aria="addDependency">
+                  <i data-lucide="plus"></i></button>
+              </div>
+              <div class="dependency-labels" aria-hidden="true">
+                <span data-i18n="dependencyPackage">Package</span><span data-i18n="requiredVersion">Required version</span>
+                <span data-i18n="whenVersion">When package version</span><span></span>
+              </div>
+              <div id="dependency-rows"></div>
+              <div class="dependency-empty" id="dependency-empty">
+                <i data-lucide="split"></i><span data-i18n="noDependenciesAdded">No dependencies added</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="form-step" data-step="3" hidden>
+            <div class="step-header"><span>04 / 04</span><h3 data-i18n="reviewMetadata">Review metadata</h3>
+              <p data-i18n="reviewMetadataIntro">Generate the final registry file before opening GitHub.</p></div>
+            <div class="meta-preview" id="meta-preview">
+              <div class="preview-toolbar">
+                <span><i data-lucide="file-json-2"></i><strong>sprocket-mod.json</strong></span>
+                <button class="icon-only" id="copy-meta" type="button" title="Copy JSON" aria-label="Copy JSON"
+                  data-i18n-title="copyJson" data-i18n-aria="copyJson"><i data-lucide="copy"></i></button>
+              </div>
+              <pre id="meta-output"></pre>
+            </div>
+          </section>
+
+          <div class="form-actions">
+            <button class="secondary-command" id="previous-step" type="button" hidden>
+              <i data-lucide="arrow-left"></i><span data-i18n="previous">Previous</span></button>
+            <span class="action-spacer"></span>
+            <button class="primary-command" id="next-step" type="button">
+              <span data-i18n="next">Next</span><i data-lucide="arrow-right"></i></button>
+            <button class="secondary-command" id="preview-meta" type="button" hidden>
+              <i data-lucide="braces"></i><span data-i18n="regenerate">Regenerate</span></button>
+            <button class="primary-command" id="submit-github" type="submit" hidden>
+              <i data-lucide="git-pull-request-create"></i><span data-i18n="continueGithub">Continue to GitHub</span></button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="dependency-template">
+      <div class="dependency-row">
+        <input data-field="id" placeholder="package.id" aria-label="Dependency package ID" data-i18n-aria="dependencyPackageId" />
+        <input data-field="version" value="*" aria-label="Dependency version range" data-i18n-aria="dependencyVersionRange" />
+        <input data-field="when" value="*" aria-label="Current package version range" data-i18n-aria="currentPackageVersionRange" />
+        <button class="icon-only remove-dependency" type="button" title="Remove dependency" aria-label="Remove dependency"
+          data-i18n-title="removeDependency" data-i18n-aria="removeDependency"><i data-lucide="trash-2"></i></button>
+      </div>
+    </template>
+
+    <template id="display-name-template">
+      <div class="localized-row display-name-row">
+        <div class="language-picker select-control">
+          <select data-field="language" required aria-label="Language" data-i18n-aria="languageTag">
+            <option value="" disabled data-i18n="chooseLanguage">Choose language</option>
+          </select>
+          <i data-lucide="chevron-down" aria-hidden="true"></i>
+        </div>
+        <input data-field="value" required maxlength="1000" aria-label="Display name" data-i18n-aria="displayName" />
+        <button class="icon-only remove-localized" type="button" title="Remove translation" aria-label="Remove translation"
+          data-i18n-title="removeTranslation" data-i18n-aria="removeTranslation"><i data-lucide="trash-2"></i></button>
+      </div>
+    </template>
+
+    <template id="description-template">
+      <div class="localized-row description-row">
+        <div class="language-picker select-control">
+          <select data-field="language" required aria-label="Language" data-i18n-aria="languageTag">
+            <option value="" disabled data-i18n="chooseLanguage">Choose language</option>
+          </select>
+          <i data-lucide="chevron-down" aria-hidden="true"></i>
+        </div>
+        <textarea data-field="value" required maxlength="1000" rows="2" aria-label="Description" data-i18n-aria="description"></textarea>
+        <button class="icon-only remove-localized" type="button" title="Remove translation" aria-label="Remove translation"
+          data-i18n-title="removeTranslation" data-i18n-aria="removeTranslation"><i data-lucide="trash-2"></i></button>
+      </div>
+    </template>
+  </body>
+</html>

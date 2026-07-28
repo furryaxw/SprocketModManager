@@ -1,0 +1,30 @@
+name: Validate Registry
+
+on:
+  pull_request:
+    paths:
+      - "mods/**"
+      - "schemas/**"
+      - "gen-index.py"
+      - "validate_registry.py"
+      - "sprocket_mod_manager/semver.py"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate metadata and public sources
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python validate_registry.py --mods-dir mods
+      - name: Build deterministic index
+        run: python gen-index.py --mods-dir mods --output index.json
