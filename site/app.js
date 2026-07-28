@@ -457,7 +457,7 @@ async function loadRegistry(forceRefresh) {
 }
 
 async function loadLatestRelease(pkg, forceRefresh) {
-  const cacheKey = `sprocket-release:${pkg.repository}`;
+  const cacheKey = `sprocket-release:v2:${pkg.repository}`;
   if (!forceRefresh) {
     try {
       const cached = JSON.parse(localStorage.getItem(cacheKey));
@@ -468,16 +468,14 @@ async function loadLatestRelease(pkg, forceRefresh) {
     } catch (_) {}
   }
   try {
-    const response = await fetch(`https://api.github.com/repos/${pkg.repository}/releases?per_page=100`, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-    if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
-    const releases = await response.json();
+    const releases = await SprocketReleaseApi.fetchRepositoryReleases(pkg.repository);
     const release = chooseLatestRelease(pkg, releases);
     state.releases.set(pkg.id, release);
-    localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), release }));
+    if (release) localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), release }));
+    else localStorage.removeItem(cacheKey);
   } catch (_) {
     state.releases.set(pkg.id, null);
+    localStorage.removeItem(cacheKey);
   }
 }
 
