@@ -3,7 +3,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sprocket_mod_manager.gui import ModManagerApp, _bind_click_tree, load_catalog
+from sprocket_mod_manager.gui import (
+    COLORS,
+    MANAGER_REPOSITORY_URL,
+    REGISTRY_WEBSITE_URL,
+    ModManagerApp,
+    _bind_click_tree,
+    _set_primary_button_enabled,
+    load_catalog,
+)
 from sprocket_mod_manager.github import RepositoryRelease
 from sprocket_mod_manager.semver import Version
 
@@ -37,6 +45,105 @@ class FakeService:
 
 
 class CatalogLoadingTests(unittest.TestCase):
+    @staticmethod
+    def _contrast(left, right):
+        def luminance(value):
+            channels = [int(value[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            linear = [
+                channel / 12.92
+                if channel <= 0.04045
+                else ((channel + 0.055) / 1.055) ** 2.4
+                for channel in channels
+            ]
+            return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+        brighter, darker = sorted((luminance(left), luminance(right)), reverse=True)
+        return (brighter + 0.05) / (darker + 0.05)
+
+    def test_primary_button_palette_has_readable_text_contrast(self):
+        self.assertGreaterEqual(
+            self._contrast(COLORS["button_accent"], COLORS["text"]),
+            4.5,
+        )
+        self.assertGreaterEqual(
+            self._contrast(COLORS["button_accent_hover"], COLORS["text"]),
+            4.5,
+        )
+
+    def test_disabled_primary_button_uses_neutral_surface(self):
+        class Button:
+            def __init__(self):
+                self.options = {}
+
+            def configure(self, **options):
+                self.options.update(options)
+
+        button = Button()
+        _set_primary_button_enabled(button, False)
+
+        self.assertEqual(button.options["state"], "disabled")
+        self.assertEqual(button.options["fg_color"], COLORS["surface_high"])
+
+    def test_update_status_and_about_button_use_separate_translations(self):
+        from sprocket_mod_manager.gui import TEXT
+
+        self.assertEqual(TEXT["zh"]["manager_up_to_date"], "已是最新")
+        self.assertEqual(TEXT["zh"]["all_mods_up_to_date"], "没有可用更新")
+
+    def test_about_page_is_registered(self):
+        built = []
+        app = SimpleNamespace(pages={}, _build_about=lambda: built.append("about"))
+
+        ModManagerApp._ensure_page(app, "about")
+
+        self.assertEqual(built, ["about"])
+
+    def test_about_links_open_expected_project_pages(self):
+        with patch("sprocket_mod_manager.gui.webbrowser.open") as open_browser:
+            ModManagerApp.open_manager_repository(SimpleNamespace())
+            ModManagerApp.open_registry_website(SimpleNamespace())
+
+        self.assertEqual(
+            open_browser.call_args_list,
+            [
+                unittest.mock.call(MANAGER_REPOSITORY_URL),
+                unittest.mock.call(REGISTRY_WEBSITE_URL),
+            ],
+        )
+
+    def test_about_page_shows_latest_version_and_one_update_action(self):
+        class Widget:
+            def __init__(self):
+                self.options = {}
+
+            def configure(self, **options):
+                self.options.update(options)
+
+        release = RepositoryRelease(
+            tag="v0.2.0",
+            version=Version.parse("0.2.0"),
+            page_url="https://github.com/furryaxw/sprocket-mods/releases/tag/v0.2.0",
+        )
+        latest = Widget()
+        update = Widget()
+        app = SimpleNamespace(
+            pages={"about": object()},
+            version="0.1.1",
+            about_latest_version=latest,
+            about_update_button=update,
+            tr=lambda key: key,
+            refresh_about_release=lambda: None,
+        )
+
+        ModManagerApp._about_release_loaded(app, release)
+
+        self.assertEqual(latest.options["text"], "0.2.0")
+        self.assertEqual(update.options["text"], "view_update")
+        self.assertEqual(update.options["state"], "normal")
+        with patch("sprocket_mod_manager.gui.webbrowser.open") as open_browser:
+            update.options["command"]()
+        open_browser.assert_called_once_with(release.page_url)
+
     def test_catalog_uses_cache_and_loads_releases_concurrently(self):
         service = FakeService()
         loaded_service, latest = load_catalog(service, "index.json", refresh=False)

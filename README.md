@@ -1,5 +1,7 @@
 # Sprocket Mod Manager
 
+**中文** | [English](README.en.md)
+
 Sprocket 模组注册表、GitHub Pages 目录与 Windows GUI 客户端。
 
 Registry 只保存模组级基础 meta。版本、tag、Release 资产和二进制始终来自模组自己的
@@ -66,8 +68,9 @@ CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 - Sprocket 运行时拒绝修改游戏目录。
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改或安装前就存在的文件。
 
-客户端自更新尚未启用。发布仓库与签名身份确定后，应使用固定公钥验证的更新清单或
-可验证的 Windows 代码签名，不能只信任与 EXE 同处一个 Release 的未签名校验文件。
+客户端目前只检查 GitHub Release 并提供更新入口，不会自动下载或覆盖安装。若未来启用
+自动更新，应使用固定公钥验证的更新清单或可验证的 Windows 代码签名，不能只信任与 EXE
+同处一个 Release 的未签名校验文件。
 
 ## Registry
 
