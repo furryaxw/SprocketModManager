@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,37 @@ SITE_ROOT = Path(__file__).resolve().parents[1] / "site"
 
 
 class SiteUiTests(unittest.TestCase):
+    def test_primary_button_color_meets_text_contrast(self):
+        styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
+
+        def color(variable):
+            match = re.search(rf"--{variable}:\s*(#[0-9a-fA-F]{{6}})", styles)
+            self.assertIsNotNone(match)
+            return match.group(1)
+
+        def luminance(value):
+            channels = [int(value[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            linear = [
+                channel / 12.92
+                if channel <= 0.04045
+                else ((channel + 0.055) / 1.055) ** 2.4
+                for channel in channels
+            ]
+            return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+        for background in (color("button-accent"), color("button-accent-hover")):
+            brighter, darker = sorted((luminance(background), luminance("#ffffff")), reverse=True)
+            self.assertGreaterEqual((brighter + 0.05) / (darker + 0.05), 4.5)
+
+    def test_header_links_to_latest_client_release(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'href="https://github.com/furryaxw/sprocket-mods/releases/latest"',
+            html,
+        )
+        self.assertIn('data-i18n="downloadClient"', html)
+
     def test_pages_custom_domain_is_packaged_with_the_site(self):
         cname = (SITE_ROOT / "CNAME").read_text(encoding="utf-8")
 

@@ -15,6 +15,8 @@
   --accent: #df5b42;
   --accent-hover: #ee6a50;
   --accent-quiet: #38211d;
+  --button-accent: #b6402d;
+  --button-accent-hover: #be4430;
   --green: #65b981;
   --green-quiet: #182a20;
   --amber: #d4a85f;
@@ -110,11 +112,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .primary-command {
   padding: 0 14px;
   color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--button-accent);
+  border-color: var(--button-accent);
   font-weight: 650;
 }
-.primary-command:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.primary-command:hover { background: var(--button-accent-hover); border-color: var(--button-accent-hover); }
 .secondary-command, .icon-command {
   padding: 0 12px;
   border-color: var(--line);
@@ -131,7 +133,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   background: var(--panel-raised);
 }
 .icon-only:hover { color: var(--text); border-color: #505657; background: var(--panel-hover); }
-.primary-command:disabled, .secondary-command:disabled, .icon-only:disabled { opacity: 0.48; cursor: wait; }
+.primary-command:disabled {
+  color: var(--muted);
+  background: var(--panel-raised);
+  border-color: var(--line);
+  cursor: wait;
+}
+.secondary-command:disabled, .icon-only:disabled { opacity: 0.48; cursor: wait; }
 .primary-command svg, .secondary-command svg, .icon-command svg, .icon-only svg { width: 16px; height: 16px; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -601,6 +609,7 @@ dialog::backdrop { background: rgba(4, 5, 5, 0.82); backdrop-filter: blur(3px); 
 
 @media (max-width: 520px) {
   .brand-copy { display: none; }
+  .github-command { display: none; }
   .language-switch button { min-width: 34px; }
   #open-submit span { display: none; }
   #open-submit { width: 36px; padding: 0; }

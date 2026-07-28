@@ -1,5 +1,7 @@
 # 提交模组
 
+**中文** | [English](CONTRIBUTING.en.md)
+
 Registry 只接受公开、可审计的开源 Sprocket 模组。无需修改已有 Release，也无需把二进制
 复制到本仓库。
 

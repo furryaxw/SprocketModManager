@@ -1,5 +1,7 @@
 # Sprocket Mod Registry 规范 v1
 
+**中文** | [English](sprocket-mod-spec.en.md)
+
 Registry 托管在 GitHub Pages，只保存模组级基础元数据。版本、tag、Release
 资产和二进制文件始终以模组自己的 GitHub 仓库为准。
 
