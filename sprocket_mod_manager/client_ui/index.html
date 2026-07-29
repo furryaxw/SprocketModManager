@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#101213" />
+    <title>Sprocket Mod Manager</title>
+    <link rel="stylesheet" href="./app.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <div class="brand-copy">
+            <strong>SPROCKET</strong>
+            <span>MOD MANAGER</span>
+          </div>
+        </div>
+
+        <nav class="primary-nav" aria-label="主导航" data-i18n-aria="primaryNav">
+          <button class="nav-item active" type="button" data-page-target="catalog">
+            <span class="nav-index">01</span><span data-i18n="catalog">模组目录</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="installed">
+            <span class="nav-index">02</span><span data-i18n="installed">已安装</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="downloads">
+            <span class="nav-index">03</span><span data-i18n="downloads">下载队列</span>
+            <b id="queue-badge" hidden>0</b>
+          </button>
+          <button class="nav-item" type="button" data-page-target="settings">
+            <span class="nav-index">04</span><span data-i18n="settings">设置</span>
+          </button>
+          <button class="nav-item" type="button" data-page-target="about">
+            <span class="nav-index">05</span><span data-i18n="about">关于</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <label class="language-control">
+            <span data-i18n="language">界面语言</span>
+            <select id="language-select">
+              <option value="auto" data-i18n="languageAuto">跟随系统</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <div class="registry-state" id="registry-state">
+            <span class="state-dot" aria-hidden="true"></span>
+            <span id="registry-state-text" data-i18n="connecting">正在连接</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="page-header">
+          <div>
+            <p class="page-kicker" id="page-kicker">REGISTRY</p>
+            <h1 id="page-title" data-i18n="catalogTitle">模组目录</h1>
+            <p id="page-subtitle">sprocketmods.furryaxw.top</p>
+          </div>
+          <div class="header-actions" id="header-actions">
+            <button class="secondary-button" id="refresh-catalog" type="button" data-i18n="refresh">刷新</button>
+            <button class="primary-button" id="batch-install" type="button" disabled>
+              <span data-i18n="batchInstall">批量安装</span><b id="batch-count">0</b>
+            </button>
+          </div>
+        </header>
+
+        <section class="page active" id="page-catalog" data-page="catalog">
+          <div class="catalog-tools">
+            <label class="search-control">
+              <span class="visually-hidden" data-i18n="search">搜索</span>
+              <input id="catalog-search" type="search" autocomplete="off"
+                placeholder="搜索名称、作者或标签" data-i18n-placeholder="searchPlaceholder" />
+            </label>
+            <label class="select-control">
+              <span class="visually-hidden" data-i18n="category">分类</span>
+              <select id="category-select">
+                <option value="all" data-i18n="categoryAll">全部分类</option>
+                <option value="gameplay" data-i18n="categoryGameplay">玩法</option>
+                <option value="utility" data-i18n="categoryUtility">工具</option>
+                <option value="library" data-i18n="categoryLibrary">依赖库</option>
+                <option value="visual" data-i18n="categoryVisual">视觉</option>
+                <option value="audio" data-i18n="categoryAudio">音频</option>
+                <option value="other" data-i18n="categoryOther">其他</option>
+              </select>
+            </label>
+            <label class="select-control sort-control">
+              <span data-i18n="sort">排序</span>
+              <select id="sort-select">
+                <option value="name" data-i18n="sortName">名称</option>
+                <option value="release" data-i18n="sortRelease">版本</option>
+                <option value="category" data-i18n="sortCategory">分类</option>
+              </select>
+            </label>
+            <span class="result-count" id="catalog-count">0</span>
+          </div>
+
+          <div class="catalog-workspace">
+            <section class="package-list" id="package-list" aria-live="polite">
+              <div class="loading-state"><span class="loader"></span><span data-i18n="loadingCatalog">正在加载目录</span></div>
+            </section>
+            <aside class="detail-panel" id="detail-panel">
+              <div class="empty-detail">
+                <span class="empty-glyph" aria-hidden="true">+</span>
+                <strong data-i18n="nothingSelected">未选择模组</strong>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-installed" data-page="installed" hidden>
+          <div class="list-toolbar">
+            <span id="installed-count">0</span>
+            <button class="primary-button" id="update-all" type="button" data-i18n="updateAll">全部更新</button>
+          </div>
+          <div class="data-list" id="installed-list"></div>
+        </section>
+
+        <section class="page" id="page-downloads" data-page="downloads" hidden>
+          <div class="list-toolbar">
+            <span id="download-count">0</span>
+            <button class="secondary-button" id="clear-finished" type="button" data-i18n="clearFinished">清除已结束</button>
+          </div>
+          <div class="data-list" id="download-list"></div>
+        </section>
+
+        <section class="page" id="page-settings" data-page="settings" hidden>
+          <form class="settings-form" id="settings-form">
+            <div class="form-section">
+              <div class="section-heading">
+                <span>01</span>
+                <div><strong data-i18n="gameLocation">游戏位置</strong><small>SPROCKET</small></div>
+              </div>
+              <label class="field-label" for="game-path" data-i18n="gamePath">Sprocket 路径</label>
+              <div class="field-command">
+                <input id="game-path" name="game_path" type="text" autocomplete="off" />
+                <button class="secondary-button" id="browse-game-path" type="button" data-i18n="browse">浏览</button>
+              </div>
+            </div>
+            <div class="form-section">
+              <div class="section-heading">
+                <span>02</span>
+                <div><strong>REGISTRY</strong><small>INDEX SOURCE</small></div>
+              </div>
+              <label class="field-label" for="index-url" data-i18n="indexUrl">索引 URL 或本地路径</label>
+              <input id="index-url" name="index_url" type="text" autocomplete="off" />
+            </div>
+            <div class="form-actions">
+              <button class="primary-button" type="submit" data-i18n="saveSettings">保存设置</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="page" id="page-about" data-page="about" hidden>
+          <div class="about-layout">
+            <section class="about-identity">
+              <span class="about-mark" aria-hidden="true">S</span>
+              <p>SPROCKET</p>
+              <h2>Mod Manager</h2>
+              <span>AGPL-3.0</span>
+            </section>
+            <dl class="about-facts">
+              <div><dt data-i18n="currentVersion">当前版本</dt><dd id="current-version">-</dd></div>
+              <div><dt data-i18n="latestVersion">最新版本</dt><dd id="latest-version">-</dd></div>
+              <div><dt data-i18n="repository">代码仓库</dt><dd>furryaxw/sprocket-mods</dd></div>
+              <div><dt>Registry</dt><dd>sprocketmods.furryaxw.top</dd></div>
+            </dl>
+            <div class="about-actions">
+              <button class="primary-button" id="manager-update" type="button" data-i18n="checkUpdate">检查更新</button>
+              <button class="secondary-button" id="open-repository" type="button">GitHub</button>
+              <button class="secondary-button" id="open-registry" type="button">Registry</button>
+            </div>
+          </div>
+        </section>
+
+        <footer class="statusbar">
+          <span class="status-mark" aria-hidden="true"></span>
+          <span id="status-text" data-i18n="starting">正在启动</span>
+          <span id="status-source"></span>
+        </footer>
+      </main>
+    </div>
+
+    <div class="modal-layer" id="modal-layer" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <header>
+          <p id="modal-kicker">CONFIRM</p>
+          <h2 id="modal-title"></h2>
+          <button class="close-button" id="modal-close" type="button" aria-label="关闭" data-i18n-aria="close">×</button>
+        </header>
+        <div class="modal-body" id="modal-body"></div>
+        <footer>
+          <button class="secondary-button" id="modal-cancel" type="button" data-i18n="cancel">取消</button>
+          <button class="primary-button" id="modal-confirm" type="button" data-i18n="confirm">确认</button>
+        </footer>
+      </section>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  </body>
+</html>

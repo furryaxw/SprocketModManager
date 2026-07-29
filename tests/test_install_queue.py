@@ -92,6 +92,25 @@ class InstallQueueTests(unittest.TestCase):
         release.set()
         self.assertTrue(queue.close(timeout=1))
 
+    def test_closed_queue_rejects_new_entries(self):
+        queue = InstallQueue(lambda _entry, _progress: None)
+        self.assertTrue(queue.close(timeout=1))
+
+        with self.assertRaisesRegex(RuntimeError, "queue is closed"):
+            queue.enqueue(["test.mod"], Path("game"))
+
+    def test_entry_keeps_the_enqueue_context(self):
+        context = object()
+        seen = []
+        queue = InstallQueue(lambda entry, _progress: seen.append(entry.context))
+        try:
+            queue.enqueue(["test.mod"], Path("game"), context=context)
+            self.assertTrue(queue.wait_until_idle(1))
+        finally:
+            queue.close()
+
+        self.assertEqual(seen, [context])
+
 
 if __name__ == "__main__":
     unittest.main()
