@@ -162,7 +162,16 @@ def normalize_release_records(package: dict[str, Any], records: object) -> list[
 def fetch_package_releases(package: dict[str, Any]) -> list[dict[str, Any]]:
     encoded = "/".join(quote(part, safe="") for part in package["repository"].split("/", 1))
     records = _github_json(f"/repos/{encoded}/releases?per_page=100")
-    return normalize_release_records(package, records)
+    try:
+        return normalize_release_records(package, records)
+    except RegistryError as list_error:
+        latest = _github_json(f"/repos/{encoded}/releases/latest")
+        if not isinstance(latest, dict):
+            raise list_error
+        try:
+            return normalize_release_records(package, [latest])
+        except RegistryError:
+            raise list_error
 
 
 def validate_target(target: str) -> None:
