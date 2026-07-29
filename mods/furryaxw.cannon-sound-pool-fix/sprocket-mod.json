@@ -11,8 +11,8 @@
     "zh": "火炮声音池修复"
   },
   "description": {
-    "en": "Prevents rapid-fire cannons from exhausting Sprocket's audio voices while preserving muzzle effects.",
-    "zh": "防止高射速火炮耗尽 Sprocket 音频 voice，同时保留炮口特效。"
+    "en": "Prevents rapid-fire cannons from exhausting Sprocket's audio pool while preserving muzzle effects.",
+    "zh": "防止高射速火炮耗尽 Sprocket 音频池，同时保留炮口特效。"
   },
   "release": {
     "include_prerelease": false,
