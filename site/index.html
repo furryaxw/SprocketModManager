@@ -136,6 +136,7 @@
         <img id="detail-avatar" alt="" />
         <div class="detail-identity">
           <span class="status-line"><i data-lucide="badge-check"></i><span data-i18n="registryVerified">Registry verified</span></span>
+          <span class="featured-label" id="detail-featured" hidden></span>
           <h2 id="detail-title"></h2>
           <p id="detail-repository"></p>
         </div>
@@ -148,6 +149,13 @@
           <span data-i18n="resolvedAtInstall">Resolved at install time</span>
         </div>
         <div id="detail-dependencies"></div>
+      </div>
+      <div class="dependency-block">
+        <div class="section-heading">
+          <h3 data-i18n="recommendations">Recommended mods</h3>
+          <span data-i18n="optionalInstall">Optional at install time</span>
+        </div>
+        <div id="detail-recommendations"></div>
       </div>
       <div class="dialog-actions">
         <a class="secondary-command" id="detail-repo-link" target="_blank" rel="noreferrer">
@@ -253,6 +261,14 @@
               <label class="wide"><span data-i18n="releaseAssets">Release assets</span>
                 <input name="asset_include" required value="*.dll, *.zip" />
                 <small data-i18n="commaSeparatedGlobs">Comma-separated glob patterns</small></label>
+              <label class="wide"><span data-i18n="recommendations">Recommended mods</span>
+                <input name="recommendations" placeholder="author.companion-mod" />
+                <small data-i18n="recommendationsHint">Optional package IDs, separated by commas</small></label>
+              <label class="wide checkbox-field">
+                <input name="featured" type="checkbox" />
+                <span><b data-i18n="featuredRecommendation">New-install recommendation</b>
+                  <small data-i18n="featuredRecommendationHint">Pin this mod above regular catalog results and show a star</small></span>
+              </label>
             </div>
             <div class="dependency-editor">
               <div class="section-heading">

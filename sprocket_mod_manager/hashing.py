@@ -20,6 +20,15 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def release_asset_sha256(asset: ReleaseAsset) -> str | None:
+    if not asset.digest:
+        return None
+    algorithm, separator, value = asset.digest.partition(":")
+    if separator and algorithm.casefold() == "sha256" and _SHA256_RE.fullmatch(value):
+        return value.casefold()
+    return None
+
+
 def _parse_checksum(text: str, asset_name: str, allow_bare: bool) -> str | None:
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -42,10 +51,9 @@ def publisher_checksum(
     release: ReleaseInfo,
     asset: ReleaseAsset,
 ) -> tuple[str, str] | None:
-    if asset.digest:
-        algorithm, separator, value = asset.digest.partition(":")
-        if separator and algorithm.casefold() == "sha256" and _SHA256_RE.fullmatch(value):
-            return value.casefold(), "GitHub Release digest"
+    asset_digest = release_asset_sha256(asset)
+    if asset_digest:
+        return asset_digest, "GitHub Release digest"
 
     sidecar_names = {
         f"{asset.name}.sha256".casefold(),

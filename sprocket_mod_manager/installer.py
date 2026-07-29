@@ -11,8 +11,15 @@ from pathlib import Path
 from typing import Any
 
 from .errors import InstallError
-from .hashing import sha256_file
-from .models import PreparedFile, PreparedPlan, ProgressCallback
+from .hashing import release_asset_sha256, sha256_file
+from .models import (
+    PreparedFile,
+    PreparedPlan,
+    ProgressCallback,
+    RegistryPackage,
+    ReleaseAsset,
+    ReleaseInfo,
+)
 from .scanner import validate_target
 from .state import StateStore
 
@@ -219,6 +226,66 @@ class Installer:
         finally:
             shutil.rmtree(transaction, ignore_errors=True)
         return warnings
+
+    def adopt(
+        self,
+        package: RegistryPackage,
+        release: ReleaseInfo,
+        files: tuple[PreparedFile, ...],
+        assets: tuple[ReleaseAsset, ...],
+        dependencies: tuple[str, ...],
+        game_dir: Path,
+    ) -> bool:
+        game_dir = self.validate_game_dir(game_dir)
+        state = self.state_store.load()
+        if package.id in state["packages"]:
+            return False
+        if not files:
+            raise InstallError(f"cannot adopt {package.id} without matched files")
+
+        next_state = copy.deepcopy(state)
+        for file in files:
+            target = _safe_game_path(game_dir, file.target)
+            if not target.is_file() or sha256_file(target) != file.sha256:
+                raise InstallError(f"adoption candidate changed during scan: {file.target}")
+            state_key = self._state_file_key(next_state, file.target)
+            if state_key:
+                entry = next_state["files"][state_key]
+                if entry.get("owners") or entry.get("sha256") != file.sha256:
+                    raise InstallError(f"file is already managed or conflicts: {file.target}")
+                if state_key != file.target:
+                    del next_state["files"][state_key]
+            next_state["files"][file.target] = {
+                "sha256": file.sha256,
+                "owners": [package.id],
+                "preexisting": False,
+                "adopted": True,
+            }
+
+        next_state["packages"][package.id] = {
+            "id": package.id,
+            "name": package.name,
+            "repository": package.repository,
+            "version": str(release.version),
+            "tag": release.tag,
+            "release_id": release.id,
+            "requested": True,
+            "adopted": True,
+            "dependencies": list(dependencies),
+            "files": sorted(file.target for file in files),
+            "assets": [
+                {
+                    "id": asset.id,
+                    "name": asset.name,
+                    "sha256": release_asset_sha256(asset),
+                    "publisher_verified": True,
+                }
+                for asset in assets
+            ],
+            "installed_at": _utc_now(),
+        }
+        self.state_store.save(next_state)
+        return True
 
     def remove(self, package_id: str, game_dir: Path) -> tuple[list[str], list[str]]:
         game_dir = self.validate_game_dir(game_dir)

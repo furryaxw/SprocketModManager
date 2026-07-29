@@ -85,3 +85,23 @@ class SiteUiTests(unittest.TestCase):
             ".localized-row input, .localized-row textarea, .localized-row select { font-size: 13px; }",
             styles,
         )
+
+    def test_submission_and_details_support_recommendations(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('name="recommendations"', html)
+        self.assertIn('id="detail-recommendations"', html)
+        self.assertIn('data.get("recommendations")', script)
+        self.assertIn("pkg.recommendations || []", script)
+
+    def test_featured_packages_are_pinned_and_labeled(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('name="featured" type="checkbox"', html)
+        self.assertIn('id="detail-featured" hidden', html)
+        self.assertIn('data.has("featured")', script)
+        self.assertIn("if (featured) return featured", script)
+        self.assertIn('class="featured-star"', script)
+        self.assertIn('tr("starterRecommended")', script)

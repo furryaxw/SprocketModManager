@@ -27,6 +27,8 @@
     }
   },
   "dependencies": [],
+  "recommendations": [],
+  "featured": false,
   "install": {
     "scan_dlls": true,
     "exclude": [],

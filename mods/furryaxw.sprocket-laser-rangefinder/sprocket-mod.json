@@ -29,6 +29,8 @@
       "when": "*"
     }
   ],
+  "recommendations": ["furryaxw.sprocket-jitter-fix"],
+  "featured": false,
   "install": {
     "scan_dlls": true,
     "exclude": [],

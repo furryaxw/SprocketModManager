@@ -53,6 +53,18 @@ keep browsing and append work while the queue runs; closing waits for the active
 installation transaction to finish. Catalog rows show each mod's summary; the detail
 header groups its name, ID, version, and authors, while the body reads the registered
 repository's default README, uses GitHub's renderer, and sanitizes the result locally.
+The install confirmation lists Registry-declared recommendations as unchecked options;
+only recommendations explicitly selected by the user are added to the queue. Packages
+marked as recommended for new installs show a star and stay pinned above regular results
+only while `Mods` contains no DLL. Once any mod exists, the catalog returns to its normal
+sort. This marker never opens a prompt, selects, or installs a package.
+
+When the catalog loads or the Installed page refreshes, the client scans unmanaged DLLs
+under `Mods`. It adopts a package only when the file name, static install target, and
+GitHub Release SHA-256 all match uniquely. Unknown, locally modified, digest-less, or
+ambiguous files remain unmanaged. Adopted packages can be updated and removed normally;
+all other DLLs under `Mods` appear as read-only "Unrecognized" rows on the Installed page,
+showing only their file name and path with no update or removal action.
 
 Use a local Registry with the CLI:
 
@@ -107,8 +119,9 @@ Edge installations.
   limits and rolls back overwritten files after a failure.
 - READMEs are fetched only from the mod's registered GitHub repository. Scripts, forms,
   embedded content, unsafe URLs, and non-GitHub image sources are removed before display.
-- Installation state is isolated per game directory. Uninstalling never removes
-  files that the user changed or that existed before installation.
+- Installation state is isolated per game directory. Uninstalling never removes files
+  modified by the user. Ordinary preexisting files remain protected; files adopted by
+  an exact Release hash become managed and may be deleted only while unchanged.
 
 For manager self-updates, the client currently checks GitHub Releases and provides
 an update link; it does not download or replace its EXE. Any future updater should
