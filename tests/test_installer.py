@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +92,42 @@ def prepared_with_dependency(root: Path) -> PreparedPlan:
 
 
 class InstallerTests(unittest.TestCase):
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_update_recovers_null_file_reference_from_installed_state(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            game.mkdir()
+            (game / "Sprocket.exe").write_bytes(b"")
+            store = StateStore(root / "app" / "installed.json")
+            store.path.parent.mkdir(parents=True)
+            store.path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "packages": {
+                            "test.mod": {
+                                "id": "test.mod",
+                                "name": "TestMod",
+                                "version": "0.9.0",
+                                "requested": True,
+                                "dependencies": [],
+                                "files": [None],
+                            }
+                        },
+                        "files": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            installer = Installer(root / "app", store)
+
+            installer.apply(prepared(root, "1.0.0", b"fixed"), game)
+
+            state = store.load()
+            self.assertEqual(state["packages"]["test.mod"]["files"], ["Mods/TestMod.dll"])
+            self.assertEqual((game / "Mods" / "TestMod.dll").read_bytes(), b"fixed")
+
     @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
     def test_install_update_and_remove_same_path(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
