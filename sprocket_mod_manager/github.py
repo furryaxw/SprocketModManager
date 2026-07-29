@@ -23,6 +23,7 @@ USER_AGENT = "sprocket-mod-manager/0.1"
 MAX_API_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_ASSET_BYTES = 1024 * 1024 * 1024
 GITHUB_ASSET_HOSTS = {"github.com", "release-assets.githubusercontent.com"}
+GITHUB_RELEASE_CACHE_SECONDS = 60 * 60
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,9 @@ class GitHubClient:
         self._release_cache: dict[str, tuple[ReleaseInfo, ...]] = {}
 
     def releases(self, package: RegistryPackage, refresh: bool = False) -> tuple[ReleaseInfo, ...]:
+        if package.releases is not None:
+            self._release_cache[package.id] = package.releases
+            return package.releases
         if package.id in self._release_cache and not refresh:
             return self._release_cache[package.id]
         try:
@@ -207,7 +211,10 @@ class GitHubClient:
                 "https://api.github.com/repos/"
                 f"{quote(owner, safe='')}/{quote(repository, safe='')}/releases?per_page=100&page={page}"
             )
-            result = self.http.get_json(url, cache_seconds=0 if refresh else 600)
+            result = self.http.get_json(
+                url,
+                cache_seconds=0 if refresh else GITHUB_RELEASE_CACHE_SECONDS,
+            )
             if not isinstance(result, list):
                 raise DownloadError(f"GitHub releases response is not a list: {package.repository}")
             records.extend(item for item in result if isinstance(item, dict))
@@ -220,7 +227,10 @@ class GitHubClient:
                 f"{quote(owner, safe='')}/{quote(repository, safe='')}/releases/latest"
             )
             try:
-                latest = self.http.get_json(latest_url, cache_seconds=0 if refresh else 600)
+                latest = self.http.get_json(
+                    latest_url,
+                    cache_seconds=0 if refresh else GITHUB_RELEASE_CACHE_SECONDS,
+                )
             except DownloadError:
                 latest = None
             if isinstance(latest, dict):
@@ -268,6 +278,7 @@ class GitHubClient:
                     prerelease=bool(record.get("prerelease")),
                     published_at=str(record.get("published_at", "")),
                     assets=tuple(assets),
+                    page_url=str(record.get("html_url", "")),
                 )
             )
         releases.sort(key=lambda item: item.version, reverse=True)

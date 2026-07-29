@@ -3,6 +3,8 @@ name: Deploy Pages
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,15 +33,21 @@ jobs:
           node --check site/release-api.js
           node tests/site_release_api.test.js
       - name: Validate metadata and public sources
+        if: github.event_name != 'schedule'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python validate_registry.py --mods-dir mods
+      - name: Validate metadata for scheduled refresh
+        if: github.event_name == 'schedule'
+        run: python validate_registry.py --mods-dir mods --offline
       - name: Build Pages registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p site/mods site/schemas
           cp -R mods/. site/mods/
           cp -R schemas/. site/schemas/
-          python gen-index.py --mods-dir mods --output site/index.json
+          python gen-index.py --mods-dir mods --output site/index.json --fetch-releases
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

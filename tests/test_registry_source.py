@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +10,7 @@ from sprocket_mod_manager.service import ModManagerService
 
 
 REGISTRY_BYTES = (Path(__file__).resolve().parents[1] / "site" / "index.json").read_bytes()
+REGISTRY_PACKAGE_COUNT = len(json.loads(REGISTRY_BYTES.decode("utf-8"))["packages"])
 
 
 class RegistryHandler(BaseHTTPRequestHandler):
@@ -37,7 +39,7 @@ class RegistrySourceTests(unittest.TestCase):
                 registry = service.load_registry(
                     f"http://127.0.0.1:{server.server_port}/index.json"
                 )
-                self.assertEqual(len(registry.packages), 2)
+                self.assertEqual(len(registry.packages), REGISTRY_PACKAGE_COUNT)
         finally:
             server.shutdown()
             server.server_close()

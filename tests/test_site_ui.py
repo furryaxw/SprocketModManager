@@ -38,18 +38,25 @@ class SiteUiTests(unittest.TestCase):
         )
         self.assertIn('data-i18n="downloadClient"', html)
 
-    def test_release_lookup_loads_fallback_before_application(self):
+    def test_catalog_uses_embedded_release_cache_without_github_api(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
         script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertLess(html.index("./release-api.js"), html.index("./app.js"))
-        self.assertIn("SprocketReleaseApi.fetchRepositoryReleases", script)
-        self.assertIn("sprocket-release:v2:", script)
-        self.assertIn(
-            "if (release) localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), release }));",
-            script,
+        self.assertIn("pkg.releases", script)
+        self.assertIn('cache: "no-store"', script)
+        self.assertNotIn("release-api.js", html)
+        self.assertNotIn("api.github.com", script)
+        self.assertNotIn("SprocketReleaseApi.fetchRepositoryReleases", script)
+        self.assertNotIn("sprocket-release:", script)
+
+    def test_pages_refreshes_embedded_releases_hourly(self):
+        workflow = (SITE_ROOT.parent / ".github" / "workflows" / "pages.yml").read_text(
+            encoding="utf-8"
         )
-        self.assertIn("else localStorage.removeItem(cacheKey);", script)
+
+        self.assertIn("schedule:", workflow)
+        self.assertIn("--fetch-releases", workflow)
+        self.assertIn("validate_registry.py --mods-dir mods --offline", workflow)
 
     def test_pages_custom_domain_is_packaged_with_the_site(self):
         cname = (SITE_ROOT / "CNAME").read_text(encoding="utf-8")

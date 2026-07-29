@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from typing import Any, Callable
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
-from sprocket_mod_manager.semver import validate_range
+from sprocket_mod_manager.semver import Version, validate_range
 
 
 REQUIRED_FIELDS = {
@@ -35,10 +41,128 @@ ID_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$")
 LANGUAGE_TAG_RE = re.compile(
     r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|[xX](?:-[A-Za-z0-9]{1,8})+)$"
 )
+GITHUB_API_URL = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
+INSTALLABLE_SUFFIXES = {".dll", ".zip", ".smod"}
 
 
 class RegistryError(ValueError):
     pass
+
+
+def _github_json(path: str) -> Any:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "sprocket-mod-registry-indexer/1",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        with urlopen(Request(GITHUB_API_URL + path, headers=headers), timeout=30) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        raise RegistryError(f"GitHub API returned HTTP {exc.code} for {path}") from exc
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RegistryError(f"GitHub API request failed for {path}: {exc}") from exc
+
+
+def normalize_release_records(package: dict[str, Any], records: object) -> list[dict[str, Any]]:
+    if not isinstance(records, list):
+        raise RegistryError(f"{package['id']}: GitHub Releases response is not a list")
+    release_rules = package["release"]
+    version_pattern = re.compile(release_rules["version_pattern"])
+    include_prerelease = release_rules["include_prerelease"]
+    includes = tuple(pattern.casefold() for pattern in release_rules["assets"]["include"])
+    excludes = tuple(pattern.casefold() for pattern in release_rules["assets"]["exclude"])
+    expected_download_prefix = f"/{package['repository']}/releases/download/".casefold()
+    expected_page_prefix = f"/{package['repository']}/releases/tag/".casefold()
+    releases: list[tuple[Version, dict[str, Any]]] = []
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("draft") or (record.get("prerelease") and not include_prerelease):
+            continue
+        tag = str(record.get("tag_name", ""))
+        match = version_pattern.fullmatch(tag)
+        if not match:
+            continue
+        try:
+            version = Version.parse(match.group(1))
+        except (IndexError, ValueError):
+            continue
+        if version.prerelease and not include_prerelease:
+            continue
+
+        page_url = str(record.get("html_url", ""))
+        parsed_page = urlparse(page_url)
+        if (
+            parsed_page.scheme != "https"
+            or (parsed_page.hostname or "").casefold() != "github.com"
+            or not parsed_page.path.casefold().startswith(expected_page_prefix)
+        ):
+            continue
+
+        assets: list[dict[str, Any]] = []
+        for asset in record.get("assets") or []:
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name", ""))
+            folded_name = name.casefold()
+            if Path(name).suffix.casefold() not in INSTALLABLE_SUFFIXES:
+                continue
+            if not any(fnmatch.fnmatchcase(folded_name, pattern) for pattern in includes):
+                continue
+            if any(fnmatch.fnmatchcase(folded_name, pattern) for pattern in excludes):
+                continue
+            download_url = str(asset.get("browser_download_url", ""))
+            parsed_download = urlparse(download_url)
+            if (
+                parsed_download.scheme != "https"
+                or (parsed_download.hostname or "").casefold() != "github.com"
+                or not parsed_download.path.casefold().startswith(expected_download_prefix)
+            ):
+                continue
+            assets.append(
+                {
+                    "id": int(asset.get("id", 0)),
+                    "name": name,
+                    "size": int(asset.get("size", 0)),
+                    "download_url": download_url,
+                    "digest": asset.get("digest") or None,
+                    "updated_at": str(asset.get("updated_at", "")),
+                }
+            )
+        if not assets:
+            continue
+        releases.append(
+            (
+                version,
+                {
+                    "id": int(record.get("id", 0)),
+                    "tag": tag,
+                    "version": str(version),
+                    "prerelease": bool(record.get("prerelease")),
+                    "published_at": str(record.get("published_at", "")),
+                    "page_url": page_url,
+                    "assets": assets,
+                },
+            )
+        )
+
+    releases.sort(key=lambda item: item[0], reverse=True)
+    normalized = [record for _version, record in releases]
+    if not normalized:
+        raise RegistryError(f"{package['id']}: no compatible GitHub Release asset")
+    return normalized
+
+
+def fetch_package_releases(package: dict[str, Any]) -> list[dict[str, Any]]:
+    encoded = "/".join(quote(part, safe="") for part in package["repository"].split("/", 1))
+    records = _github_json(f"/repos/{encoded}/releases?per_page=100")
+    return normalize_release_records(package, records)
 
 
 def validate_target(target: str) -> None:
@@ -235,8 +359,16 @@ def scan_mods(mods_dir: Path) -> list[dict]:
     return [packages[key] for key in sorted(packages)]
 
 
-def generate_index(mods_dir: Path, output: Path) -> dict:
+def generate_index(
+    mods_dir: Path,
+    output: Path,
+    *,
+    release_loader: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+) -> dict:
     packages = scan_mods(mods_dir)
+    if release_loader:
+        for package in packages:
+            package["releases"] = release_loader(package)
     index = {
         "schema_version": 1,
         "game": "sprocket",
@@ -254,9 +386,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build the Sprocket Pages registry index")
     parser.add_argument("--mods-dir", default="mods")
     parser.add_argument("--output", default="index.json")
+    parser.add_argument(
+        "--fetch-releases",
+        action="store_true",
+        help="embed normalized GitHub Release data using one API request per package",
+    )
     args = parser.parse_args()
     try:
-        index = generate_index(Path(args.mods_dir), Path(args.output))
+        index = generate_index(
+            Path(args.mods_dir),
+            Path(args.output),
+            release_loader=fetch_package_releases if args.fetch_releases else None,
+        )
     except RegistryError as exc:
         print(f"registry error: {exc}")
         return 1
