@@ -1,5 +1,4 @@
 const REGISTRY_REPOSITORY = "furryaxw/sprocket-mods";
-const RELEASE_CACHE_MS = 10 * 60 * 1000;
 const LANGUAGE_STORAGE_KEY = "sprocket-registry-language";
 const SUBMISSION_LANGUAGES = [
   ["en", "English (en)"],
@@ -431,15 +430,17 @@ async function loadRegistry(forceRefresh) {
   elements.refresh.disabled = true;
   elements.refresh.querySelector("svg")?.classList.add("spin");
   try {
-    const response = await fetch("./index.json", { cache: forceRefresh ? "reload" : "default" });
+    const response = await fetch("./index.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`Registry HTTP ${response.status}`);
     const registry = await response.json();
     state.packages = Array.isArray(registry.packages) ? registry.packages : [];
     state.releases.clear();
+    state.packages.forEach((pkg) => {
+      const release = Array.isArray(pkg.releases) ? pkg.releases[0] : null;
+      state.releases.set(pkg.id, normalizeEmbeddedRelease(release));
+    });
     updateCategoryCounts();
     elements.packageCount.textContent = String(state.packages.length);
-    renderPackages();
-    await mapWithConcurrency(state.packages, 4, (item) => loadLatestRelease(item, forceRefresh));
     elements.releaseCount.textContent = String([...state.releases.values()].filter(Boolean).length);
     setRegistryStatus("registryUpdated", { time: formatTime(registry.generated_at) });
     setSystemState("registryOnline");
@@ -456,43 +457,17 @@ async function loadRegistry(forceRefresh) {
   }
 }
 
-async function loadLatestRelease(pkg, forceRefresh) {
-  const cacheKey = `sprocket-release:v2:${pkg.repository}`;
-  if (!forceRefresh) {
-    try {
-      const cached = JSON.parse(localStorage.getItem(cacheKey));
-      if (cached && Date.now() - cached.savedAt < RELEASE_CACHE_MS) {
-        state.releases.set(pkg.id, cached.release);
-        return;
-      }
-    } catch (_) {}
-  }
-  try {
-    const releases = await SprocketReleaseApi.fetchRepositoryReleases(pkg.repository);
-    const release = chooseLatestRelease(pkg, releases);
-    state.releases.set(pkg.id, release);
-    if (release) localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), release }));
-    else localStorage.removeItem(cacheKey);
-  } catch (_) {
-    state.releases.set(pkg.id, null);
-    localStorage.removeItem(cacheKey);
-  }
-}
-
-function chooseLatestRelease(pkg, releases) {
-  const pattern = new RegExp(pkg.release.version_pattern);
-  return releases
-    .filter((release) => !release.draft && (pkg.release.include_prerelease || !release.prerelease))
-    .map((release) => {
-      const match = release.tag_name.match(pattern);
-      if (!match || match[0] !== release.tag_name) return null;
-      const version = parseSemver(match[1]);
-      if (!version || (!pkg.release.include_prerelease && version.prerelease.length)) return null;
-      const assets = release.assets.filter((asset) => assetMatches(pkg, asset.name));
-      return assets.length ? { ...release, parsedVersion: version, selectedAssets: assets } : null;
-    })
-    .filter(Boolean)
-    .sort((left, right) => compareSemver(right.parsedVersion, left.parsedVersion))[0] || null;
+function normalizeEmbeddedRelease(release) {
+  if (!release || typeof release !== "object") return null;
+  const parsedVersion = parseSemver(release.version);
+  if (!parsedVersion || !Array.isArray(release.assets) || !release.assets.length) return null;
+  return {
+    ...release,
+    tag_name: release.tag,
+    html_url: release.page_url,
+    parsedVersion,
+    selectedAssets: release.assets,
+  };
 }
 
 function parseSemver(value) {
@@ -517,18 +492,6 @@ function compareSemver(left, right) {
     return a.localeCompare(b);
   }
   return 0;
-}
-
-function assetMatches(pkg, name) {
-  const folded = name.toLocaleLowerCase();
-  const include = pkg.release.assets.include.some((pattern) => globMatches(folded, pattern.toLocaleLowerCase()));
-  const exclude = pkg.release.assets.exclude.some((pattern) => globMatches(folded, pattern.toLocaleLowerCase()));
-  return include && !exclude;
-}
-
-function globMatches(value, pattern) {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*").replaceAll("?", ".");
-  return new RegExp(`^${escaped}$`).test(value);
 }
 
 function updateCategoryCounts() {
@@ -892,14 +855,6 @@ function openPullRequest(event) {
   const filename = `mods/${meta.id}/sprocket-mod.json`;
   const url = `https://github.com/${REGISTRY_REPOSITORY}/new/main?filename=${encodeURIComponent(filename)}&value=${encodeURIComponent(value)}`;
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-async function mapWithConcurrency(items, limit, worker) {
-  const queue = [...items];
-  const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
-    while (queue.length) await worker(queue.shift());
-  });
-  await Promise.all(runners);
 }
 
 function localized(value) {
