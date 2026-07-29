@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .adoption import AdoptionRecord, ExistingModsAdopter
 from .errors import RegistryError
 from .github import GitHubClient, HttpClient, is_loopback_host
 from .installer import Installer
@@ -105,3 +106,8 @@ class ModManagerService:
 
     def installed(self, game_dir: Path) -> dict[str, dict[str, Any]]:
         return self._installer_for(game_dir).state_store.load()["packages"]
+
+    def adopt_existing(self, game_dir: Path) -> tuple[AdoptionRecord, ...]:
+        registry = self._require_registry()
+        installer = self._installer_for(game_dir)
+        return ExistingModsAdopter(self.github, installer).adopt(registry, game_dir)

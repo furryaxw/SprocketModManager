@@ -1,3 +1,4 @@
+import hashlib
 import threading
 import unittest
 from pathlib import Path
@@ -8,6 +9,10 @@ from unittest.mock import patch
 from sprocket_mod_manager.config import ConfigStore
 from sprocket_mod_manager.github import RepositoryReadme
 from sprocket_mod_manager.melonloader import MelonLoaderInstallation
+from sprocket_mod_manager.models import RegistryPackage, ReleaseAsset, ReleaseInfo
+from sprocket_mod_manager.registry import Registry
+from sprocket_mod_manager.semver import Version
+from sprocket_mod_manager.service import ModManagerService
 from sprocket_mod_manager.web_gui import ClientApi
 
 
@@ -48,7 +53,89 @@ class ReadmeService:
         )
 
 
+def installable_package(
+    package_id: str,
+    file_name: str,
+    *,
+    recommendations: tuple[str, ...] = (),
+    featured: bool = False,
+    content: bytes = b"test",
+) -> RegistryPackage:
+    version = "1.0.0"
+    asset = ReleaseAsset(
+        id=1,
+        name=file_name,
+        size=len(content),
+        download_url=f"https://github.com/test/repo/releases/download/v{version}/{file_name}",
+        digest=f"sha256:{hashlib.sha256(content).hexdigest()}",
+    )
+    release = ReleaseInfo(
+        id=1,
+        tag=f"v{version}",
+        version=Version.parse(version),
+        prerelease=False,
+        published_at="",
+        assets=(asset,),
+    )
+    return RegistryPackage(
+        id=package_id,
+        name=file_name.removesuffix(".dll"),
+        authors=("test",),
+        repository="test/repo",
+        license="MIT",
+        display_name={"en": package_id},
+        description={"en": "test"},
+        release={"assets": {"include": [file_name], "exclude": []}},
+        dependencies=(),
+        install={
+            "scan_dlls": True,
+            "exclude": [],
+            "overrides": [{"match": file_name, "target": "Mods"}],
+        },
+        category="utility",
+        tags=(),
+        recommendations=recommendations,
+        featured=featured,
+        releases=(release,),
+    )
+
+
 class WebGuiTests(unittest.TestCase):
+    def test_catalog_exposes_new_install_recommendation_marker(self):
+        with TemporaryDirectory() as directory:
+            package = installable_package("test.featured", "Featured.dll", featured=True)
+            service = SimpleNamespace(
+                registry=Registry([package]),
+                github=SimpleNamespace(install_assets=lambda _package, release: release.assets),
+                installed=lambda _game_path: {},
+            )
+            api = ClientApi("0.3.2", app_dir=Path(directory))
+            try:
+                packages = api._catalog_data(service, {package.id: package.releases[0]})
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(packages[0]["featured"])
+
+    def test_any_dll_under_mods_disables_new_install_recommendations(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = root / "game"
+            nested = game / "Mods" / "Nested"
+            nested.mkdir(parents=True)
+            (game / "Sprocket.exe").touch()
+            ConfigStore(app_dir).save(
+                {"language": "en", "game_path": str(game), "index_url": ""}
+            )
+            api = ClientApi("0.3.2", app_dir=app_dir)
+            try:
+                self.assertFalse(api._has_any_mods())
+                (nested / "UnknownMod.DLL").write_bytes(b"unmanaged")
+                self.assertTrue(api._has_any_mods())
+            finally:
+                api.install_queue.close()
+
     def test_bootstrap_uses_saved_language_without_detecting_game_path(self):
         with TemporaryDirectory() as directory:
             app_dir = Path(directory)
@@ -132,6 +219,81 @@ class WebGuiTests(unittest.TestCase):
         self.assertEqual(saved["settings"]["text_scale"], 150)
         self.assertEqual(loaded["settings"]["text_scale"], 150)
 
+    def test_install_plan_returns_optional_recommendations(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = root / "game"
+            game.mkdir()
+            (game / "Sprocket.exe").touch()
+            ConfigStore(app_dir).save(
+                {"language": "en", "game_path": str(game), "index_url": ""}
+            )
+            service = ModManagerService(app_dir)
+            recommended = installable_package("test.recommended", "Recommended.dll")
+            package = installable_package(
+                "test.mod",
+                "TestMod.dll",
+                recommendations=(recommended.id,),
+            )
+            service.registry = Registry([package, recommended])
+            api = ClientApi(
+                "0.3.2",
+                app_dir=app_dir,
+                service_factory=lambda _app_dir: service,
+            )
+            api.melonloader = MissingMelonLoader()
+            try:
+                result = api.plan_install([package.id])
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["id"] for item in result["plans"]], [package.id])
+        self.assertEqual(
+            [item["id"] for item in result["recommendations"]],
+            [recommended.id],
+        )
+        self.assertEqual(result["recommendations"][0]["recommended_by"], [package.id])
+
+    def test_get_installed_automatically_adopts_exact_mods_release(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = root / "game"
+            (game / "Mods").mkdir(parents=True)
+            (game / "Sprocket.exe").touch()
+            content = b"published mod"
+            (game / "Mods" / "TestMod.dll").write_bytes(content)
+            unknown = game / "Mods" / "Nested" / "UnknownMod.dll"
+            unknown.parent.mkdir()
+            unknown.write_bytes(b"unknown mod")
+            ConfigStore(app_dir).save(
+                {"language": "en", "game_path": str(game), "index_url": ""}
+            )
+            service = ModManagerService(app_dir)
+            package = installable_package("test.mod", "TestMod.dll", content=content)
+            service.registry = Registry([package])
+            api = ClientApi(
+                "0.3.2",
+                app_dir=app_dir,
+                service_factory=lambda _app_dir: service,
+            )
+            try:
+                result = api.get_installed()
+            finally:
+                api.install_queue.close()
+            unknown_content = unknown.read_bytes()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["id"] for item in result["adopted"]], [package.id])
+        self.assertTrue(result["installed"][0]["adopted"])
+        self.assertEqual(
+            result["unrecognized"],
+            [{"name": "UnknownMod.dll", "path": "Mods/Nested/UnknownMod.dll"}],
+        )
+        self.assertEqual(unknown_content, b"unknown mod")
+
     def test_official_melonloader_repository_is_an_allowed_link(self):
         with TemporaryDirectory() as directory:
             api = ClientApi("0.2.0", app_dir=Path(directory))
@@ -190,12 +352,26 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn('heading.className = "detail-heading"', javascript)
         self.assertIn('readmeSection.className = "detail-readme"', javascript)
         self.assertIn(
-            "panel.append(topline, heading, actions, readmeSection, facts, dependencySection)",
+            "panel.append(topline, heading, actions, readmeSection, facts, dependencySection, recommendationSection)",
             javascript,
         )
         self.assertIn('"enqueue_install",', javascript)
         self.assertIn("loaderDecision.allowWithout", javascript)
         self.assertIn("function applyTextScale", javascript)
+        self.assertIn("checkbox.checked = false", javascript)
+        self.assertIn("result.recommendations || []", javascript)
+        self.assertIn("if (featured) return featured", javascript)
+        self.assertIn('star.textContent = "★"', javascript)
+        self.assertIn('tr("starterRecommended")', javascript)
+        self.assertIn("function showStarterRecommendations()", javascript)
+        self.assertIn("state.unrecognized = result.unrecognized || []", javascript)
+        self.assertIn('status.textContent = tr("unrecognized")', javascript)
+        self.assertIn("if (item.unrecognized)", javascript)
+        self.assertNotIn("recommendedOptional", javascript)
+        self.assertNotIn("recommendation-hint", javascript)
+        self.assertNotIn("empty-glyph", html)
+        self.assertIn('class="brand-line" aria-hidden="true"', html)
+        self.assertNotIn("about-mark", html)
 
     def test_catalog_columns_share_one_bounded_scroll_area(self):
         css = (
@@ -218,6 +394,19 @@ class WebGuiTests(unittest.TestCase):
         )
         self.assertNotRegex(css, r"font-size:\s*[0-9]+px")
         self.assertNotRegex(css, r"font:\s*[^;/]*\s[0-9]+px/")
+
+    def test_native_select_options_use_the_dark_palette(self):
+        css = (
+            Path(__file__).parents[1]
+            / "sprocket_mod_manager"
+            / "client_ui"
+            / "app.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"select option \{[^}]*color: var\(--text\);[^}]*background: #111516;",
+        )
 
     def test_client_palette_matches_the_registry_site(self):
         root = Path(__file__).parents[1]

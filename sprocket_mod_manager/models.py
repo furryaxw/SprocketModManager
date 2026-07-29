@@ -47,6 +47,8 @@ class RegistryPackage:
     install: dict[str, Any]
     category: str
     tags: tuple[str, ...]
+    recommendations: tuple[str, ...] = ()
+    featured: bool = False
     meta_url: str = ""
     releases: tuple["ReleaseInfo", ...] | None = None
 
@@ -55,6 +57,16 @@ class RegistryPackage:
         raw_releases = data.get("releases")
         if raw_releases is not None and not isinstance(raw_releases, list):
             raise TypeError("releases must be a list")
+        raw_recommendations = data.get("recommendations", ())
+        if not isinstance(raw_recommendations, (list, tuple)):
+            raise TypeError("recommendations must be a list")
+        if not all(isinstance(item, str) and item for item in raw_recommendations):
+            raise TypeError("recommendations must contain package ids")
+        if len(raw_recommendations) != len(set(raw_recommendations)):
+            raise ValueError("recommendations must not contain duplicates")
+        raw_featured = data.get("featured", False)
+        if not isinstance(raw_featured, bool):
+            raise TypeError("featured must be a boolean")
         releases = (
             None
             if raw_releases is None
@@ -85,6 +97,8 @@ class RegistryPackage:
             install=dict(data.get("install", {})),
             category=data.get("category", "other"),
             tags=tuple(data.get("tags", ())),
+            recommendations=tuple(raw_recommendations),
+            featured=raw_featured,
             meta_url=data.get("meta_url", ""),
             releases=releases,
         )

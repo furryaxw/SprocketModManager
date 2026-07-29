@@ -37,6 +37,13 @@ class Registry:
                     raise RegistryError(
                         f"{package.id}: dependency is not registered: {dependency.get('id')}"
                     )
+            for recommendation in package.recommendations:
+                if recommendation == package.id:
+                    raise RegistryError(f"{package.id}: package cannot recommend itself")
+                if recommendation not in registry._by_id:
+                    raise RegistryError(
+                        f"{package.id}: recommendation is not registered: {recommendation}"
+                    )
         return registry
 
     @classmethod

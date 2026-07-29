@@ -188,12 +188,16 @@ class ClientApi:
                 _source_from_config(self.config),
                 refresh=bool(refresh),
             )
+            adopted = self._adopt_existing(service)
             with self._state_lock:
                 self.service = service
                 self.latest = latest
             return self._success(
                 packages=self._catalog_data(service, latest),
                 installed=self._installed_data(service),
+                unrecognized=self._unrecognized_mods(service),
+                adopted=adopted,
+                has_any_mods=self._has_any_mods(),
                 source=effective_index_url(self.config),
             )
         except (ModManagerError, OSError, ValueError) as exc:
@@ -231,6 +235,8 @@ class ClientApi:
                     "category": package.category,
                     "tags": list(package.tags),
                     "dependencies": [dict(item) for item in package.dependencies],
+                    "recommendations": list(package.recommendations),
+                    "featured": package.featured,
                     "release": _release_data(release),
                     "install_assets": [asset.name for asset in selected_assets],
                     "installed": self._installed_entry(installed.get(package.id)),
@@ -246,6 +252,7 @@ class ClientApi:
             "name": str(info.get("name", "")),
             "version": str(info.get("version", "")),
             "requested": bool(info.get("requested")),
+            "adopted": bool(info.get("adopted")),
             "dependencies": list(info.get("dependencies", ())),
         }
 
@@ -271,9 +278,95 @@ class ClientApi:
 
     def get_installed(self) -> dict[str, Any]:
         try:
-            return self._success(installed=self._installed_data(self._current_service()))
+            service = self._current_service()
+            adopted = self._adopt_existing(service)
+            return self._success(
+                installed=self._installed_data(service),
+                unrecognized=self._unrecognized_mods(service),
+                adopted=adopted,
+                has_any_mods=self._has_any_mods(),
+            )
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="installed_load_failed")
+
+    def _adopt_existing(self, service: ModManagerService) -> list[dict[str, Any]]:
+        value = effective_game_path(self.config)
+        if not value:
+            return []
+        game_path = Path(value).expanduser()
+        if not (game_path / "Sprocket.exe").is_file():
+            return []
+        if not self._mutation_lock.acquire(blocking=False):
+            return []
+        try:
+            return [
+                {
+                    "id": record.package_id,
+                    "name": record.name,
+                    "version": record.version,
+                    "files": list(record.files),
+                }
+                for record in service.adopt_existing(game_path)
+            ]
+        finally:
+            self._mutation_lock.release()
+
+    def _has_any_mods(self) -> bool:
+        value = effective_game_path(self.config)
+        if not value:
+            return False
+        game_path = Path(value).expanduser()
+        if not (game_path / "Sprocket.exe").is_file():
+            return False
+        mods_dir = game_path / "Mods"
+        if not mods_dir.is_dir():
+            return False
+        try:
+            for path in mods_dir.rglob("*"):
+                try:
+                    if path.suffix.casefold() == ".dll" and (
+                        path.is_file() or path.is_symlink()
+                    ):
+                        return True
+                except OSError:
+                    continue
+        except OSError:
+            return False
+        return False
+
+    def _unrecognized_mods(self, service: ModManagerService) -> list[dict[str, str]]:
+        value = effective_game_path(self.config)
+        if not value:
+            return []
+        game_path = Path(value).expanduser()
+        if not (game_path / "Sprocket.exe").is_file():
+            return []
+        mods_dir = game_path / "Mods"
+        if not mods_dir.is_dir():
+            return []
+        managed_paths = {
+            relative.replace("\\", "/").casefold()
+            for package in self._installed(service).values()
+            for relative in package.get("files", ())
+            if isinstance(relative, str)
+        }
+        unrecognized: list[dict[str, str]] = []
+        try:
+            for path in mods_dir.rglob("*"):
+                try:
+                    if path.suffix.casefold() != ".dll" or not (
+                        path.is_file() or path.is_symlink()
+                    ):
+                        continue
+                    relative = path.relative_to(game_path).as_posix()
+                except (OSError, ValueError):
+                    continue
+                if relative.casefold() in managed_paths:
+                    continue
+                unrecognized.append({"name": path.name, "path": relative})
+        except OSError:
+            return []
+        return sorted(unrecognized, key=lambda item: item["path"].casefold())
 
     def get_package_readme(self, package_id: str, refresh: bool = False) -> dict[str, Any]:
         try:
@@ -426,6 +519,7 @@ class ClientApi:
             service = self._current_service()
             installed = service.installed(game_path)
             plans: list[dict[str, Any]] = []
+            resolved_plans: list[tuple[RegistryPackage, ResolutionPlan]] = []
             skipped: list[str] = []
             for package_id in dict.fromkeys(str(item) for item in package_ids):
                 package = self._package(service, package_id)
@@ -435,8 +529,34 @@ class ClientApi:
                     skipped.append(package.id)
                     continue
                 plans.append(self._plan_data(service, package, plan))
+                resolved_plans.append((package, plan))
+            covered = {
+                item.package.id
+                for _package, plan in resolved_plans
+                for item in plan.packages
+            }
+            recommendations: dict[str, dict[str, Any]] = {}
+            for package, _plan in resolved_plans:
+                for recommendation_id in package.recommendations:
+                    if recommendation_id in covered:
+                        continue
+                    if recommendation_id in recommendations:
+                        recommendations[recommendation_id]["recommended_by"].append(package.id)
+                        continue
+                    try:
+                        recommended = self._package(service, recommendation_id)
+                        recommended_plan = service.resolve(recommended.id)
+                    except ModManagerError:
+                        continue
+                    root = recommended_plan.by_id()[recommended.id]
+                    if installed.get(recommended.id, {}).get("version") == str(root.release.version):
+                        continue
+                    data = self._plan_data(service, recommended, recommended_plan)
+                    data["recommended_by"] = [package.id]
+                    recommendations[recommended.id] = data
             return self._success(
                 plans=plans,
+                recommendations=list(recommendations.values()),
                 skipped=skipped,
                 melonloader_installed=self.melonloader.detect(game_path).installed,
             )

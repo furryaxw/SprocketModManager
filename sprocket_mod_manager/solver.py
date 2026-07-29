@@ -9,6 +9,17 @@ from .registry import Registry
 from .semver import satisfies
 
 
+def dependencies_for_release(
+    package: RegistryPackage,
+    release: ReleaseInfo,
+) -> tuple[dict[str, str], ...]:
+    return tuple(
+        dependency
+        for dependency in package.dependencies
+        if satisfies(release.version, dependency.get("when", "*"))
+    )
+
+
 class DependencySolver:
     def __init__(self, registry: Registry, github: GitHubClient):
         self.registry = registry
@@ -26,11 +37,7 @@ class DependencySolver:
 
     @staticmethod
     def _dependencies_for(package: RegistryPackage, release: ReleaseInfo) -> tuple[dict[str, str], ...]:
-        return tuple(
-            dependency
-            for dependency in package.dependencies
-            if satisfies(release.version, dependency.get("when", "*"))
-        )
+        return dependencies_for_release(package, release)
 
     def resolve(self, root_id: str, root_range: str = "*") -> ResolutionPlan:
         root = self.registry.resolve_identifier(root_id)

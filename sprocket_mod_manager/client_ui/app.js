@@ -90,6 +90,9 @@ const TEXT = {
     categoryLabel: "分类",
     assets: "安装资产",
     dependencies: "依赖",
+    recommendations: "推荐模组",
+    starterRecommended: "新安装推荐",
+    recommendedMods: "推荐一起安装",
     none: "无",
     repositoryAction: "查看仓库",
     loadingReadme: "正在读取 README",
@@ -98,10 +101,13 @@ const TEXT = {
     install: "安装",
     update: "更新",
     remove: "卸载",
-    managedPackages: "{count} 个受管软件包",
-    noInstalled: "没有由管理器安装的软件包",
+    detectedMods: "检测到 {count} 个模组",
+    noInstalled: "没有检测到模组",
+    unrecognized: "无法识别",
     requested: "用户安装",
     dependency: "依赖安装",
+    adopted: "从 Mods 自动接管",
+    adoptedPackages: "已自动接管 {count} 个现有模组",
     queueItems: "队列中有 {count} 项",
     queueEmpty: "下载队列为空",
     waiting: "等待中",
@@ -223,6 +229,9 @@ const TEXT = {
     categoryLabel: "Category",
     assets: "Install assets",
     dependencies: "Dependencies",
+    recommendations: "Recommended mods",
+    starterRecommended: "Recommended for new installs",
+    recommendedMods: "Install recommended mods too",
     none: "None",
     repositoryAction: "Repository",
     loadingReadme: "Loading README",
@@ -231,10 +240,13 @@ const TEXT = {
     install: "Install",
     update: "Update",
     remove: "Remove",
-    managedPackages: "{count} managed packages",
-    noInstalled: "No manager-installed packages",
+    detectedMods: "{count} detected mods",
+    noInstalled: "No mods detected",
+    unrecognized: "Unrecognized",
     requested: "User-installed",
     dependency: "Installed dependency",
+    adopted: "Adopted from Mods",
+    adoptedPackages: "Adopted {count} existing mod(s)",
     queueItems: "{count} queue items",
     queueEmpty: "Download queue is empty",
     waiting: "Waiting",
@@ -277,6 +289,8 @@ const state = {
   language: "zh",
   packages: [],
   installed: [],
+  unrecognized: [],
+  hasAnyMods: false,
   queue: [],
   selectedId: null,
   batch: new Set(),
@@ -327,6 +341,10 @@ function localized(values, fallback = "") {
 
 function packageLabel(pkg) {
   return localized(pkg.display_name, pkg.name || pkg.id);
+}
+
+function showStarterRecommendations() {
+  return !state.hasAnyMods;
 }
 
 function setLanguage(language) {
@@ -476,6 +494,10 @@ function filteredPackages() {
     return !keyword || haystack.includes(keyword);
   });
   result.sort((left, right) => {
+    if (showStarterRecommendations()) {
+      const featured = Number(Boolean(right.featured)) - Number(Boolean(left.featured));
+      if (featured) return featured;
+    }
     if (sort === "release") {
       return compareVersions(right.release?.version, left.release?.version) || packageLabel(left).localeCompare(packageLabel(right));
     }
@@ -552,7 +574,17 @@ function renderCatalog() {
     const copy = document.createElement("div");
     copy.className = "package-copy";
     const title = document.createElement("strong");
-    title.textContent = packageLabel(pkg);
+    if (pkg.featured && showStarterRecommendations()) {
+      const star = document.createElement("span");
+      star.className = "featured-star";
+      star.textContent = "★";
+      star.title = tr("starterRecommended");
+      star.setAttribute("role", "img");
+      star.setAttribute("aria-label", tr("starterRecommended"));
+      title.append(star, document.createTextNode(packageLabel(pkg)));
+    } else {
+      title.textContent = packageLabel(pkg);
+    }
     const metadata = document.createElement("span");
     metadata.textContent = localized(pkg.description, pkg.id);
     metadata.title = `${pkg.id} | ${categoryText(pkg.category)}`;
@@ -608,12 +640,9 @@ function renderDetail() {
   if (!pkg) {
     const empty = document.createElement("div");
     empty.className = "empty-detail";
-    const glyph = document.createElement("span");
-    glyph.className = "empty-glyph";
-    glyph.textContent = "+";
     const title = document.createElement("strong");
     title.textContent = tr("nothingSelected");
-    empty.append(glyph, title);
+    empty.append(title);
     panel.append(empty);
     return;
   }
@@ -621,7 +650,9 @@ function renderDetail() {
   const topline = document.createElement("div");
   topline.className = "detail-topline";
   const record = document.createElement("span");
-  record.textContent = "PACKAGE RECORD";
+  const starterRecommended = pkg.featured && showStarterRecommendations();
+  record.textContent = starterRecommended ? `★ ${tr("starterRecommended")}` : "PACKAGE RECORD";
+  record.classList.toggle("featured-record", starterRecommended);
   const chip = document.createElement("span");
   const currentState = packageState(pkg);
   chip.className = `state-chip ${currentState.className}`;
@@ -674,6 +705,32 @@ function renderDetail() {
     }
   }
   dependencySection.append(dependencyTitle, dependencies);
+
+  const recommendationSection = document.createElement("section");
+  recommendationSection.className = "dependency-section";
+  const recommendationTitle = document.createElement("strong");
+  recommendationTitle.textContent = tr("recommendations").toUpperCase();
+  const recommendations = document.createElement("div");
+  recommendations.className = "dependency-list";
+  if (!pkg.recommendations?.length) {
+    const none = document.createElement("span");
+    none.className = "detail-id";
+    none.textContent = tr("none");
+    recommendations.append(none);
+  } else {
+    for (const packageId of pkg.recommendations) {
+      const recommended = state.packages.find((candidate) => candidate.id === packageId);
+      const line = document.createElement("div");
+      line.className = "dependency-line";
+      const name = document.createElement("span");
+      name.textContent = recommended ? packageLabel(recommended) : packageId;
+      const id = document.createElement("span");
+      id.textContent = packageId;
+      line.append(name, id);
+      recommendations.append(line);
+    }
+  }
+  recommendationSection.append(recommendationTitle, recommendations);
 
   const readmeSection = document.createElement("section");
   readmeSection.className = "detail-readme";
@@ -729,7 +786,14 @@ function renderDetail() {
   install.addEventListener("click", () => beginInstall([pkg.id]));
   actions.append(repo, remove, install);
 
-  panel.append(topline, heading, actions, readmeSection, facts, dependencySection);
+  panel.append(topline, heading, actions, readmeSection, facts, dependencySection, recommendationSection);
+}
+
+function notifyAdopted(items) {
+  if (!items?.length) return;
+  const message = tr("adoptedPackages", { count: items.length });
+  toast(message);
+  setStatus(message, "ready");
 }
 
 async function loadCatalog(refresh = false) {
@@ -751,12 +815,15 @@ async function loadCatalog(refresh = false) {
     state.packages = result.packages || [];
     state.catalogLoading = false;
     state.installed = result.installed || [];
+    state.unrecognized = result.unrecognized || [];
+    state.hasAnyMods = Boolean(result.has_any_mods);
     state.batch.clear();
     if (!state.packages.some((pkg) => pkg.id === state.selectedId)) state.selectedId = null;
     setRegistryState("ready", tr("connected"));
     setStatus(tr("ready", { count: state.packages.length }), "ready", result.source || "");
     renderCatalog();
     renderInstalled();
+    notifyAdopted(result.adopted);
   } catch (error) {
     state.catalogLoading = false;
     renderCatalog();
@@ -767,7 +834,7 @@ async function loadCatalog(refresh = false) {
   }
 }
 
-function createPlanBody(plans) {
+function createPlanBody(plans, recommendations = []) {
   const body = document.createElement("div");
   body.className = "modal-plan";
   for (const plan of plans) {
@@ -785,6 +852,33 @@ function createPlanBody(plans) {
       version.textContent = item.version;
       line.append(label, version);
       group.append(line);
+    }
+    body.append(group);
+  }
+  if (recommendations.length) {
+    const group = document.createElement("section");
+    group.className = "plan-group recommendation-group";
+    const heading = document.createElement("strong");
+    heading.textContent = tr("recommendedMods");
+    group.append(heading);
+    for (const plan of recommendations) {
+      const label = document.createElement("label");
+      label.className = "recommendation-line";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = false;
+      checkbox.dataset.packageId = plan.id;
+      const copy = document.createElement("span");
+      const name = document.createElement("strong");
+      name.textContent = localized(plan.display_name, plan.name || plan.id);
+      const id = document.createElement("span");
+      id.textContent = plan.id;
+      copy.append(name, id);
+      const version = document.createElement("span");
+      const root = (plan.packages || []).find((item) => item.id === plan.id);
+      version.textContent = root?.version || "-";
+      label.append(checkbox, copy, version);
+      group.append(label);
     }
     body.append(group);
   }
@@ -949,10 +1043,11 @@ async function beginInstall(packageIds) {
     renderCatalog();
     return;
   }
+  const planBody = createPlanBody(result.plans, result.recommendations || []);
   const confirmed = await showModal({
     kicker: "INSTALL PLAN",
     title: result.plans.length === 1 ? tr("confirmInstall") : tr("confirmBatchInstall"),
-    body: createPlanBody(result.plans),
+    body: planBody,
     confirmText: tr("confirm"),
   });
   if (!confirmed) return;
@@ -960,7 +1055,11 @@ async function beginInstall(packageIds) {
   if (!loaderDecision.proceed) return;
   const queued = await callApi(
     "enqueue_install",
-    result.plans.map((plan) => plan.id),
+    [
+      ...result.plans.map((plan) => plan.id),
+      ...$$('input[type="checkbox"][data-package-id]:checked', planBody)
+        .map((input) => input.dataset.packageId),
+    ],
     loaderDecision.allowWithout,
   );
   if (!queued.ok) {
@@ -984,10 +1083,13 @@ async function refreshInstalled() {
       return;
     }
     state.installed = result.installed || [];
+    state.unrecognized = result.unrecognized || [];
+    state.hasAnyMods = Boolean(result.has_any_mods);
     const installedById = new Map(state.installed.map((item) => [item.id, item]));
     for (const pkg of state.packages) pkg.installed = installedById.get(pkg.id) || null;
     renderInstalled();
     renderCatalog();
+    notifyAdopted(result.adopted);
   } catch (error) {
     resultError({ message: String(error) });
   }
@@ -996,9 +1098,13 @@ async function refreshInstalled() {
 function renderInstalled() {
   const container = $("#installed-list");
   if (!container) return;
-  $("#installed-count").textContent = tr("managedPackages", { count: state.installed.length });
+  const items = [
+    ...state.installed.map((item) => ({ ...item, unrecognized: false })),
+    ...state.unrecognized.map((item) => ({ ...item, unrecognized: true })),
+  ];
+  $("#installed-count").textContent = tr("detectedMods", { count: items.length });
   container.replaceChildren();
-  if (!state.installed.length) {
+  if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty-list";
     const title = document.createElement("strong");
@@ -1007,26 +1113,42 @@ function renderInstalled() {
     container.append(empty);
     return;
   }
-  for (const item of state.installed) {
-    const pkg = state.packages.find((candidate) => candidate.id === item.id);
+  for (const item of items) {
+    const pkg = item.unrecognized
+      ? null
+      : state.packages.find((candidate) => candidate.id === item.id);
     const row = document.createElement("article");
     row.className = "data-row";
     const title = document.createElement("div");
     title.className = "row-title";
     const name = document.createElement("strong");
-    name.textContent = pkg ? packageLabel(pkg) : item.name || item.id;
+    name.textContent = item.unrecognized
+      ? item.name
+      : pkg ? packageLabel(pkg) : item.name || item.id;
     const metadata = document.createElement("span");
-    metadata.textContent = `${item.id}  |  ${item.version || "-"}  |  ${item.requested ? tr("requested") : tr("dependency")}`;
+    if (item.unrecognized) {
+      metadata.textContent = item.path;
+    } else {
+      const source = item.adopted ? tr("adopted") : item.requested ? tr("requested") : tr("dependency");
+      metadata.textContent = `${item.id}  |  ${item.version || "-"}  |  ${source}`;
+    }
     title.append(name, metadata);
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    const remove = document.createElement("button");
-    remove.className = "danger-button";
-    remove.type = "button";
-    remove.textContent = tr("remove");
-    remove.disabled = !pkg || queueActive();
-    remove.addEventListener("click", () => pkg && confirmRemove(pkg));
-    actions.append(remove);
+    if (item.unrecognized) {
+      const status = document.createElement("span");
+      status.className = "state-chip unrecognized";
+      status.textContent = tr("unrecognized");
+      actions.append(status);
+    } else {
+      const remove = document.createElement("button");
+      remove.className = "danger-button";
+      remove.type = "button";
+      remove.textContent = tr("remove");
+      remove.disabled = !pkg || queueActive();
+      remove.addEventListener("click", () => pkg && confirmRemove(pkg));
+      actions.append(remove);
+    }
     row.append(title, actions);
     container.append(row);
   }

@@ -60,16 +60,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: var(--sidebar);
 }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 10px 28px; }
-.brand-mark, .about-mark {
-  display: grid;
-  place-items: center;
-  border: 1px solid #5b3932;
-  border-radius: 4px;
-  color: #ff8065;
-  background: var(--accent-quiet);
-  font: 800 1.0625rem/1 "Cascadia Mono", Consolas, monospace;
-}
-.brand-mark { width: 38px; height: 38px; }
+.brand-line { width: 3px; height: 38px; flex: 0 0 3px; background: var(--accent); }
 .brand-copy strong, .brand-copy span { display: block; }
 .brand-copy strong { font-size: 0.875rem; line-height: 1.125rem; }
 .brand-copy span { color: var(--muted); font: 0.625rem/0.875rem "Cascadia Mono", Consolas, monospace; }
@@ -169,7 +160,8 @@ input, select {
 }
 input { width: 100%; padding: 0 12px; }
 input::placeholder { color: #717b76; opacity: 1; }
-select { width: 100%; padding: 0 30px 0 11px; }
+select { width: 100%; padding: 0 30px 0 11px; color-scheme: dark; }
+select option { color: var(--text); background: #111516; }
 .select-control { min-width: 0; }
 .sort-control { height: 38px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; border: 1px solid var(--line); border-radius: 4px; background: #111516; }
 .sort-control > span { padding-left: 11px; color: var(--muted); font-size: 0.8125rem; }
@@ -213,17 +205,19 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .package-copy strong, .package-copy span { display: block; }
 .package-copy strong { margin-bottom: 5px; overflow: hidden; font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
 .package-copy span { color: var(--muted); font: 0.75rem/1.0625rem "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; white-space: normal; }
+.package-copy .featured-star { display: inline; margin-right: 6px; color: var(--amber); font: inherit; }
 .package-version { display: grid; justify-items: end; gap: 6px; }
 .package-version b { color: var(--text-soft); font: 700 0.6875rem/0.9375rem "Cascadia Mono", Consolas, monospace; }
 .state-chip { padding: 2px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 0.625rem; font-weight: 700; }
 .state-chip.available { color: #9adeae; border-color: #376e48; background: #17291d; }
 .state-chip.update { color: #f2ca7e; border-color: #72582c; background: var(--amber-quiet); }
+.state-chip.unrecognized { color: #f2ca7e; border-color: #72582c; background: var(--amber-quiet); }
 
 .detail-panel { padding: 23px; }
 .empty-detail, .empty-list, .loading-state { min-height: 300px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--muted); }
-.empty-glyph { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; font: 300 1.5rem/1 "Segoe UI", sans-serif; }
 .detail-topline { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 15px; }
 .detail-topline > span { color: var(--accent); font: 700 0.625rem/0.875rem "Cascadia Mono", Consolas, monospace; }
+.detail-topline > .featured-record { color: var(--amber); }
 .detail-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 20px; margin-bottom: 18px; }
 .detail-heading h2 { min-width: 0; margin: 0; font-size: 1.25rem; line-height: 1.625rem; overflow-wrap: anywhere; }
 .detail-id, .detail-version, .detail-authors { font-family: "Cascadia Mono", Consolas, monospace; }
@@ -284,7 +278,6 @@ select { width: 100%; padding: 0 30px 0 11px; }
 
 .about-layout { width: min(820px, 100%); display: grid; grid-template-columns: 220px minmax(0, 1fr); column-gap: 38px; }
 .about-identity { grid-row: span 2; padding: 10px 26px 24px 0; border-right: 1px solid var(--line); }
-.about-mark { width: 64px; height: 64px; margin-bottom: 24px; font-size: 1.6875rem; }
 .about-identity p { margin: 0 0 4px; color: var(--accent); font: 700 0.625rem/0.875rem "Cascadia Mono", Consolas, monospace; }
 .about-identity h2 { margin: 0 0 13px; font-size: 1.4375rem; }
 .about-identity > span:last-child { color: var(--muted); font: 0.6875rem/0.9375rem "Cascadia Mono", Consolas, monospace; }
@@ -335,6 +328,11 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .plan-group { padding: 12px; border: 1px solid var(--line-soft); border-radius: 4px; background: #141819; }
 .plan-group strong { display: block; margin-bottom: 7px; color: var(--text); }
 .plan-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding: 4px 0; color: var(--muted); font: 0.6875rem/0.9375rem "Cascadia Mono", Consolas, monospace; }
+.recommendation-group { display: grid; gap: 8px; }
+.recommendation-line { min-height: 42px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 7px 0; border-top: 1px solid var(--line-soft); color: var(--muted); cursor: pointer; }
+.recommendation-line input { width: 17px; height: 17px; padding: 0; accent-color: var(--accent); }
+.recommendation-line > span { min-width: 0; font: 0.6875rem/0.9375rem "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+.recommendation-line > span strong { margin: 0 0 3px; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; font-size: 0.75rem; }
 .modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--line); }
 
 .toast-region { position: fixed; z-index: 130; right: 18px; bottom: 46px; width: min(390px, calc(100vw - 36px)); display: grid; gap: 8px; pointer-events: none; }

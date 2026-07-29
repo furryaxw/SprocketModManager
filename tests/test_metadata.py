@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sprocket_mod_manager.models import RegistryPackage
+from sprocket_mod_manager.registry import Registry
+from sprocket_mod_manager.errors import RegistryError
 
 
 def load_index_module():
@@ -84,7 +86,54 @@ class MetadataLocalizationTests(unittest.TestCase):
         meta = metadata()
         meta["description"] = {}
         with self.assertRaisesRegex(INDEX.RegistryError, "description must be a non-empty"):
-            INDEX.validate_meta(meta, "example.mod")
+                INDEX.validate_meta(meta, "example.mod")
+
+    def test_recommendations_are_optional_and_must_be_unique_package_ids(self):
+        INDEX.validate_meta(metadata(), "example.mod")
+
+        for recommendations in (
+            "example.other",
+            ["invalid"],
+            [{"id": "example.other"}],
+            ["example.other", "example.other"],
+            ["example.mod"],
+        ):
+            with self.subTest(recommendations=recommendations):
+                meta = metadata()
+                meta["recommendations"] = recommendations
+                with self.assertRaises(INDEX.RegistryError):
+                    INDEX.validate_meta(meta, "example.mod")
+
+    def test_featured_is_an_optional_boolean(self):
+        INDEX.validate_meta(metadata(), "example.mod")
+        featured = {**metadata(), "featured": True}
+        INDEX.validate_meta(featured, "example.mod")
+        self.assertTrue(RegistryPackage.from_dict(featured).featured)
+        self.assertFalse(RegistryPackage.from_dict(metadata()).featured)
+
+        for value in (None, 0, 1, "true", [], {}):
+            with self.subTest(value=value):
+                invalid = {**metadata(), "featured": value}
+                with self.assertRaisesRegex(INDEX.RegistryError, "featured must be a boolean"):
+                    INDEX.validate_meta(invalid, "example.mod")
+                with self.assertRaisesRegex(TypeError, "featured must be a boolean"):
+                    RegistryPackage.from_dict(invalid)
+
+    def test_registry_requires_recommendations_to_reference_registered_packages(self):
+        root_data = {**metadata(), "recommendations": ["example.companion"]}
+        with self.assertRaisesRegex(RegistryError, "recommendation is not registered"):
+            Registry.from_dict({"schema_version": 1, "packages": [root_data]})
+
+        companion_data = {
+            **metadata(),
+            "id": "example.companion",
+            "name": "ExampleCompanion",
+            "repository": "ExampleAuthor/ExampleCompanion",
+        }
+        root = RegistryPackage.from_dict(root_data)
+        companion = RegistryPackage.from_dict(companion_data)
+        registry = Registry([root, companion])
+        self.assertEqual(registry.get(root.id).recommendations, (companion.id,))
 
     def test_model_localization_fallbacks(self):
         package = RegistryPackage.from_dict(metadata())
