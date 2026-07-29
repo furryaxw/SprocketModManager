@@ -21,7 +21,7 @@ CI 会检查：
 - 仓库包含 `LICENSE`/`COPYING` 和实际源文件；
 - 至少一个非草稿 Release 的 tag 可解析为 SemVer；
 - 至少一个 Release 资产匹配 meta 的 include/exclude 规则；
-- 所有依赖均已注册且依赖图无环；
+- 所有依赖和推荐模组均已注册，且依赖图无环；
 - 安装 override 只落入 `Mods`、`Plugins`、`UserLibs` 或 `UserData`。
 
 校验过程不会运行提交仓库中的任何代码。公开源码本身不证明 Release 二进制由该源码构建；

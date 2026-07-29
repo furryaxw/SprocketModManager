@@ -23,6 +23,8 @@
     }
   },
   "dependencies": [],
+  "recommendations": [],
+  "featured": true,
   "install": {
     "scan_dlls": true,
     "exclude": [],

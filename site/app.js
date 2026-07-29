@@ -62,6 +62,9 @@ const I18N = {
     registryVerified: "Registry verified",
     dependencies: "Dependencies",
     resolvedAtInstall: "Resolved at install time",
+    recommendations: "Recommended mods",
+    optionalInstall: "Optional at install time",
+    starterRecommended: "Recommended for new installs",
     sourceCode: "Source code",
     viewRelease: "View release",
     version: "Version",
@@ -108,6 +111,9 @@ const I18N = {
     releaseRulesIntro: "Select installable GitHub Release assets and declare package dependencies.",
     releaseAssets: "Release assets",
     commaSeparatedGlobs: "Comma-separated glob patterns",
+    recommendationsHint: "Optional package IDs, separated by commas",
+    featuredRecommendation: "New-install recommendation",
+    featuredRecommendationHint: "Pin this mod above regular catalog results and show a star",
     dependencyRules: "Dependency rules",
     dependencyRulesHint: "Package ID, required version, applicable version",
     addDependency: "Add dependency",
@@ -175,6 +181,9 @@ const I18N = {
     registryVerified: "Registry 已校验",
     dependencies: "依赖",
     resolvedAtInstall: "安装时自动解析",
+    recommendations: "推荐模组",
+    optionalInstall: "安装时可选",
+    starterRecommended: "新安装推荐",
     sourceCode: "查看源码",
     viewRelease: "查看 Release",
     version: "版本",
@@ -221,6 +230,9 @@ const I18N = {
     releaseRulesIntro: "选择可安装的 GitHub Release 资产，并声明软件包依赖。",
     releaseAssets: "Release 资产",
     commaSeparatedGlobs: "使用英文逗号分隔通配符",
+    recommendationsHint: "可选，使用英文逗号分隔软件包 ID",
+    featuredRecommendation: "新安装推荐",
+    featuredRecommendationHint: "在普通目录结果上方置顶此模组并显示星标",
     dependencyRules: "依赖规则",
     dependencyRulesHint: "包 ID、所需版本、适用版本",
     addDependency: "添加依赖",
@@ -514,6 +526,8 @@ function filteredPackages() {
     return text.includes(state.query);
   });
   return packages.sort((left, right) => {
+    const featured = Number(Boolean(right.featured)) - Number(Boolean(left.featured));
+    if (featured) return featured;
     if (state.sort === "release") {
       const a = state.releases.get(left.id)?.parsedVersion;
       const b = state.releases.get(right.id)?.parsedVersion;
@@ -556,10 +570,13 @@ function renderCard(pkg) {
   const pending = release ? "" : " pending";
   const dependencies = tr("dependencyCount", { count: pkg.dependencies.length });
   const description = localized(pkg.description);
+  const featuredMark = pkg.featured
+    ? `<span class="featured-star" role="img" aria-label="${escapeAttribute(tr("starterRecommended"))}" title="${escapeAttribute(tr("starterRecommended"))}">★</span>`
+    : "";
   article.innerHTML = `
     <img class="mod-avatar" src="${escapeAttribute(avatar)}" alt="${escapeAttribute(pkg.authors.join(", "))}" loading="lazy" />
     <div class="mod-identity">
-      <h2>${escapeHtml(localized(pkg.display_name))}</h2>
+      <h2>${featuredMark}${escapeHtml(localized(pkg.display_name))}</h2>
       <span class="category-badge">${escapeHtml(categoryLabel(pkg.category))}</span>
     </div>
     <p class="mod-description"${description ? "" : " hidden"}>${escapeHtml(description)}</p>
@@ -591,6 +608,9 @@ function renderDetails(packageId) {
   document.querySelector("#detail-avatar").alt = pkg.authors.join(", ");
   document.querySelector("#detail-title").textContent = localized(pkg.display_name);
   document.querySelector("#detail-repository").textContent = pkg.repository;
+  const featured = document.querySelector("#detail-featured");
+  featured.textContent = `★ ${tr("starterRecommended")}`;
+  featured.hidden = !pkg.featured;
   const description = localized(pkg.description);
   const descriptionNode = document.querySelector("#detail-description");
   descriptionNode.textContent = description;
@@ -607,6 +627,10 @@ function renderDetails(packageId) {
     .map(([term, value]) => `<div><dt>${escapeHtml(term)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
   document.querySelector("#detail-dependencies").innerHTML = pkg.dependencies.length
     ? pkg.dependencies.map((item) => `<span class="dependency-pill">${escapeHtml(item.id)} ${escapeHtml(item.version)}</span>`).join("")
+    : `<span class="dependency-pill">${escapeHtml(tr("none"))}</span>`;
+  const recommendations = pkg.recommendations || [];
+  document.querySelector("#detail-recommendations").innerHTML = recommendations.length
+    ? recommendations.map((item) => `<span class="dependency-pill">${escapeHtml(item)}</span>`).join("")
     : `<span class="dependency-pill">${escapeHtml(tr("none"))}</span>`;
   document.querySelector("#detail-repo-link").href = `https://github.com/${pkg.repository}`;
   const releaseLink = document.querySelector("#detail-release-link");
@@ -806,6 +830,7 @@ function buildMeta(validate = true) {
     version: row.querySelector('[data-field="version"]').value.trim() || "*",
     when: row.querySelector('[data-field="when"]').value.trim() || "*",
   })).filter((item) => item.id);
+  const recommendations = [...new Set(split(data.get("recommendations")))];
   return {
     $schema: "../../schemas/sprocket-mod.schema.json",
     schema_version: 1,
@@ -822,6 +847,8 @@ function buildMeta(validate = true) {
       assets: { include: split(data.get("asset_include")), exclude: ["*debug*", "*symbols*", "*source*"] },
     },
     dependencies,
+    ...(recommendations.length ? { recommendations } : {}),
+    ...(data.has("featured") ? { featured: true } : {}),
     install: { scan_dlls: true, exclude: [], overrides: [] },
     category: data.get("category"),
     tags: split(data.get("tags")).map((tag) => tag.toLocaleLowerCase()),

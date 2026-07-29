@@ -32,7 +32,7 @@ REQUIRED_FIELDS = {
     "category",
     "tags",
 }
-OPTIONAL_FIELDS = {"description"}
+OPTIONAL_FIELDS = {"description", "recommendations", "featured"}
 FORBIDDEN_VERSION_FIELDS = {"version", "latest_version", "download_url", "tag"}
 ALLOWED_TARGET_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
 ALLOWED_CATEGORIES = {"gameplay", "utility", "library", "visual", "audio", "other"}
@@ -288,6 +288,22 @@ def validate_meta(meta: dict, directory_name: str) -> None:
             except ValueError as exc:
                 raise RegistryError(f"invalid dependency {field}: {dependency[field]!r}") from exc
 
+    recommendations = meta.get("recommendations", [])
+    if not isinstance(recommendations, list):
+        raise RegistryError("recommendations must be a list")
+    if not all(isinstance(item, str) for item in recommendations):
+        raise RegistryError("recommendations must contain package ids")
+    if len(recommendations) != len(set(recommendations)):
+        raise RegistryError("recommendations must not contain duplicates")
+    for recommendation in recommendations:
+        if not isinstance(recommendation, str) or not ID_RE.fullmatch(recommendation):
+            raise RegistryError(f"invalid recommendation id: {recommendation!r}")
+        if recommendation == package_id:
+            raise RegistryError("package cannot recommend itself")
+
+    if not isinstance(meta.get("featured", False), bool):
+        raise RegistryError("featured must be a boolean")
+
     install = meta.get("install")
     if not isinstance(install, dict):
         raise RegistryError("install must be an object")
@@ -359,6 +375,11 @@ def scan_mods(mods_dir: Path) -> list[dict]:
             if dependency["id"] not in packages:
                 raise RegistryError(
                     f"{package['id']}: dependency is not registered: {dependency['id']}"
+                )
+        for recommendation in package.get("recommendations", []):
+            if recommendation not in packages:
+                raise RegistryError(
+                    f"{package['id']}: recommendation is not registered: {recommendation}"
                 )
 
     cycle = find_dependency_cycle(packages)

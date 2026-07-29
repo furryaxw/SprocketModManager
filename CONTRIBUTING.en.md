@@ -25,7 +25,7 @@ CI verifies that:
 - the repository contains `LICENSE`/`COPYING` and actual source files;
 - at least one non-draft Release has a tag that can be parsed as SemVer;
 - at least one Release asset matches the metadata include/exclude rules;
-- every dependency is registered and the dependency graph is acyclic;
+- every dependency and recommendation is registered, and the dependency graph is acyclic;
 - installation overrides stay within `Mods`, `Plugins`, `UserLibs`, or `UserData`.
 
 Validation never executes code from a submitted repository. Public source alone

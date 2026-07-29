@@ -47,6 +47,15 @@
       "type": "array",
       "items": { "$ref": "#/$defs/dependency" }
     },
+    "recommendations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
+      }
+    },
+    "featured": { "type": "boolean" },
     "install": { "$ref": "#/$defs/install" },
     "category": {
       "enum": ["gameplay", "utility", "library", "visual", "audio", "other"]

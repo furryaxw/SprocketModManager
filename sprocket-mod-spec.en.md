@@ -60,6 +60,8 @@ Pages does not store:
       "when": "*"
     }
   ],
+  "recommendations": ["furryaxw.sprocket-jitter-fix"],
+  "featured": true,
 
   "install": {
     "scan_dlls": true,
@@ -103,6 +105,22 @@ package's version:
 Constraints support `*`, exact versions, comparison operators, `^`, and `~`.
 Multiple dependency rules may target different versions of the current package.
 Registry CI rejects missing dependencies and static dependency cycles.
+
+## Recommended Mods
+
+`recommendations` is an optional list of registered package IDs. Entries must be
+unique, cannot refer to the current package, and do not participate in dependency
+resolution. The client presents them as unchecked boxes in the install confirmation;
+only recommendations explicitly selected by the user become independent install roots
+and resolve their own dependencies.
+
+## New-install Recommendations
+
+`featured` is an optional boolean and defaults to `false`. When it is `true`, the
+Registry site shows a star. The client shows the star, pins the package above regular
+results, and labels its detail view only while `Mods` contains no DLL. Once any mod
+exists, the client returns to its normal presentation and sorting. This never opens a
+prompt, selects, or installs the mod.
 
 ## DLL Classification
 
