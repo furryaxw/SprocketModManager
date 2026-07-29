@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from sprocket_mod_manager.models import RegistryPackage
 
@@ -123,6 +124,45 @@ class MetadataLocalizationTests(unittest.TestCase):
             )
 
         self.assertEqual(index["packages"][0]["releases"], [release])
+
+    def test_release_fetch_falls_back_to_latest_when_list_has_no_compatible_asset(self):
+        invalid = {
+            "id": 41,
+            "tag_name": "v1.2.3",
+            "draft": False,
+            "prerelease": False,
+            "html_url": "https://github.com/ExampleAuthor/ExampleMod/releases/tag/v1.2.3",
+            "assets": [],
+        }
+        latest = {
+            **invalid,
+            "id": 42,
+            "assets": [
+                {
+                    "id": 7,
+                    "name": "ExampleMod.dll",
+                    "size": 123,
+                    "browser_download_url": (
+                        "https://github.com/ExampleAuthor/ExampleMod/releases/"
+                        "download/v1.2.3/ExampleMod.dll"
+                    ),
+                    "updated_at": "2026-07-29T00:00:00Z",
+                }
+            ],
+        }
+        responses = [[invalid], latest]
+
+        with patch.object(INDEX, "_github_json", side_effect=responses) as request:
+            releases = INDEX.fetch_package_releases(metadata())
+
+        self.assertEqual(releases[0]["assets"][0]["name"], "ExampleMod.dll")
+        self.assertEqual(
+            [call.args[0] for call in request.call_args_list],
+            [
+                "/repos/ExampleAuthor/ExampleMod/releases?per_page=100",
+                "/repos/ExampleAuthor/ExampleMod/releases/latest",
+            ],
+        )
 
     def test_model_reads_embedded_releases(self):
         raw = {
