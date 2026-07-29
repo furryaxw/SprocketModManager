@@ -176,6 +176,46 @@ class GitHubDownloadTests(unittest.TestCase):
         self.assertEqual([asset.name for asset in releases[0].assets], ["TestMod.dll"])
         self.assertEqual(len(http.calls), 2)
 
+    def test_embedded_package_releases_never_call_github(self):
+        package = RegistryPackage.from_dict(
+            {
+                "id": "example.test-mod",
+                "name": "TestMod",
+                "authors": ["example"],
+                "repository": "example/TestMod",
+                "license": "GPL-3.0-only",
+                "display_name": {"en": "Test Mod"},
+                "release": {
+                    "include_prerelease": False,
+                    "version_pattern": r"^v?([0-9]+\.[0-9]+\.[0-9]+)$",
+                    "assets": {"include": ["TestMod.dll"], "exclude": []},
+                },
+                "releases": [
+                    {
+                        "id": 1,
+                        "tag": "v1.3.1",
+                        "version": "1.3.1",
+                        "prerelease": False,
+                        "published_at": "2026-07-25T14:57:10Z",
+                        "page_url": "https://github.com/example/TestMod/releases/tag/v1.3.1",
+                        "assets": [],
+                    }
+                ],
+                "dependencies": [],
+                "install": {"scan_dlls": True, "exclude": [], "overrides": []},
+                "category": "utility",
+                "tags": [],
+            }
+        )
+
+        class NoNetworkHttp:
+            def get_json(self, *_args, **_kwargs):
+                raise AssertionError("embedded releases must not call GitHub")
+
+        releases = GitHubClient(NoNetworkHttp()).releases(package, refresh=True)
+
+        self.assertEqual([str(release.version) for release in releases], ["1.3.1"])
+
 
 if __name__ == "__main__":
     unittest.main()

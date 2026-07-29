@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -93,6 +95,91 @@ class MetadataLocalizationTests(unittest.TestCase):
 
         assembly = RegistryPackage.from_dict({**metadata(), "display_name": {}})
         self.assertEqual(assembly.label("en"), "ExampleMod")
+
+    def test_generated_index_embeds_normalized_releases(self):
+        release = {
+            "id": 42,
+            "tag": "v1.2.3",
+            "version": "1.2.3",
+            "prerelease": False,
+            "published_at": "2026-07-29T00:00:00Z",
+            "page_url": "https://github.com/ExampleAuthor/ExampleMod/releases/tag/v1.2.3",
+            "assets": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package_dir = root / "mods" / "example.mod"
+            package_dir.mkdir(parents=True)
+            (package_dir / "sprocket-mod.json").write_text(
+                json.dumps(metadata()),
+                encoding="utf-8",
+            )
+            output = root / "index.json"
+
+            index = INDEX.generate_index(
+                root / "mods",
+                output,
+                release_loader=lambda _package: [release],
+            )
+
+        self.assertEqual(index["packages"][0]["releases"], [release])
+
+    def test_model_reads_embedded_releases(self):
+        raw = {
+            **metadata(),
+            "releases": [
+                {
+                    "id": 42,
+                    "tag": "v1.2.3",
+                    "version": "1.2.3",
+                    "prerelease": False,
+                    "published_at": "2026-07-29T00:00:00Z",
+                    "page_url": "https://github.com/ExampleAuthor/ExampleMod/releases/tag/v1.2.3",
+                    "assets": [
+                        {
+                            "id": 7,
+                            "name": "ExampleMod.dll",
+                            "size": 123,
+                            "download_url": "https://github.com/ExampleAuthor/ExampleMod/releases/download/v1.2.3/ExampleMod.dll",
+                            "digest": "sha256:abc",
+                            "updated_at": "2026-07-29T00:00:00Z",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        package = RegistryPackage.from_dict(raw)
+
+        self.assertIsNotNone(package.releases)
+        self.assertEqual(str(package.releases[0].version), "1.2.3")
+        self.assertEqual(package.releases[0].assets[0].name, "ExampleMod.dll")
+
+    def test_model_rejects_embedded_asset_from_another_repository(self):
+        raw = {
+            **metadata(),
+            "releases": [
+                {
+                    "id": 42,
+                    "tag": "v1.2.3",
+                    "version": "1.2.3",
+                    "prerelease": False,
+                    "published_at": "2026-07-29T00:00:00Z",
+                    "page_url": "https://github.com/ExampleAuthor/ExampleMod/releases/tag/v1.2.3",
+                    "assets": [
+                        {
+                            "id": 7,
+                            "name": "ExampleMod.dll",
+                            "size": 123,
+                            "download_url": "https://github.com/attacker/Other/releases/download/v1.2.3/ExampleMod.dll",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "release asset URL"):
+            RegistryPackage.from_dict(raw)
 
 
 if __name__ == "__main__":
