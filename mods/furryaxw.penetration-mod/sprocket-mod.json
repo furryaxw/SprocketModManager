@@ -11,8 +11,8 @@
     "zh": "穿深上限修改器"
   },
   "description": {
-    "en": "Raises the Sprocket designer limits for cannon penetration and caliber.",
-    "zh": "提高 Sprocket 设计器中火炮穿深与口径的可调上限。"
+    "en": "Raises the caliber and penetration slider limits for the armor testing tool in the designer."
+    "zh": "提高设计器中装甲测试工具的火炮口径与穿深上限。"
   },
   "release": {
     "include_prerelease": false,
