@@ -21,7 +21,7 @@ try {
         --onefile `
         --windowed `
         --name SprocketModManager `
-        --collect-all customtkinter `
+        --add-data "sprocket_mod_manager\client_ui;sprocket_mod_manager\client_ui" `
         --collect-submodules dnfile `
         modman.py
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }

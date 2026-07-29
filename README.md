@@ -29,8 +29,9 @@ furryaxw.sprocket-laser-rangefinder
 .\.venv\Scripts\python.exe modman.py
 ```
 
-GUI 支持批量选择；单项安装、批量安装和全部更新共用一个顺序下载队列。队列运行期间仍可
-继续浏览并追加任务，正在执行安装事务时客户端会阻止退出。
+GUI 使用 Windows Edge WebView2 的硬件加速渲染，Python 继续负责 Registry、扫描、依赖
+解析与安装。GUI 支持批量选择；单项安装、批量安装和全部更新共用一个顺序下载队列。队列
+运行期间仍可继续浏览并追加任务，正在执行安装事务时客户端会等待事务完成后再退出。
 
 CLI 使用本地 Registry：
 
@@ -63,7 +64,8 @@ CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 ```
 
 输出位于 `dist\SprocketModManager.exe`。构建脚本使用项目 `.venv`，并按
-`requirements.txt` 安装缺失的打包依赖。
+`requirements.txt` 安装缺失的打包依赖。GUI 需要 Windows 10/11 与 Edge WebView2
+Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runtime。
 
 ## 安全边界
 

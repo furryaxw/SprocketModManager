@@ -32,9 +32,11 @@ state tracking, removal of the requested package, and orphan dependency cleanup.
 .\.venv\Scripts\python.exe modman.py
 ```
 
-The GUI supports batch selection. Individual installs, batch installs, and update-all
-share one sequential download queue. Users can keep browsing and append work while the
-queue runs, and the client prevents exit during an active installation transaction.
+The GUI is hardware-accelerated by Windows Edge WebView2, while Python continues to
+handle the Registry, scanning, dependency resolution, and installation. Individual
+installs, batch installs, and update-all share one sequential download queue. Users can
+keep browsing and append work while the queue runs; closing waits for the active
+installation transaction to finish.
 
 Use a local Registry with the CLI:
 
@@ -70,7 +72,9 @@ used by Pages.
 
 The output is written to `dist\SprocketModManager.exe`. The build script uses the
 project's `.venv` and installs missing packaging dependencies from
-`requirements.txt`.
+`requirements.txt`. The GUI requires Windows 10/11 and the Edge WebView2 Runtime,
+which is normally preinstalled with supported Windows versions and current Microsoft
+Edge installations.
 
 ## Security Boundaries
 

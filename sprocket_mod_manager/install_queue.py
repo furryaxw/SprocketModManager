@@ -24,6 +24,7 @@ class InstallQueueEntry:
     game_path: Path
     state: str = WAITING
     message: str = ""
+    context: object | None = None
 
 
 QueueRunner = Callable[[InstallQueueEntry, Callable[[str], None]], None]
@@ -40,9 +41,17 @@ class InstallQueue:
         self._worker = threading.Thread(target=self._work, name="sprocket-install-queue", daemon=True)
         self._worker.start()
 
-    def enqueue(self, package_ids: Iterable[str], game_path: Path) -> tuple[InstallQueueEntry, ...]:
+    def enqueue(
+        self,
+        package_ids: Iterable[str],
+        game_path: Path,
+        *,
+        context: object | None = None,
+    ) -> tuple[InstallQueueEntry, ...]:
         added: list[InstallQueueEntry] = []
         with self._condition:
+            if self._closed:
+                raise RuntimeError("install queue is closed")
             active_ids = {
                 entry.package_id
                 for entry in self._entries
@@ -51,7 +60,12 @@ class InstallQueue:
             for package_id in dict.fromkeys(package_ids):
                 if package_id in active_ids:
                     continue
-                entry = InstallQueueEntry(uuid.uuid4().hex, package_id, game_path)
+                entry = InstallQueueEntry(
+                    uuid.uuid4().hex,
+                    package_id,
+                    game_path,
+                    context=context,
+                )
                 self._entries.append(entry)
                 active_ids.add(package_id)
                 added.append(entry)

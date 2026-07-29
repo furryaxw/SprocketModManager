@@ -225,7 +225,7 @@ def main() -> int:
     if argv:
         return cli_main(argv)
     try:
-        from sprocket_mod_manager.gui import run_gui
+        from sprocket_mod_manager.web_gui import run_gui
     except ImportError as exc:
         print(f"GUI dependencies are unavailable: {exc}", file=sys.stderr)
         return 1
