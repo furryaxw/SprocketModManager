@@ -40,6 +40,7 @@ const TEXT = {
     clearFinished: "清除已结束",
     gameLocation: "游戏位置",
     gamePath: "Sprocket 路径",
+    textScale: "文字大小",
     browse: "浏览",
     melonloaderStatus: "加载器状态",
     melonloaderChecking: "正在检查本机与官方 Release",
@@ -172,6 +173,7 @@ const TEXT = {
     clearFinished: "Clear finished",
     gameLocation: "Game location",
     gamePath: "Sprocket path",
+    textScale: "Text size",
     browse: "Browse",
     melonloaderStatus: "Loader status",
     melonloaderChecking: "Checking the local installation and official Release",
@@ -278,7 +280,7 @@ const state = {
   queue: [],
   selectedId: null,
   batch: new Set(),
-  settings: { language: "auto", game_path: "", index_url: "", index_placeholder: "" },
+  settings: { language: "auto", game_path: "", index_url: "", index_placeholder: "", text_scale: 100 },
   links: { repository: "", registry: "" },
   melonloader: null,
   melonloaderLoading: false,
@@ -337,6 +339,18 @@ function setLanguage(language) {
   renderDetail();
   renderMelonLoader();
   updatePageHeader();
+}
+
+function applyTextScale(value) {
+  const parsed = Number.parseInt(value, 10);
+  const scale = Number.isFinite(parsed) ? Math.min(160, Math.max(100, parsed)) : 100;
+  document.documentElement.style.fontSize = `${scale}%`;
+  document.documentElement.classList.toggle("large-text", scale >= 140);
+  const input = $("#text-scale");
+  const output = $("#text-scale-value");
+  if (input) input.value = String(scale);
+  if (output) output.textContent = `${scale}%`;
+  return scale;
 }
 
 function applyTranslations() {
@@ -1168,6 +1182,7 @@ async function reloadSettings() {
   $("#game-path").value = result.settings.game_path;
   $("#index-url").value = result.settings.index_url;
   $("#index-url").placeholder = result.settings.index_placeholder;
+  applyTextScale(result.settings.text_scale);
   updatePageHeader();
 }
 
@@ -1177,6 +1192,7 @@ async function saveSettings(values = null) {
     language: state.languageMode,
     game_path: $("#game-path").value.trim(),
     index_url: $("#index-url").value.trim(),
+    text_scale: applyTextScale($("#text-scale").value),
   };
   const result = await callApi("save_settings", payload);
   if (!result.ok) {
@@ -1186,6 +1202,7 @@ async function saveSettings(values = null) {
   state.settings = result.settings;
   if (previousGamePath !== (result.settings.game_path || "")) state.melonloader = null;
   state.languageMode = result.settings.language;
+  applyTextScale(result.settings.text_scale);
   setLanguage(result.language);
   toast(tr("settingsSaved"));
   setStatus(tr("settingsSaved"), "ready");
@@ -1435,8 +1452,12 @@ function wireEvents() {
       language: state.languageMode,
       game_path: state.settings.game_path || "",
       index_url: state.settings.index_url || "",
+      text_scale: state.settings.text_scale || 100,
     };
     await saveSettings(saved);
+  });
+  $("#text-scale").addEventListener("input", (event) => {
+    applyTextScale(event.target.value);
   });
   $("#manager-update").addEventListener("click", () => {
     if (state.update?.newer) void openUrl(state.update.page_url);
@@ -1470,6 +1491,7 @@ async function initialize() {
     $("#game-path").value = result.settings.game_path;
     $("#index-url").value = result.settings.index_url;
     $("#index-url").placeholder = result.settings.index_placeholder;
+    applyTextScale(result.settings.text_scale);
     setLanguage(result.language);
     await pollQueue(true);
     void detectGamePathPlaceholder();
