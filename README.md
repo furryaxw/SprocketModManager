@@ -4,9 +4,11 @@
 
 Sprocket 模组注册表、GitHub Pages 目录与 Windows GUI 客户端。
 
-Registry 只保存模组级基础 meta。版本、tag、Release 资产和二进制始终来自模组自己的
-GitHub 仓库。客户端读取 Releases、求解依赖、验证可用的发布者 SHA-256、静态扫描 DLL，
-再将文件事务式安装到 `Mods`、`Plugins`、`UserLibs` 或受控的 `UserData` 路径。
+仓库只人工维护模组级基础 meta。GitHub Actions 每小时从每个模组仓库读取一次 Release，
+把规范化的版本、tag 与资产写入 Pages `index.json`；网页和默认客户端不直接消耗匿名
+GitHub API 配额。二进制仍始终来自模组自己的 GitHub Release。客户端使用快照求解依赖、
+验证可用的发布者 SHA-256、静态扫描 DLL，再将文件事务式安装到 `Mods`、`Plugins`、
+`UserLibs` 或受控的 `UserData` 路径。
 
 ## 当前纵向场景
 
@@ -27,6 +29,9 @@ furryaxw.sprocket-laser-rangefinder
 .\.venv\Scripts\python.exe modman.py
 ```
 
+GUI 支持批量选择；单项安装、批量安装和全部更新共用一个顺序下载队列。队列运行期间仍可
+继续浏览并追加任务，正在执行安装事务时客户端会阻止退出。
+
 CLI 使用本地 Registry：
 
 ```powershell
@@ -45,9 +50,11 @@ CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods --offline
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods
 .\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json
+.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json --fetch-releases
 ```
 
 在线校验仅调用 GitHub API；它不会克隆、构建或执行第三方模组代码。
+`--fetch-releases` 使用 `GITHUB_TOKEN` 时生成与 Pages 相同的嵌入式 Release 快照。
 
 ## 构建 EXE
 
@@ -76,7 +83,7 @@ CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 
 元数据规范见 [sprocket-mod-spec.md](sprocket-mod-spec.md)，作者提交流程见
 [CONTRIBUTING.md](CONTRIBUTING.md)。`site/` 是无需构建框架的 GitHub Pages 页面；
-`.github/workflows/pages.yml` 会生成索引并部署它。
+`.github/workflows/pages.yml` 会在提交后及每小时生成带 Release 快照的索引并部署它。
 
 ## License
 

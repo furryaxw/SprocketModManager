@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import customtkinter as ctk
+import tkinter as tk
 
 
 def _dialog_layout(message: str) -> tuple[int, bool]:
@@ -12,7 +13,32 @@ def _dialog_layout(message: str) -> tuple[int, bool]:
     return (390 if scrollable else max(230, min(350, 184 + visual_lines * 22)), scrollable)
 
 
-class ModalDialog(ctk.CTkToplevel):
+def _release_modal_grab(dialog: Any, parent: Any) -> None:
+    try:
+        current_path = str(parent.tk.call("grab", "current"))
+        dialog_path = str(dialog)
+    except Exception:
+        try:
+            current = parent.grab_current()
+        except Exception:
+            current = None
+        if current is not dialog:
+            return
+    else:
+        if current_path != dialog_path:
+            return
+        try:
+            parent.tk.call("grab", "release", dialog_path)
+        except Exception:
+            pass
+        return
+    try:
+        dialog.grab_release()
+    except Exception:
+        pass
+
+
+class ModalDialog(tk.Toplevel):
     def __init__(
         self,
         parent: Any,
@@ -30,6 +56,8 @@ class ModalDialog(ctk.CTkToplevel):
         self.overrideredirect(True)
         self.transient(parent)
         self.result = False
+        self._shown = False
+        self._closing = False
         self._drag_offset = (0, 0)
         self._palette = palette
         self._tone_color = palette["danger"] if tone == "danger" else palette["accent"]
@@ -39,7 +67,7 @@ class ModalDialog(ctk.CTkToplevel):
         height, scrollable = _dialog_layout(message)
         self._dialog_width = 520
         self._dialog_height = height
-        self.configure(fg_color=palette["canvas"])
+        self.configure(background=palette["canvas"])
         self.geometry(f"{self._dialog_width}x{self._dialog_height}")
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -164,6 +192,8 @@ class ModalDialog(ctk.CTkToplevel):
         for widget in (header, header_text, kicker, heading):
             widget.bind("<ButtonPress-1>", self._begin_drag)
             widget.bind("<B1-Motion>", self._drag)
+        self.bind("<Alt-F4>", self._cancel_event, add="+")
+        self.bind("<Unmap>", self._handle_unmap, add="+")
         self._bind_keyboard(self)
 
     def show(self) -> bool:
@@ -172,12 +202,24 @@ class ModalDialog(ctk.CTkToplevel):
         x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self._dialog_width) // 2)
         y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self._dialog_height) // 2)
         self.geometry(f"{self._dialog_width}x{self._dialog_height}+{x}+{y}")
-        self.deiconify()
-        self.lift()
-        self.grab_set()
-        self.focus_force()
-        self._confirm_button.focus_set()
-        self.wait_window()
+        self._shown = True
+        try:
+            self.deiconify()
+            self.lift()
+            self.grab_set()
+            self.focus_force()
+            self._confirm_button.focus_set()
+            self.wait_window()
+        finally:
+            self._shown = False
+            if not self._closing:
+                self._close()
+            _release_modal_grab(self, parent)
+            try:
+                if parent.winfo_exists():
+                    parent.after_idle(parent.focus_force)
+            except Exception:
+                pass
         return self.result
 
     def _begin_drag(self, event: Any) -> None:
@@ -188,6 +230,21 @@ class ModalDialog(ctk.CTkToplevel):
         widget.bind("<Return>", lambda _event: self._confirm(), add="+")
         for child in widget.winfo_children():
             self._bind_keyboard(child)
+
+    def _cancel_event(self, _event: Any = None) -> str:
+        self._cancel()
+        return "break"
+
+    def _handle_unmap(self, event: Any) -> None:
+        if event.widget is self and self._shown and not self._closing:
+            self.after_idle(self._cancel)
+
+    def iconify(self) -> None:
+        try:
+            super().iconify()
+        except tk.TclError:
+            # Override-redirect dialogs cannot be minimized on Windows.
+            self._cancel()
 
     def _drag(self, event: Any) -> None:
         x = event.x_root - self._drag_offset[0]
@@ -203,11 +260,15 @@ class ModalDialog(ctk.CTkToplevel):
         self._close()
 
     def _close(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        _release_modal_grab(self, self.master)
         try:
-            self.grab_release()
+            if self.winfo_exists():
+                self.destroy()
         except Exception:
             pass
-        self.destroy()
 
 
 def ask_confirmation(

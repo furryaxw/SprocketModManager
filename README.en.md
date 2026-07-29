@@ -4,11 +4,13 @@
 
 A Sprocket mod registry, GitHub Pages catalog, and Windows GUI client.
 
-The Registry stores only package-level metadata. Versions, tags, Release assets,
-and binaries always come from each mod's own GitHub repository. The client reads
-Releases, resolves dependencies, verifies publisher-provided SHA-256 digests when
-available, statically inspects DLLs, and transactionally installs files into
-`Mods`, `Plugins`, `UserLibs`, or controlled paths under `UserData`.
+Only package-level metadata is maintained by hand. Every hour, GitHub Actions reads
+each mod repository once and writes normalized versions, tags, and assets into the
+Pages `index.json`. The website and default client therefore consume no anonymous
+GitHub API quota for the catalog. Binaries still come directly from each mod's own
+GitHub Release. The client resolves the cached snapshot, verifies publisher-provided
+SHA-256 digests when available, statically inspects DLLs, and transactionally installs
+files into `Mods`, `Plugins`, `UserLibs`, or controlled paths under `UserData`.
 
 ## Current Vertical Slice
 
@@ -30,6 +32,10 @@ state tracking, removal of the requested package, and orphan dependency cleanup.
 .\.venv\Scripts\python.exe modman.py
 ```
 
+The GUI supports batch selection. Individual installs, batch installs, and update-all
+share one sequential download queue. Users can keep browsing and append work while the
+queue runs, and the client prevents exit during an active installation transaction.
+
 Use a local Registry with the CLI:
 
 ```powershell
@@ -48,10 +54,13 @@ is `https://sprocketmods.furryaxw.top/index.json`.
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods --offline
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods
 .\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json
+.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json --fetch-releases
 ```
 
 Online validation calls only the GitHub API. It does not clone, build, or execute
 third-party mod code.
+With `GITHUB_TOKEN`, `--fetch-releases` produces the same embedded Release snapshot
+used by Pages.
 
 ## Build the EXE
 
@@ -86,7 +95,7 @@ than trusting an unsigned checksum beside the EXE in the same Release.
 See [sprocket-mod-spec.en.md](sprocket-mod-spec.en.md) for the metadata specification
 and [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the author submission workflow.
 `site/` is a framework-free GitHub Pages site; `.github/workflows/pages.yml`
-generates the index and deploys it.
+generates and deploys the Release snapshot after pushes and once per hour.
 
 ## License
 
