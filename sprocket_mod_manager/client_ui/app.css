@@ -22,6 +22,7 @@
   --danger: #a9443d;
   --danger-hover: #c15148;
   --success: #65b981;
+  --warning: #cb9952;
   --focus: #f5a86b;
 }
 
@@ -208,9 +209,9 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .package-row.selected { background: var(--accent-quiet); box-shadow: inset 3px 0 var(--accent); }
 .package-check { width: 17px; height: 17px; accent-color: var(--accent); }
 .package-copy { min-width: 0; }
-.package-copy strong, .package-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.package-copy strong { margin-bottom: 5px; font-size: 13px; }
-.package-copy span { color: var(--muted); font: 10px/15px "Cascadia Mono", Consolas, monospace; }
+.package-copy strong, .package-copy span { display: block; }
+.package-copy strong { margin-bottom: 5px; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.package-copy span { color: var(--muted); font: 12px/17px "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; white-space: normal; }
 .package-version { display: grid; justify-items: end; gap: 6px; }
 .package-version b { color: var(--text-soft); font: 700 11px/15px "Cascadia Mono", Consolas, monospace; }
 .state-chip { padding: 2px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 10px; font-weight: 700; }
@@ -222,10 +223,13 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .empty-glyph { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; font: 300 24px/1 "Segoe UI", sans-serif; }
 .detail-topline { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 15px; }
 .detail-topline > span { color: var(--accent); font: 700 10px/14px "Cascadia Mono", Consolas, monospace; }
-.detail-panel h2 { margin: 0 0 5px; font-size: 20px; line-height: 26px; }
-.detail-id { margin: 0 0 18px; color: var(--muted); font: 11px/16px "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
-.detail-description { min-height: 40px; margin: 0 0 19px; color: var(--text-soft); font-size: 13px; line-height: 20px; }
-.detail-facts { display: grid; grid-template-columns: 1fr 1fr; margin: 0; border-top: 1px solid var(--line-soft); }
+.detail-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 20px; margin-bottom: 18px; }
+.detail-heading h2 { min-width: 0; margin: 0; font-size: 20px; line-height: 26px; overflow-wrap: anywhere; }
+.detail-id, .detail-version, .detail-authors { font-family: "Cascadia Mono", Consolas, monospace; }
+.detail-id { min-width: 0; margin: 0; color: var(--muted); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
+.detail-version { color: var(--text-soft); font-size: 12px; line-height: 18px; text-align: right; }
+.detail-authors { max-width: 230px; color: var(--muted); font-size: 10px; line-height: 15px; text-align: right; overflow-wrap: anywhere; }
+.detail-facts { display: grid; grid-template-columns: 1fr 1fr; margin: 22px 0 0; border-top: 1px solid var(--line-soft); }
 .detail-facts div { min-width: 0; padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
 .detail-facts div:nth-child(odd) { padding-right: 15px; }
 .detail-facts dt { margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; }
@@ -234,7 +238,7 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .dependency-section > strong { display: block; margin-bottom: 8px; color: var(--muted); font-size: 10px; }
 .dependency-list { display: grid; gap: 5px; }
 .dependency-line { display: flex; justify-content: space-between; gap: 16px; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 3px; background: #141819; font: 11px/15px "Cascadia Mono", Consolas, monospace; }
-.detail-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-bottom: 20px; }
 
 .list-toolbar { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 13px; color: var(--muted); font-size: 12px; }
 .data-list { border-top: 1px solid var(--line); }
@@ -262,6 +266,16 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .section-heading small { margin-top: 2px; color: var(--muted); font: 9px/12px "Cascadia Mono", Consolas, monospace; }
 .field-label { display: block; margin-bottom: 8px; color: var(--text-soft); font-size: 12px; font-weight: 650; }
 .field-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.component-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 22px; min-height: 58px; }
+.component-summary { min-width: 0; }
+.component-summary > div { display: flex; align-items: center; gap: 10px; }
+.component-summary strong { font-size: 12px; }
+.component-summary p { margin: 7px 0 0; color: var(--muted); font: 10px/15px "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+.component-state { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font: 700 9px/20px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+.component-state.ready { border-color: rgba(83, 159, 118, 0.55); color: var(--success); }
+.component-state.update { border-color: rgba(203, 153, 82, 0.6); color: var(--warning); }
+.component-state.missing, .component-state.error { border-color: rgba(204, 91, 84, 0.58); color: var(--danger); }
+.component-actions { display: flex; align-items: center; gap: 8px; }
 .form-actions { display: flex; justify-content: flex-end; padding-top: 22px; }
 
 .about-layout { width: min(820px, 100%); display: grid; grid-template-columns: 220px minmax(0, 1fr); column-gap: 38px; }
@@ -289,6 +303,31 @@ select { width: 100%; padding: 0 30px 0 11px; }
 .close-button:hover { color: var(--text); background: var(--surface-hover); }
 .modal-body { overflow: auto; padding: 20px 22px; color: var(--text-soft); font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .modal-plan { display: grid; gap: 12px; }
+.detail-readme { padding-top: 20px; border-top: 1px solid var(--line); }
+.readme-status { min-height: 110px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.readme-status.error { flex-wrap: wrap; color: var(--danger); }
+.readme-content { color: var(--text-soft); font-size: 13px; line-height: 1.65; white-space: normal; }
+.readme-content > :first-child, .readme-content > div > :first-child, .readme-content article > :first-child { margin-top: 0; }
+.readme-content h1, .readme-content h2, .readme-content h3, .readme-content h4 { margin: 1.4em 0 0.55em; color: var(--text); line-height: 1.3; }
+.readme-content h1 { padding-bottom: 9px; border-bottom: 1px solid var(--line); font-size: 24px; }
+.readme-content h2 { padding-bottom: 7px; border-bottom: 1px solid var(--line-soft); font-size: 19px; }
+.readme-content h3 { font-size: 16px; }
+.readme-content h4 { font-size: 14px; }
+.readme-content p, .readme-content ul, .readme-content ol, .readme-content blockquote, .readme-content pre, .readme-content table { margin: 0 0 14px; }
+.readme-content ul, .readme-content ol { padding-left: 25px; }
+.readme-content a[href] { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.readme-content blockquote { padding: 2px 0 2px 14px; border-left: 3px solid var(--line); color: var(--muted); }
+.readme-content code, .readme-content kbd { padding: 2px 5px; border: 1px solid var(--line-soft); border-radius: 3px; background: #101314; font: 11px/1.5 "Cascadia Mono", Consolas, monospace; }
+.readme-content pre { max-width: 100%; overflow: auto; padding: 13px; border: 1px solid var(--line-soft); border-radius: 4px; background: #101314; }
+.readme-content pre code { padding: 0; border: 0; background: transparent; }
+.readme-content table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; }
+.readme-content th, .readme-content td { padding: 7px 10px; border: 1px solid var(--line); text-align: left; }
+.readme-content th { color: var(--text); background: var(--surface-high); }
+.readme-content img { display: block; max-width: 100%; height: auto; margin: 12px auto; }
+.readme-content details { margin-bottom: 14px; }
+.detail-readme .readme-content h1 { font-size: 18px; }
+.detail-readme .readme-content h2 { font-size: 16px; }
+.detail-readme .readme-content h3 { font-size: 14px; }
 .plan-group { padding: 12px; border: 1px solid var(--line-soft); border-radius: 4px; background: #141819; }
 .plan-group strong { display: block; margin-bottom: 7px; color: var(--text); }
 .plan-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding: 4px 0; color: var(--muted); font: 11px/15px "Cascadia Mono", Consolas, monospace; }

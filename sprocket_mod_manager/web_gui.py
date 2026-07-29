@@ -17,6 +17,12 @@ from .config import (
 )
 from .errors import ModManagerError
 from .install_queue import ACTIVE_STATES, InstallQueue, InstallQueueEntry
+from .melonloader import (
+    MELONLOADER_REPOSITORY,
+    MelonLoaderInstallation,
+    MelonLoaderManager,
+    MelonLoaderRelease,
+)
 from .models import RegistryPackage, ReleaseInfo, ResolutionPlan
 from .semver import Version
 from .service import DEFAULT_INDEX_URL, ModManagerService
@@ -79,7 +85,14 @@ class ClientApi:
         self._window: Any = None
         self._close_pending = False
         self._destroy_scheduled = False
+        self._mutation_lock = threading.Lock()
+        self._melonloader_idle = threading.Event()
+        self._melonloader_idle.set()
         self.install_queue = InstallQueue(self._run_queued_install)
+        http = getattr(self.service, "http", None)
+        if http is None:
+            http = ModManagerService(self.config_store.app_dir).http
+        self.melonloader = MelonLoaderManager(self.config_store.app_dir, http)
 
     def bind_window(self, window: Any) -> None:
         self._window = window
@@ -106,6 +119,7 @@ class ClientApi:
             links={
                 "repository": MANAGER_REPOSITORY_URL,
                 "registry": REGISTRY_WEBSITE_URL,
+                "melonloader": f"https://github.com/{MELONLOADER_REPOSITORY}",
             },
         )
 
@@ -258,12 +272,118 @@ class ClientApi:
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="installed_load_failed")
 
+    def get_package_readme(self, package_id: str, refresh: bool = False) -> dict[str, Any]:
+        try:
+            service = self._current_service()
+            package = self._package(service, str(package_id))
+            readme = service.github.repository_readme(
+                package.repository,
+                refresh=bool(refresh),
+            )
+            return self._success(
+                package_id=package.id,
+                html=readme.html,
+                page_url=readme.page_url,
+            )
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            return self._failure(exc, code="readme_load_failed")
+
+    def open_readme_link(self, package_id: str, url: str) -> dict[str, Any]:
+        try:
+            self._package(self._current_service(), str(package_id))
+            parsed = urlparse(str(url))
+            if parsed.scheme != "https" or not parsed.hostname or len(str(url)) > 4096:
+                raise ValueError("README links must use HTTPS")
+            webbrowser.open(str(url))
+            return self._success()
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            return self._failure(exc, code="open_url_failed")
+
     def _valid_game_path(self) -> Path:
         value = effective_game_path(self.config)
         path = Path(value).expanduser() if value else None
         if path is None or not (path / "Sprocket.exe").is_file():
             raise GamePathRequiredError("valid Sprocket game path is required")
         return path
+
+    @staticmethod
+    def _melonloader_data(
+        installation: MelonLoaderInstallation,
+        release: MelonLoaderRelease | None,
+    ) -> dict[str, Any]:
+        installed_version = str(installation.version) if installation.version else None
+        latest_version = str(release.version) if release else None
+        return {
+            "installed": installation.installed,
+            "installed_version": installed_version,
+            "latest_version": latest_version,
+            "update_available": bool(
+                installation.installed
+                and installation.version is not None
+                and release is not None
+                and installation.version < release.version
+            ),
+            "page_url": release.page_url if release else "",
+            "asset_name": release.asset.name if release else "",
+            "asset_size": release.asset.size if release else 0,
+        }
+
+    def get_melonloader_status(
+        self,
+        include_latest: bool = True,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            installation, release = self.melonloader.status(
+                self._valid_game_path(),
+                include_latest=bool(include_latest),
+                refresh=bool(refresh),
+            )
+            return self._success(
+                melonloader=self._melonloader_data(installation, release)
+            )
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            code = (
+                "game_path_required"
+                if isinstance(exc, GamePathRequiredError)
+                else "melonloader_status_failed"
+            )
+            return self._failure(exc, code=code)
+
+    def install_melonloader(self, refresh: bool = False) -> dict[str, Any]:
+        operation_started = False
+        try:
+            game_path = self._valid_game_path()
+            with self._state_lock:
+                if not self._melonloader_idle.is_set():
+                    raise RuntimeError("a MelonLoader installation is already running")
+                if any(entry.state in ACTIVE_STATES for entry in self.install_queue.snapshot()):
+                    raise RuntimeError("wait for the mod install queue to finish before changing MelonLoader")
+                if not self._mutation_lock.acquire(blocking=False):
+                    raise RuntimeError("another game-directory operation is already running")
+                self._melonloader_idle.clear()
+                operation_started = True
+            try:
+                result = self.melonloader.install(game_path, refresh=bool(refresh))
+            finally:
+                if operation_started:
+                    self._melonloader_idle.set()
+                    self._mutation_lock.release()
+                    operation_started = False
+            installation = self.melonloader.detect(game_path)
+            return self._success(
+                melonloader=self._melonloader_data(installation, result.release),
+                files_installed=result.files_installed,
+                sha256=result.sha256,
+                publisher_verified=result.publisher_verified,
+            )
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            code = (
+                "game_path_required"
+                if isinstance(exc, GamePathRequiredError)
+                else "melonloader_install_failed"
+            )
+            return self._failure(exc, code=code)
 
     @staticmethod
     def _package(service: ModManagerService, package_id: str) -> RegistryPackage:
@@ -312,7 +432,11 @@ class ClientApi:
                     skipped.append(package.id)
                     continue
                 plans.append(self._plan_data(service, package, plan))
-            return self._success(plans=plans, skipped=skipped)
+            return self._success(
+                plans=plans,
+                skipped=skipped,
+                melonloader_installed=self.melonloader.detect(game_path).installed,
+            )
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"
@@ -321,9 +445,23 @@ class ClientApi:
             )
             return self._failure(exc, code=code)
 
-    def enqueue_install(self, package_ids: list[str]) -> dict[str, Any]:
+    def enqueue_install(
+        self,
+        package_ids: list[str],
+        allow_without_melonloader: bool = False,
+    ) -> dict[str, Any]:
         try:
             game_path = self._valid_game_path()
+            if not self._melonloader_idle.is_set():
+                raise RuntimeError("wait for the MelonLoader installation to finish")
+            if (
+                not self.melonloader.detect(game_path).installed
+                and not bool(allow_without_melonloader)
+            ):
+                return self._failure(
+                    RuntimeError("MelonLoader is not installed"),
+                    code="melonloader_required",
+                )
             service = self._current_service()
             installed = service.installed(game_path)
             eligible: list[str] = []
@@ -333,7 +471,10 @@ class ClientApi:
                 root = plan.by_id()[package.id]
                 if installed.get(package.id, {}).get("version") != str(root.release.version):
                     eligible.append(package.id)
-            added = self.install_queue.enqueue(eligible, game_path, context=service)
+            with self._state_lock:
+                if not self._melonloader_idle.is_set():
+                    raise RuntimeError("wait for the MelonLoader installation to finish")
+                added = self.install_queue.enqueue(eligible, game_path, context=service)
             return self._success(added=[entry.task_id for entry in added], count=len(added))
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
@@ -343,9 +484,19 @@ class ClientApi:
             )
             return self._failure(exc, code=code)
 
-    def update_all(self) -> dict[str, Any]:
+    def update_all(self, allow_without_melonloader: bool = False) -> dict[str, Any]:
         try:
             game_path = self._valid_game_path()
+            if not self._melonloader_idle.is_set():
+                raise RuntimeError("wait for the MelonLoader installation to finish")
+            if (
+                not self.melonloader.detect(game_path).installed
+                and not bool(allow_without_melonloader)
+            ):
+                return self._failure(
+                    RuntimeError("MelonLoader is not installed"),
+                    code="melonloader_required",
+                )
             service = self._current_service()
             installed = service.installed(game_path)
             updates: list[str] = []
@@ -356,7 +507,10 @@ class ClientApi:
                 latest = plan.by_id()[package_id].release.version
                 if info.get("version") != str(latest):
                     updates.append(package_id)
-            added = self.install_queue.enqueue(updates, game_path, context=service)
+            with self._state_lock:
+                if not self._melonloader_idle.is_set():
+                    raise RuntimeError("wait for the MelonLoader installation to finish")
+                added = self.install_queue.enqueue(updates, game_path, context=service)
             return self._success(added=[entry.task_id for entry in added], count=len(added))
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
@@ -368,12 +522,20 @@ class ClientApi:
 
     def remove(self, package_id: str) -> dict[str, Any]:
         try:
-            if any(entry.state in ACTIVE_STATES for entry in self.install_queue.snapshot()):
-                raise RuntimeError("wait for the install queue to finish before removing packages")
-            game_path = self._valid_game_path()
-            service = self._current_service()
-            package = self._package(service, str(package_id))
-            removed, warnings = service.remove(package.id, game_path)
+            with self._state_lock:
+                if not self._melonloader_idle.is_set():
+                    raise RuntimeError("wait for the MelonLoader installation to finish")
+                if any(entry.state in ACTIVE_STATES for entry in self.install_queue.snapshot()):
+                    raise RuntimeError("wait for the install queue to finish before removing packages")
+                if not self._mutation_lock.acquire(blocking=False):
+                    raise RuntimeError("another game-directory operation is already running")
+            try:
+                game_path = self._valid_game_path()
+                service = self._current_service()
+                package = self._package(service, str(package_id))
+                removed, warnings = service.remove(package.id, game_path)
+            finally:
+                self._mutation_lock.release()
             return self._success(removed=removed, warnings=warnings)
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
@@ -393,7 +555,8 @@ class ClientApi:
             if entry.context is not None
             else self._current_service()
         )
-        service.install(entry.package_id, entry.game_path, progress=progress)
+        with self._mutation_lock:
+            service.install(entry.package_id, entry.game_path, progress=progress)
 
     def _queue_data(self) -> list[dict[str, Any]]:
         return [
@@ -441,7 +604,10 @@ class ClientApi:
             if host not in {"github.com", "sprocketmods.furryaxw.top"}:
                 raise ValueError("link host is not allowed")
             if host == "github.com":
-                allowed_repositories = {MANAGER_REPOSITORY.casefold()}
+                allowed_repositories = {
+                    MANAGER_REPOSITORY.casefold(),
+                    MELONLOADER_REPOSITORY.casefold(),
+                }
                 service = self._current_service()
                 if service.registry:
                     allowed_repositories.update(
@@ -461,8 +627,12 @@ class ClientApi:
 
     def on_closing(self) -> bool | None:
         self._close_pending = True
-        if self.install_queue.close(timeout=0.25):
-            return None
+        queue_closed = self.install_queue.close(timeout=0.25)
+        if queue_closed and self._melonloader_idle.wait(0.25):
+            mutation_finished = self._mutation_lock.acquire(blocking=False)
+            if mutation_finished:
+                self._mutation_lock.release()
+                return None
         with self._state_lock:
             if self._destroy_scheduled:
                 return False
@@ -470,6 +640,9 @@ class ClientApi:
 
         def finish_close() -> None:
             self.install_queue.close(timeout=None)
+            self._melonloader_idle.wait()
+            with self._mutation_lock:
+                pass
             if self._window is not None:
                 self._window.destroy()
 
@@ -478,6 +651,9 @@ class ClientApi:
 
     def on_closed(self) -> None:
         self.install_queue.close(timeout=5)
+        self._melonloader_idle.wait(5)
+        if self._mutation_lock.acquire(timeout=5):
+            self._mutation_lock.release()
 
 
 def run_gui(version: str) -> None:

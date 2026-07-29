@@ -33,6 +33,12 @@ class RepositoryRelease:
     page_url: str
 
 
+@dataclass(frozen=True)
+class RepositoryReadme:
+    html: str
+    page_url: str
+
+
 def is_loopback_host(hostname: str | None) -> bool:
     if not hostname:
         return False
@@ -56,8 +62,8 @@ class HttpClient:
         self.cache_dir = cache_dir
         self.token = token or os.environ.get("GITHUB_TOKEN")
 
-    def _cache_paths(self, url: str) -> tuple[Path, Path]:
-        key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    def _cache_paths(self, url: str, accept: str = "") -> tuple[Path, Path]:
+        key = hashlib.sha256(f"{url}\0{accept}".encode("utf-8")).hexdigest()
         return self.cache_dir / "http" / f"{key}.json", self.cache_dir / "http" / f"{key}.body"
 
     @staticmethod
@@ -96,7 +102,7 @@ class HttpClient:
             allowed_hosts,
             allow_loopback_http=allow_loopback_http,
         )
-        meta_path, body_path = self._cache_paths(url)
+        meta_path, body_path = self._cache_paths(url, accept)
         cached_meta: dict[str, Any] = {}
         if meta_path.is_file() and body_path.is_file():
             try:
@@ -315,6 +321,38 @@ class GitHubClient:
         ):
             raise DownloadError(f"invalid GitHub release page URL: {page_url or '-'}")
         return RepositoryRelease(tag=tag, version=version, page_url=page_url)
+
+    def repository_readme(
+        self,
+        repository: str,
+        *,
+        refresh: bool = False,
+    ) -> RepositoryReadme:
+        parts = repository.split("/")
+        if len(parts) != 2 or not all(parts):
+            raise DownloadError(f"invalid GitHub repository: {repository}")
+        owner, name = parts
+        url = (
+            "https://api.github.com/repos/"
+            f"{quote(owner, safe='')}/{quote(name, safe='')}/readme"
+        )
+        data = self.http.get_bytes(
+            url,
+            accept="application/vnd.github.html+json",
+            max_bytes=4 * 1024 * 1024,
+            cache_seconds=0 if refresh else GITHUB_RELEASE_CACHE_SECONDS,
+            allowed_hosts={"api.github.com"},
+        )
+        try:
+            html = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DownloadError(f"GitHub README is not UTF-8: {repository}") from exc
+        if not html.strip():
+            raise DownloadError(f"GitHub README is empty: {repository}")
+        return RepositoryReadme(
+            html=html,
+            page_url=f"https://github.com/{repository}#readme",
+        )
 
     @staticmethod
     def install_assets(package: RegistryPackage, release: ReleaseInfo) -> tuple[ReleaseAsset, ...]:

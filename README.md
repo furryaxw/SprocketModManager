@@ -23,6 +23,18 @@ furryaxw.sprocket-laser-rangefinder
 该场景已使用两个真实 Release 通过下载、远端 digest 校验、DLL 分类、隔离目录安装、状态记录、
 主包卸载和孤立依赖清理。
 
+## MelonLoader 管理
+
+客户端设置页会检测当前 Sprocket 目录中的 MelonLoader 及其版本，并读取
+`LavaGang/MelonLoader` 的最新正式 GitHub Release。安装或更新时，管理器只选择官方
+`MelonLoader.x64.zip`，验证 Release 提供的 SHA-256，然后安全解压到 Sprocket 根目录。
+覆盖操作带有回滚保护，并保留 `MelonLoader/Il2CppAssemblies`、日志、配置以及 ZIP 中未包含的
+其他本地文件。
+
+安装单个模组、批量安装或执行全部更新前，如果当前游戏目录没有 MelonLoader，客户端会询问是否
+立即安装。选择立即安装时，MelonLoader 安装成功后才会继续模组任务；选择暂不安装时会按确认继续，
+但模组在安装 MelonLoader 前不能被游戏加载。
+
 ## 运行
 
 ```powershell
@@ -31,7 +43,9 @@ furryaxw.sprocket-laser-rangefinder
 
 GUI 使用 Windows Edge WebView2 的硬件加速渲染，Python 继续负责 Registry、扫描、依赖
 解析与安装。GUI 支持批量选择；单项安装、批量安装和全部更新共用一个顺序下载队列。队列
-运行期间仍可继续浏览并追加任务，正在执行安装事务时客户端会等待事务完成后再退出。
+运行期间仍可继续浏览并追加任务，正在执行安装事务时客户端会等待事务完成后再退出。模组列表
+显示简介；详情头部集中显示名称、ID、版本和作者，正文会读取登记仓库的默认 README，使用
+GitHub 渲染结果并在本地净化后显示。
 
 CLI 使用本地 Registry：
 
@@ -75,11 +89,15 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 - 原生或无法识别的 DLL 必须由 Registry override 指定目标。
 - 同一路径的不同内容、外部修改的托管文件和不同哈希的手工文件会阻止安装。
 - Sprocket 运行时拒绝修改游戏目录。
+- MelonLoader 只从 `LavaGang/MelonLoader` 的最新正式 Release 获取精确命名的 Windows x64 ZIP；
+  解压同样限制条目数、体积、压缩比和目标路径，并在覆盖失败时恢复原文件。
+- README 只能从该模组登记的 GitHub 仓库读取；显示前会移除脚本、表单、嵌入内容、不安全 URL
+  和非 GitHub 图片资源。
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改或安装前就存在的文件。
 
-客户端目前只检查 GitHub Release 并提供更新入口，不会自动下载或覆盖安装。若未来启用
-自动更新，应使用固定公钥验证的更新清单或可验证的 Windows 代码签名，不能只信任与 EXE
-同处一个 Release 的未签名校验文件。
+模组管理器自身的更新目前只检查 GitHub Release 并提供更新入口，不会自动下载或覆盖 EXE。
+若未来启用自身自动更新，应使用固定公钥验证的更新清单或可验证的 Windows 代码签名，不能只
+信任与 EXE 同处一个 Release 的未签名校验文件。
 
 ## Registry
 
