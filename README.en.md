@@ -26,6 +26,20 @@ This scenario has been exercised against two real Releases, including download,
 remote digest verification, DLL classification, isolated-directory installation,
 state tracking, removal of the requested package, and orphan dependency cleanup.
 
+## MelonLoader management
+
+The Settings page detects MelonLoader and its version in the selected Sprocket
+directory, then reads the latest stable GitHub Release from `LavaGang/MelonLoader`.
+Install and update operations select only the official `MelonLoader.x64.zip`, verify
+the Release SHA-256, and safely extract it into the Sprocket root. Replacement is
+rollback-protected and preserves `MelonLoader/Il2CppAssemblies`, logs, configuration,
+and other local files that are not present in the ZIP.
+
+Before a single install, batch install, or update-all operation, the client offers to
+install MelonLoader when it is missing. Choosing to install waits for MelonLoader to
+finish before queueing the mods. Choosing to continue leaves the mod files installable,
+but the game cannot load them until MelonLoader is installed.
+
 ## Run
 
 ```powershell
@@ -36,7 +50,9 @@ The GUI is hardware-accelerated by Windows Edge WebView2, while Python continues
 handle the Registry, scanning, dependency resolution, and installation. Individual
 installs, batch installs, and update-all share one sequential download queue. Users can
 keep browsing and append work while the queue runs; closing waits for the active
-installation transaction to finish.
+installation transaction to finish. Catalog rows show each mod's summary; the detail
+header groups its name, ID, version, and authors, while the body reads the registered
+repository's default README, uses GitHub's renderer, and sanitizes the result locally.
 
 Use a local Registry with the CLI:
 
@@ -86,11 +102,16 @@ Edge installations.
 - Conflicting content at the same path, externally modified managed files, and
   manually installed files with a different hash block installation.
 - The game directory is never modified while Sprocket is running.
+- MelonLoader is fetched only from the exact Windows x64 ZIP in the latest stable
+  `LavaGang/MelonLoader` Release. Extraction applies entry, size, ratio, and path
+  limits and rolls back overwritten files after a failure.
+- READMEs are fetched only from the mod's registered GitHub repository. Scripts, forms,
+  embedded content, unsafe URLs, and non-GitHub image sources are removed before display.
 - Installation state is isolated per game directory. Uninstalling never removes
   files that the user changed or that existed before installation.
 
-The client currently checks GitHub Releases and provides an update link; it does
-not download or replace itself automatically. Any future automatic updater should
+For manager self-updates, the client currently checks GitHub Releases and provides
+an update link; it does not download or replace its EXE. Any future updater should
 use a fixed-public-key update manifest or verifiable Windows code signing, rather
 than trusting an unsigned checksum beside the EXE in the same Release.
 

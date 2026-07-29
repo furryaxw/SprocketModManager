@@ -41,6 +41,31 @@ const TEXT = {
     gameLocation: "游戏位置",
     gamePath: "Sprocket 路径",
     browse: "浏览",
+    melonloaderStatus: "加载器状态",
+    melonloaderChecking: "正在检查本机与官方 Release",
+    melonloaderMissing: "未检测到 MelonLoader。安装模组前需要先安装加载器。",
+    melonloaderInstalled: "已安装 {installed}，官方最新版本 {latest}",
+    melonloaderInstalledUnknown: "已安装 MelonLoader，但无法读取版本；官方最新版本 {latest}",
+    melonloaderUpdateReady: "已安装 {installed}，可更新至 {latest}",
+    melonloaderUnavailable: "无法读取 MelonLoader 状态",
+    melonloaderPathRequired: "保存有效的 Sprocket 路径后即可管理 MelonLoader",
+    installMelonLoader: "安装 MelonLoader",
+    updateMelonLoader: "更新 MelonLoader",
+    reinstallMelonLoader: "重新安装",
+    melonloaderInstalling: "正在从官方 GitHub Release 安装 MelonLoader",
+    melonloaderInstalledDone: "MelonLoader {version} 安装完成，共写入 {count} 个文件",
+    melonloaderRequiredTitle: "尚未安装 MelonLoader",
+    melonloaderRequiredMessage: "安装模组需要 MelonLoader。是否现在从官方 GitHub Release 下载 MelonLoader.x64.zip 并安装到 Sprocket？",
+    installNow: "现在安装",
+    continueWithout: "暂不安装并继续",
+    officialRelease: "官方 Release",
+    checking: "检查中",
+    checkStatus: "重新检查",
+    installedLabel: "已安装",
+    missingLabel: "未安装",
+    updateLabel: "可更新",
+    errorLabel: "不可用",
+    versionUnknown: "版本未知",
     indexUrl: "索引 URL 或本地路径",
     saveSettings: "保存设置",
     currentVersion: "当前版本",
@@ -66,6 +91,9 @@ const TEXT = {
     dependencies: "依赖",
     none: "无",
     repositoryAction: "查看仓库",
+    loadingReadme: "正在读取 README",
+    readmeFailed: "README 读取失败",
+    retry: "重试",
     install: "安装",
     update: "更新",
     remove: "卸载",
@@ -145,6 +173,31 @@ const TEXT = {
     gameLocation: "Game location",
     gamePath: "Sprocket path",
     browse: "Browse",
+    melonloaderStatus: "Loader status",
+    melonloaderChecking: "Checking the local installation and official Release",
+    melonloaderMissing: "MelonLoader was not detected. Install the loader before adding mods.",
+    melonloaderInstalled: "Installed {installed}; latest official version {latest}",
+    melonloaderInstalledUnknown: "MelonLoader is installed, but its version is unknown; latest official version {latest}",
+    melonloaderUpdateReady: "Installed {installed}; update {latest} is available",
+    melonloaderUnavailable: "MelonLoader status is unavailable",
+    melonloaderPathRequired: "Save a valid Sprocket path to manage MelonLoader",
+    installMelonLoader: "Install MelonLoader",
+    updateMelonLoader: "Update MelonLoader",
+    reinstallMelonLoader: "Reinstall",
+    melonloaderInstalling: "Installing MelonLoader from the official GitHub Release",
+    melonloaderInstalledDone: "MelonLoader {version} installed; wrote {count} files",
+    melonloaderRequiredTitle: "MelonLoader is not installed",
+    melonloaderRequiredMessage: "Mods require MelonLoader. Download MelonLoader.x64.zip from the official GitHub Release and install it into Sprocket now?",
+    installNow: "Install now",
+    continueWithout: "Continue without it",
+    officialRelease: "Official Release",
+    checking: "Checking",
+    checkStatus: "Check again",
+    installedLabel: "Installed",
+    missingLabel: "Not installed",
+    updateLabel: "Update available",
+    errorLabel: "Unavailable",
+    versionUnknown: "Unknown version",
     indexUrl: "Index URL or local path",
     saveSettings: "Save settings",
     currentVersion: "Current version",
@@ -170,6 +223,9 @@ const TEXT = {
     dependencies: "Dependencies",
     none: "None",
     repositoryAction: "Repository",
+    loadingReadme: "Loading README",
+    readmeFailed: "README failed to load",
+    retry: "Retry",
     install: "Install",
     update: "Update",
     remove: "Remove",
@@ -224,6 +280,10 @@ const state = {
   batch: new Set(),
   settings: { language: "auto", game_path: "", index_url: "", index_placeholder: "" },
   links: { repository: "", registry: "" },
+  melonloader: null,
+  melonloaderLoading: false,
+  readmes: new Map(),
+  readmeLoading: new Set(),
   update: null,
   queueSignature: "",
   queueStates: new Map(),
@@ -275,6 +335,7 @@ function setLanguage(language) {
   renderInstalled();
   renderQueue();
   renderDetail();
+  renderMelonLoader();
   updatePageHeader();
 }
 
@@ -346,7 +407,10 @@ async function showPage(page) {
     element.classList.toggle("active", active);
   });
   updatePageHeader();
-  if (page === "settings") await reloadSettings();
+  if (page === "settings") {
+    await reloadSettings();
+    await refreshMelonLoaderStatus(false);
+  }
   if (page === "installed") await refreshInstalled();
   if (page === "downloads") await pollQueue(true);
   if (page === "about" && !state.update) await checkManagerUpdate(false);
@@ -476,7 +540,8 @@ function renderCatalog() {
     const title = document.createElement("strong");
     title.textContent = packageLabel(pkg);
     const metadata = document.createElement("span");
-    metadata.textContent = `${pkg.id}  |  ${categoryText(pkg.category)}`;
+    metadata.textContent = localized(pkg.description, pkg.id);
+    metadata.title = `${pkg.id} | ${categoryText(pkg.category)}`;
     copy.append(title, metadata);
 
     const version = document.createElement("div");
@@ -508,6 +573,7 @@ function updateBatchButton() {
 function selectPackage(packageId) {
   state.selectedId = packageId;
   renderCatalog();
+  void loadPackageReadme(packageId);
 }
 
 function appendFact(list, label, value) {
@@ -548,19 +614,23 @@ function renderDetail() {
   chip.textContent = currentState.label;
   topline.append(record, chip);
 
+  const heading = document.createElement("div");
+  heading.className = "detail-heading";
   const title = document.createElement("h2");
   title.textContent = packageLabel(pkg);
   const id = document.createElement("p");
   id.className = "detail-id";
   id.textContent = pkg.id;
-  const description = document.createElement("p");
-  description.className = "detail-description";
-  description.textContent = localized(pkg.description, "");
+  const version = document.createElement("b");
+  version.className = "detail-version";
+  version.textContent = pkg.release?.version || "-";
+  const authors = document.createElement("span");
+  authors.className = "detail-authors";
+  authors.textContent = (pkg.authors || []).join(", ") || "-";
+  heading.append(title, version, id, authors);
 
   const facts = document.createElement("dl");
   facts.className = "detail-facts";
-  appendFact(facts, tr("version"), pkg.release?.version || "-");
-  appendFact(facts, tr("authors"), (pkg.authors || []).join(", "));
   appendFact(facts, tr("license"), pkg.license);
   appendFact(facts, tr("categoryLabel"), categoryText(pkg.category));
   appendFact(facts, tr("assets"), (pkg.install_assets || []).join(", "));
@@ -591,6 +661,39 @@ function renderDetail() {
   }
   dependencySection.append(dependencyTitle, dependencies);
 
+  const readmeSection = document.createElement("section");
+  readmeSection.className = "detail-readme";
+  const readme = state.readmes.get(pkg.id);
+  if (state.readmeLoading.has(pkg.id)) {
+    const loading = document.createElement("div");
+    loading.className = "readme-status";
+    const spinner = document.createElement("span");
+    spinner.className = "loader";
+    const label = document.createElement("span");
+    label.textContent = tr("loadingReadme");
+    loading.append(spinner, label);
+    readmeSection.append(loading);
+  } else if (readme?.error) {
+    const failure = document.createElement("div");
+    failure.className = "readme-status error";
+    const message = document.createElement("span");
+    message.textContent = readme.error;
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = tr("retry");
+    retry.addEventListener("click", () => loadPackageReadme(pkg.id, true));
+    failure.append(message, retry);
+    readmeSection.append(failure);
+  } else if (readme?.html) {
+    readmeSection.append(sanitizeReadmeHtml(readme.html, pkg.id));
+  } else {
+    const pending = document.createElement("div");
+    pending.className = "readme-status";
+    pending.textContent = tr("loadingReadme");
+    readmeSection.append(pending);
+  }
+
   const actions = document.createElement("div");
   actions.className = "detail-actions";
   const repo = document.createElement("button");
@@ -612,7 +715,7 @@ function renderDetail() {
   install.addEventListener("click", () => beginInstall([pkg.id]));
   actions.append(repo, remove, install);
 
-  panel.append(topline, title, id, description, facts, dependencySection, actions);
+  panel.append(topline, heading, actions, readmeSection, facts, dependencySection);
 }
 
 async function loadCatalog(refresh = false) {
@@ -674,6 +777,147 @@ function createPlanBody(plans) {
   return body;
 }
 
+const README_TAGS = new Set([
+  "A", "ARTICLE", "BLOCKQUOTE", "BR", "CODE", "DEL", "DETAILS", "DIV", "EM",
+  "H1", "H2", "H3", "H4", "H5", "H6", "HR", "IMG", "KBD", "LI", "OL", "P",
+  "PRE", "S", "SECTION", "SPAN", "STRONG", "SUB", "SUMMARY", "SUP", "TABLE",
+  "TBODY", "TD", "TH", "THEAD", "TR", "UL",
+]);
+const README_DROP_TAGS = new Set([
+  "BASE", "BUTTON", "EMBED", "FORM", "IFRAME", "INPUT", "LINK", "META", "OBJECT",
+  "SCRIPT", "STYLE", "SVG", "TEMPLATE", "TEXTAREA",
+]);
+
+function readmeHttpsUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function readmeImageUrl(value) {
+  const url = readmeHttpsUrl(value);
+  if (!url) return null;
+  const host = url.hostname.toLowerCase();
+  return host === "github.com" || host.endsWith(".githubusercontent.com") ? url : null;
+}
+
+function sanitizeReadmeHtml(html, packageId) {
+  const parsed = new DOMParser().parseFromString(String(html || ""), "text/html");
+  const output = document.createElement("article");
+  output.className = "readme-content";
+
+  function clean(node) {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || "");
+    if (node.nodeType !== Node.ELEMENT_NODE) return document.createDocumentFragment();
+    if (README_DROP_TAGS.has(node.tagName)) return document.createDocumentFragment();
+
+    const children = document.createDocumentFragment();
+    for (const child of [...node.childNodes]) children.append(clean(child));
+    if (!README_TAGS.has(node.tagName)) return children;
+
+    const element = document.createElement(node.tagName.toLowerCase());
+    if (node.hasAttribute("dir") && ["auto", "ltr", "rtl"].includes(node.getAttribute("dir"))) {
+      element.setAttribute("dir", node.getAttribute("dir"));
+    }
+    if (node.hasAttribute("id") && /^user-content-[A-Za-z0-9_.:-]+$/.test(node.id)) {
+      element.id = node.id;
+    }
+    if (node.tagName === "A") {
+      const href = node.getAttribute("href") || "";
+      if (href.startsWith("#") || readmeHttpsUrl(href)) element.setAttribute("href", href);
+      if (node.hasAttribute("title")) element.title = node.getAttribute("title").slice(0, 512);
+    }
+    if (node.tagName === "IMG") {
+      const source = readmeImageUrl(node.getAttribute("src") || "");
+      if (!source) return children;
+      element.src = source.href;
+      element.alt = (node.getAttribute("alt") || "").slice(0, 1024);
+      element.loading = "lazy";
+      element.referrerPolicy = "no-referrer";
+    }
+    if (["TD", "TH"].includes(node.tagName)) {
+      for (const attribute of ["colspan", "rowspan"]) {
+        const value = Number(node.getAttribute(attribute));
+        if (Number.isInteger(value) && value > 0 && value <= 100) element.setAttribute(attribute, String(value));
+      }
+    }
+    if (node.tagName === "DETAILS" && node.hasAttribute("open")) element.open = true;
+    element.append(children);
+    return element;
+  }
+
+  for (const child of [...parsed.body.childNodes]) output.append(clean(child));
+  output.addEventListener("click", (event) => {
+    const anchor = event.target.closest?.("a[href]");
+    if (!anchor || !output.contains(anchor)) return;
+    event.preventDefault();
+    const href = anchor.getAttribute("href");
+    if (href.startsWith("#")) {
+      const targetId = href.slice(1);
+      if (targetId) output.querySelector(`#${CSS.escape(targetId)}`)?.scrollIntoView({ block: "start" });
+      return;
+    }
+    void callApi("open_readme_link", packageId, href).then((result) => {
+      if (!result.ok) resultError(result);
+    });
+  });
+  return output;
+}
+
+async function loadPackageReadme(packageId, refresh = false) {
+  if (state.readmeLoading.has(packageId)) return;
+  if (!refresh && state.readmes.get(packageId)?.html) return;
+  state.readmeLoading.add(packageId);
+  if (state.selectedId === packageId) renderDetail();
+  try {
+    const result = await callApi("get_package_readme", packageId, refresh);
+    if (!result.ok) {
+      state.readmes.set(packageId, {
+        error: result.message || tr("readmeFailed"),
+      });
+      return;
+    }
+    state.readmes.set(packageId, {
+      html: result.html,
+      pageUrl: result.page_url,
+    });
+  } catch (error) {
+    state.readmes.set(packageId, { error: String(error) });
+  } finally {
+    state.readmeLoading.delete(packageId);
+    if (state.selectedId === packageId) renderDetail();
+  }
+}
+
+async function ensureMelonLoader(installedHint = null) {
+  let installed = installedHint;
+  if (installed === null) {
+    const status = await callApi("get_melonloader_status", false, false);
+    if (!status.ok) {
+      if (status.code === "game_path_required") {
+        showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
+      } else resultError(status);
+      return { proceed: false, allowWithout: false };
+    }
+    installed = Boolean(status.melonloader?.installed);
+  }
+  if (installed) return { proceed: true, allowWithout: false };
+
+  const installNow = await showModal({
+    kicker: "MOD RUNTIME",
+    title: tr("melonloaderRequiredTitle"),
+    body: tr("melonloaderRequiredMessage"),
+    confirmText: tr("installNow"),
+    cancelText: tr("continueWithout"),
+  });
+  if (!installNow) return { proceed: true, allowWithout: true };
+  const installedNow = await installMelonLoader();
+  return { proceed: installedNow, allowWithout: false };
+}
+
 async function beginInstall(packageIds) {
   if (!packageIds.length) return;
   setStatus(tr("resolving"));
@@ -698,7 +942,13 @@ async function beginInstall(packageIds) {
     confirmText: tr("confirm"),
   });
   if (!confirmed) return;
-  const queued = await callApi("enqueue_install", result.plans.map((plan) => plan.id));
+  const loaderDecision = await ensureMelonLoader(Boolean(result.melonloader_installed));
+  if (!loaderDecision.proceed) return;
+  const queued = await callApi(
+    "enqueue_install",
+    result.plans.map((plan) => plan.id),
+    loaderDecision.allowWithout,
+  );
   if (!queued.ok) {
     resultError(queued);
     return;
@@ -792,7 +1042,19 @@ async function updateAll() {
   const button = $("#update-all");
   button.disabled = true;
   try {
-    const result = await callApi("update_all");
+    const hasUpdates = state.installed.some((item) => {
+      if (!item.requested) return false;
+      const pkg = state.packages.find((candidate) => candidate.id === item.id);
+      return Boolean(pkg?.release && item.version !== pkg.release.version);
+    });
+    if (!hasUpdates) {
+      toast(tr("noUpdates"));
+      setStatus(tr("noUpdates"), "ready");
+      return;
+    }
+    const loaderDecision = await ensureMelonLoader(null);
+    if (!loaderDecision.proceed) return;
+    const result = await callApi("update_all", loaderDecision.allowWithout);
     if (!result.ok) {
       if (result.code === "game_path_required") {
         showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
@@ -884,6 +1146,7 @@ async function pollQueue(force = false) {
     const newlyCompleted = state.queue.some((entry) => entry.state === "completed" && previous.get(entry.task_id) !== "completed");
     const newlyFailed = state.queue.find((entry) => entry.state === "failed" && previous.get(entry.task_id) !== "failed");
     renderQueue();
+    renderMelonLoader();
     updatePageHeader();
     if (newlyCompleted) await refreshInstalled();
     if (newlyFailed) toast(newlyFailed.message || tr("operationFailed"), "error");
@@ -909,6 +1172,7 @@ async function reloadSettings() {
 }
 
 async function saveSettings(values = null) {
+  const previousGamePath = state.settings.game_path || "";
   const payload = values || {
     language: state.languageMode,
     game_path: $("#game-path").value.trim(),
@@ -920,6 +1184,7 @@ async function saveSettings(values = null) {
     return false;
   }
   state.settings = result.settings;
+  if (previousGamePath !== (result.settings.game_path || "")) state.melonloader = null;
   state.languageMode = result.settings.language;
   setLanguage(result.language);
   toast(tr("settingsSaved"));
@@ -941,6 +1206,113 @@ async function detectGamePathPlaceholder() {
   if (!result.ok) return;
   $("#game-path").placeholder = result.path || tr("steamNotFound");
   updatePageHeader();
+}
+
+function renderMelonLoader() {
+  const status = $("#melonloader-state");
+  const detail = $("#melonloader-detail");
+  const action = $("#melonloader-action");
+  const release = $("#open-melonloader-release");
+  if (!status || !detail || !action || !release) return;
+
+  status.className = "component-state";
+  release.disabled = !state.links.melonloader && !state.melonloader?.page_url;
+  if (state.melonloaderLoading) {
+    status.textContent = tr("checking");
+    detail.textContent = tr("melonloaderChecking");
+    action.textContent = tr("checking");
+    action.disabled = true;
+    return;
+  }
+  if (!state.melonloader) {
+    status.textContent = tr("checking");
+    detail.textContent = tr("melonloaderChecking");
+    action.textContent = tr("checkStatus");
+    action.disabled = false;
+    return;
+  }
+  if (state.melonloader.error) {
+    status.classList.add("error");
+    status.textContent = tr("errorLabel");
+    detail.textContent = state.melonloader.errorCode === "game_path_required"
+      ? tr("melonloaderPathRequired")
+      : state.melonloader.error;
+    action.textContent = tr("checkStatus");
+    action.disabled = false;
+    return;
+  }
+
+  const installed = state.melonloader.installed_version || tr("versionUnknown");
+  const latest = state.melonloader.latest_version || tr("versionUnknown");
+  if (!state.melonloader.installed) {
+    status.classList.add("missing");
+    status.textContent = tr("missingLabel");
+    detail.textContent = tr("melonloaderMissing");
+    action.textContent = tr("installMelonLoader");
+  } else if (state.melonloader.update_available) {
+    status.classList.add("update");
+    status.textContent = tr("updateLabel");
+    detail.textContent = tr("melonloaderUpdateReady", { installed, latest });
+    action.textContent = tr("updateMelonLoader");
+  } else {
+    status.classList.add("ready");
+    status.textContent = tr("installedLabel");
+    detail.textContent = state.melonloader.installed_version
+      ? tr("melonloaderInstalled", { installed, latest })
+      : tr("melonloaderInstalledUnknown", { latest });
+    action.textContent = tr("reinstallMelonLoader");
+  }
+  action.disabled = queueActive();
+}
+
+async function refreshMelonLoaderStatus(refresh = false) {
+  state.melonloaderLoading = true;
+  renderMelonLoader();
+  try {
+    const result = await callApi("get_melonloader_status", true, refresh);
+    if (!result.ok) {
+      state.melonloader = {
+        error: result.message || tr("melonloaderUnavailable"),
+        errorCode: result.code || "melonloader_status_failed",
+      };
+      return false;
+    }
+    state.melonloader = result.melonloader;
+    return true;
+  } catch (error) {
+    state.melonloader = { error: String(error), errorCode: "melonloader_status_failed" };
+    return false;
+  } finally {
+    state.melonloaderLoading = false;
+    renderMelonLoader();
+  }
+}
+
+async function installMelonLoader() {
+  state.melonloaderLoading = true;
+  renderMelonLoader();
+  setStatus(tr("melonloaderInstalling"));
+  try {
+    const result = await callApi("install_melonloader", true);
+    if (!result.ok) {
+      resultError(result);
+      return false;
+    }
+    state.melonloader = result.melonloader;
+    const message = tr("melonloaderInstalledDone", {
+      version: result.melonloader.latest_version || tr("versionUnknown"),
+      count: result.files_installed,
+    });
+    toast(message);
+    setStatus(message, "ready");
+    return true;
+  } catch (error) {
+    resultError({ message: String(error) });
+    return false;
+  } finally {
+    state.melonloaderLoading = false;
+    renderMelonLoader();
+  }
 }
 
 async function openUrl(url) {
@@ -1042,9 +1414,21 @@ function wireEvents() {
   });
   $("#settings-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (await saveSettings()) await loadCatalog(false);
+    if (await saveSettings()) {
+      await loadCatalog(false);
+      await refreshMelonLoaderStatus(false);
+    }
   });
   $("#browse-game-path").addEventListener("click", chooseGamePath);
+  $("#melonloader-action").addEventListener("click", async () => {
+    const editedPath = $("#game-path").value.trim();
+    if (editedPath !== (state.settings.game_path || "") && !(await saveSettings())) return;
+    if (!state.melonloader || state.melonloader.error) await refreshMelonLoaderStatus(true);
+    else await installMelonLoader();
+  });
+  $("#open-melonloader-release").addEventListener("click", () => {
+    openUrl(state.melonloader?.page_url || state.links.melonloader);
+  });
   $("#language-select").addEventListener("change", async (event) => {
     state.languageMode = event.target.value;
     const saved = {

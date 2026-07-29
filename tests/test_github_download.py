@@ -75,6 +75,17 @@ class GitHubDownloadTests(unittest.TestCase):
             )
         self.assertNotIn("Authorization", requests[0].headers)
 
+    def test_http_cache_varies_by_accept_media_type(self):
+        http = HttpClient(self.root / "cache")
+
+        json_paths = http._cache_paths("https://api.github.com/repos/example/mod/readme", "application/json")
+        html_paths = http._cache_paths(
+            "https://api.github.com/repos/example/mod/readme",
+            "application/vnd.github.html+json",
+        )
+
+        self.assertNotEqual(json_paths, html_paths)
+
     def test_latest_repository_release_parses_semver_and_page_url(self):
         class JsonHttp:
             def __init__(self):
@@ -116,6 +127,30 @@ class GitHubDownloadTests(unittest.TestCase):
 
         with self.assertRaisesRegex(DownloadError, "release page URL"):
             GitHubClient(JsonHttp()).latest_repository_release("furryaxw/sprocket-mods")
+
+    def test_repository_readme_uses_github_rendered_html(self):
+        class ReadmeHttp:
+            def __init__(self):
+                self.calls = []
+
+            def get_bytes(self, url, **kwargs):
+                self.calls.append((url, kwargs))
+                return b"<article><h1>Test mod</h1></article>"
+
+        http = ReadmeHttp()
+        readme = GitHubClient(http).repository_readme("example/TestMod", refresh=True)
+
+        self.assertIn("<h1>Test mod</h1>", readme.html)
+        self.assertEqual(readme.page_url, "https://github.com/example/TestMod#readme")
+        self.assertEqual(
+            http.calls[0][0],
+            "https://api.github.com/repos/example/TestMod/readme",
+        )
+        self.assertEqual(
+            http.calls[0][1]["accept"],
+            "application/vnd.github.html+json",
+        )
+        self.assertEqual(http.calls[0][1]["cache_seconds"], 0)
 
     def test_package_release_falls_back_to_latest_when_list_is_empty(self):
         class JsonHttp:

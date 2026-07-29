@@ -2,8 +2,12 @@ import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from sprocket_mod_manager.config import ConfigStore
+from sprocket_mod_manager.github import RepositoryReadme
+from sprocket_mod_manager.melonloader import MelonLoaderInstallation
 from sprocket_mod_manager.web_gui import ClientApi
 
 
@@ -24,6 +28,24 @@ class FakeWindow:
 
     def destroy(self):
         self.destroyed.set()
+
+
+class MissingMelonLoader:
+    @staticmethod
+    def detect(_game_path):
+        return MelonLoaderInstallation(False, None)
+
+
+class ReadmeService:
+    def __init__(self, _app_dir):
+        package = SimpleNamespace(id="test.mod", repository="example/TestMod")
+        self.registry = SimpleNamespace(get=lambda _package_id: package)
+        self.github = SimpleNamespace(
+            repository_readme=lambda _repository, refresh=False: RepositoryReadme(
+                html="<article><h1>Test mod</h1></article>",
+                page_url="https://github.com/example/TestMod#readme",
+            )
+        )
 
 
 class WebGuiTests(unittest.TestCase):
@@ -67,6 +89,56 @@ class WebGuiTests(unittest.TestCase):
             self.assertTrue(window.destroyed.wait(2))
             api.on_closed()
 
+    def test_mod_enqueue_requires_explicit_confirmation_without_melonloader(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = root / "game"
+            game.mkdir()
+            (game / "Sprocket.exe").touch()
+            ConfigStore(root / "app").save(
+                {"language": "en", "game_path": str(game), "index_url": ""}
+            )
+            api = ClientApi("0.2.0", app_dir=root / "app")
+            api.melonloader = MissingMelonLoader()
+            try:
+                blocked = api.enqueue_install([])
+                allowed = api.enqueue_install([], allow_without_melonloader=True)
+            finally:
+                api.install_queue.close()
+
+        self.assertFalse(blocked["ok"])
+        self.assertEqual(blocked["code"], "melonloader_required")
+        self.assertTrue(allowed["ok"])
+
+    def test_official_melonloader_repository_is_an_allowed_link(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi("0.2.0", app_dir=Path(directory))
+            try:
+                with patch("sprocket_mod_manager.web_gui.webbrowser.open") as open_browser:
+                    result = api.open_url("https://github.com/LavaGang/MelonLoader/releases")
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"])
+        open_browser.assert_called_once()
+
+    def test_package_readme_is_loaded_from_registered_repository(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi(
+                "0.2.0",
+                app_dir=Path(directory),
+                service_factory=ReadmeService,
+            )
+            try:
+                result = api.get_package_readme("test.mod", refresh=True)
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["package_id"], "test.mod")
+        self.assertIn("<h1>Test mod</h1>", result["html"])
+        self.assertEqual(result["page_url"], "https://github.com/example/TestMod#readme")
+
     def test_default_entry_and_assets_do_not_depend_on_tk(self):
         root = Path(__file__).parents[1]
         entry = (root / "modman.py").read_text(encoding="utf-8")
@@ -85,8 +157,21 @@ class WebGuiTests(unittest.TestCase):
         self.assertNotIn("customtkinter", web_gui)
         self.assertEqual(html.count('id="language-select"'), 1)
         self.assertIn('id="modal-layer" hidden', html)
+        self.assertIn('id="melonloader-action"', html)
         self.assertNotIn("window.alert", javascript)
         self.assertNotIn("window.confirm", javascript)
+        self.assertIn("async function ensureMelonLoader", javascript)
+        self.assertIn("function sanitizeReadmeHtml", javascript)
+        self.assertIn('callApi("get_package_readme"', javascript)
+        self.assertIn("metadata.textContent = localized(pkg.description, pkg.id)", javascript)
+        self.assertIn('heading.className = "detail-heading"', javascript)
+        self.assertIn('readmeSection.className = "detail-readme"', javascript)
+        self.assertIn(
+            "panel.append(topline, heading, actions, readmeSection, facts, dependencySection)",
+            javascript,
+        )
+        self.assertIn('"enqueue_install",', javascript)
+        self.assertIn("loaderDecision.allowWithout", javascript)
 
     def test_catalog_columns_share_one_bounded_scroll_area(self):
         css = (
@@ -103,6 +188,10 @@ class WebGuiTests(unittest.TestCase):
             r"\.package-list, \.detail-panel \{[^}]*height: 100%;[^}]*overflow: auto;",
         )
         self.assertNotIn("max-height: calc(100vh", css)
+        self.assertRegex(
+            css,
+            r"\.package-copy span \{[^}]*font: 12px/17px[^}]*white-space: normal;",
+        )
 
     def test_client_palette_matches_the_registry_site(self):
         root = Path(__file__).parents[1]
