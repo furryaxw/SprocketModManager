@@ -1,5 +1,6 @@
 import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -151,6 +152,47 @@ class CatalogLoadingTests(unittest.TestCase):
         self.assertFalse(service.registry_refresh)
         self.assertEqual(service.github.refresh_values, [False, False])
         self.assertEqual(set(latest), {"test.one", "test.two"})
+
+    def test_catalog_refresh_does_not_bypass_release_cache(self):
+        service = FakeService()
+
+        load_catalog(service, "index.json", refresh=True)
+
+        self.assertTrue(service.registry_refresh)
+        self.assertEqual(service.github.refresh_values, [False, False])
+
+    def test_active_download_queue_does_not_block_new_catalog_tasks(self):
+        app = SimpleNamespace(
+            _background_busy=False,
+            _queue_active=True,
+            busy=True,
+            pages={},
+        )
+        app._refresh_busy_widgets = lambda: ModManagerApp._refresh_busy_widgets(app)
+
+        ModManagerApp._set_queue_active(app, True)
+
+        self.assertFalse(app.busy)
+
+    def test_window_close_is_guarded_while_installing(self):
+        source = (Path(__file__).parents[1] / "sprocket_mod_manager" / "gui.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('self.protocol("WM_DELETE_WINDOW", self._request_close)', source)
+        self.assertIn("self.install_queue.is_installing()", source)
+
+    def test_high_frequency_lists_avoid_customtkinter_idle_reentry(self):
+        source = (Path(__file__).parents[1] / "sprocket_mod_manager" / "gui.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("class FastScrollableFrame(tk.Frame)", source)
+        self.assertNotIn("CTkScrollableFrame", source)
+        placeholder = source[
+            source.index("def _game_path_placeholder"):source.index("def _start_game_path_detection")
+        ]
+        self.assertNotIn("detect_game_path()", placeholder)
 
     def test_click_binding_covers_every_nested_widget(self):
         calls = []
@@ -359,6 +401,10 @@ class CatalogLoadingTests(unittest.TestCase):
             def _set_busy(self, _value):
                 pass
 
+            def _reload_settings_form(self):
+                self.pages["settings"].snapshot = dict(self.config)
+                self.pages["settings"].draft = None
+
             def populate_installed(self):
                 pass
 
@@ -371,8 +417,9 @@ class CatalogLoadingTests(unittest.TestCase):
         ModManagerApp.show_page(app, "settings")
 
         self.assertEqual(app.config_store.loads, 2)
-        self.assertTrue(first_page.destroyed)
-        self.assertIsNot(app.pages["settings"], first_page)
+        self.assertFalse(first_page.destroyed)
+        self.assertIs(app.pages["settings"], first_page)
+        self.assertIsNone(first_page.draft)
         self.assertEqual(
             app.pages["settings"].snapshot["game_path"],
             "G:/Saved/Sprocket",
