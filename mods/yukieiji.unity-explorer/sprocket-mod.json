@@ -1,0 +1,35 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "yukieiji.unity-explorer",
+  "name": "UnityExplorer.MelonLoader.IL2CPP.CoreCLR",
+  "authors": ["Sinai", "yukieiji"],
+  "repository": "yukieiji/UnityExplorer",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "UnityExplorer (MelonLoader IL2CPP CoreCLR)",
+    "zh": "UnityExplorer（MelonLoader IL2CPP CoreCLR）"
+  },
+  "description": {
+    "en": "In-game Unity object explorer and debugging UI, packaged for MelonLoader 0.6+ IL2CPP CoreCLR.",
+    "zh": "Unity 游戏内对象浏览与调试界面，适用于 MelonLoader 0.6+ IL2CPP CoreCLR。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["UnityExplorer.MelonLoader.IL2CPP.CoreCLR.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "utility",
+  "tags": ["debugging", "inspector", "unity", "developer-tools"]
+}
