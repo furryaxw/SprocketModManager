@@ -31,7 +31,8 @@ def sprocket_is_running() -> bool:
         )
     except (OSError, subprocess.SubprocessError):
         return False
-    return "sprocket.exe" in result.stdout.casefold()
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return "sprocket.exe" in stdout.casefold()
 
 
 def _safe_game_path(game_dir: Path, relative: str) -> Path:

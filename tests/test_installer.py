@@ -2,10 +2,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sprocket_mod_manager.hashing import sha256_file
-from sprocket_mod_manager.installer import Installer
+from sprocket_mod_manager.installer import Installer, sprocket_is_running
 from sprocket_mod_manager.models import (
     PreparedFile,
     PreparedPackage,
@@ -92,6 +93,16 @@ def prepared_with_dependency(root: Path) -> PreparedPlan:
 
 
 class InstallerTests(unittest.TestCase):
+    def test_process_check_treats_missing_tasklist_stdout_as_not_running(self):
+        with (
+            patch("sprocket_mod_manager.installer.os.name", "nt"),
+            patch(
+                "sprocket_mod_manager.installer.subprocess.run",
+                return_value=SimpleNamespace(stdout=None),
+            ),
+        ):
+            self.assertFalse(sprocket_is_running())
+
     @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
     def test_update_recovers_null_file_reference_from_installed_state(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
