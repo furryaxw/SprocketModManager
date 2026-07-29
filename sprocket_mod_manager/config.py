@@ -12,6 +12,9 @@ from .service import DEFAULT_INDEX_URL, default_app_dir
 
 
 SPROCKET_STEAM_APP_ID = "1674170"
+DEFAULT_TEXT_SCALE = 100
+MIN_TEXT_SCALE = 100
+MAX_TEXT_SCALE = 160
 _VDF_PAIR = re.compile(r'^\s*"(?P<key>[^"]+)"\s+"(?P<value>(?:\\.|[^"])*)"', re.MULTILINE)
 
 
@@ -165,6 +168,16 @@ def effective_index_url(config: dict[str, Any]) -> str:
     return _configured_text(config, "index_url") or DEFAULT_INDEX_URL
 
 
+def normalize_text_scale(value: object) -> int:
+    if isinstance(value, bool):
+        return DEFAULT_TEXT_SCALE
+    try:
+        scale = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TEXT_SCALE
+    return max(MIN_TEXT_SCALE, min(MAX_TEXT_SCALE, scale))
+
+
 class ConfigStore:
     def __init__(self, app_dir: Path | None = None):
         self.app_dir = app_dir or default_app_dir()
@@ -175,6 +188,7 @@ class ConfigStore:
             "language": "auto",
             "game_path": "",
             "index_url": "",
+            "text_scale": DEFAULT_TEXT_SCALE,
         }
         if not self.path.is_file():
             return defaults
@@ -184,6 +198,7 @@ class ConfigStore:
             return defaults
         if isinstance(data, dict):
             defaults.update({key: value for key, value in data.items() if isinstance(key, str)})
+        defaults["text_scale"] = normalize_text_scale(defaults["text_scale"])
         return defaults
 
     def save(self, config: dict[str, Any]) -> None:

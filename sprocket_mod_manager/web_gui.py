@@ -14,6 +14,7 @@ from .config import (
     detect_language,
     effective_game_path,
     effective_index_url,
+    normalize_text_scale,
 )
 from .errors import ModManagerError
 from .install_queue import ACTIVE_STATES, InstallQueue, InstallQueueEntry
@@ -130,6 +131,7 @@ class ClientApi:
             "index_url": str(self.config.get("index_url", "") or ""),
             "index_placeholder": DEFAULT_INDEX_URL,
             "game_path_placeholder": "",
+            "text_scale": normalize_text_scale(self.config.get("text_scale")),
         }
 
     def get_settings(self) -> dict[str, Any]:
@@ -168,6 +170,7 @@ class ClientApi:
                 "language": language,
                 "game_path": str(values.get("game_path", "")).strip(),
                 "index_url": str(values.get("index_url", "")).strip(),
+                "text_scale": normalize_text_scale(values.get("text_scale")),
             }
             self.config_store.save(self.config)
             return self._success(settings=self._settings_data(), language=self.language)

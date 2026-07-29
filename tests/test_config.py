@@ -9,6 +9,7 @@ from sprocket_mod_manager.config import (
     effective_game_path,
     effective_index_url,
     language_from_locale_name,
+    normalize_text_scale,
 )
 from sprocket_mod_manager.service import DEFAULT_INDEX_URL
 
@@ -30,6 +31,20 @@ class ConfigTests(unittest.TestCase):
             with patch("sprocket_mod_manager.config.detect_game_path", return_value=""):
                 config = ConfigStore(Path(temporary)).load()
         self.assertEqual(config["language"], "auto")
+
+    def test_text_scale_defaults_and_clamps_to_accessible_range(self):
+        with TemporaryDirectory() as temporary:
+            store = ConfigStore(Path(temporary))
+            self.assertEqual(store.load()["text_scale"], 100)
+
+            store.save({"text_scale": 500})
+            self.assertEqual(store.load()["text_scale"], 160)
+
+            store.save({"text_scale": "invalid"})
+            self.assertEqual(store.load()["text_scale"], 100)
+
+        self.assertEqual(normalize_text_scale(130), 130)
+        self.assertEqual(normalize_text_scale(80), 100)
 
     def test_new_config_keeps_automatic_sources_empty(self):
         with TemporaryDirectory() as temporary:

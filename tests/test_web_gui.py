@@ -64,6 +64,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["language"], "en")
         self.assertEqual(result["settings"]["game_path"], "")
+        self.assertEqual(result["settings"]["text_scale"], 100)
         self.assertEqual(
             result["settings"]["index_placeholder"],
             "https://sprocketmods.furryaxw.top/index.json",
@@ -109,6 +110,27 @@ class WebGuiTests(unittest.TestCase):
         self.assertFalse(blocked["ok"])
         self.assertEqual(blocked["code"], "melonloader_required")
         self.assertTrue(allowed["ok"])
+
+    def test_text_scale_is_saved_and_returned_to_the_client(self):
+        with TemporaryDirectory() as directory:
+            app_dir = Path(directory)
+            api = ClientApi("0.3.2", app_dir=app_dir)
+            try:
+                saved = api.save_settings(
+                    {
+                        "language": "en",
+                        "game_path": "",
+                        "index_url": "",
+                        "text_scale": 150,
+                    }
+                )
+                loaded = api.get_settings()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(saved["ok"])
+        self.assertEqual(saved["settings"]["text_scale"], 150)
+        self.assertEqual(loaded["settings"]["text_scale"], 150)
 
     def test_official_melonloader_repository_is_an_allowed_link(self):
         with TemporaryDirectory() as directory:
@@ -158,6 +180,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertEqual(html.count('id="language-select"'), 1)
         self.assertIn('id="modal-layer" hidden', html)
         self.assertIn('id="melonloader-action"', html)
+        self.assertIn('id="text-scale"', html)
         self.assertNotIn("window.alert", javascript)
         self.assertNotIn("window.confirm", javascript)
         self.assertIn("async function ensureMelonLoader", javascript)
@@ -172,6 +195,7 @@ class WebGuiTests(unittest.TestCase):
         )
         self.assertIn('"enqueue_install",', javascript)
         self.assertIn("loaderDecision.allowWithout", javascript)
+        self.assertIn("function applyTextScale", javascript)
 
     def test_catalog_columns_share_one_bounded_scroll_area(self):
         css = (
@@ -190,8 +214,10 @@ class WebGuiTests(unittest.TestCase):
         self.assertNotIn("max-height: calc(100vh", css)
         self.assertRegex(
             css,
-            r"\.package-copy span \{[^}]*font: 12px/17px[^}]*white-space: normal;",
+            r"\.package-copy span \{[^}]*font: 0\.75rem/1\.0625rem[^}]*white-space: normal;",
         )
+        self.assertNotRegex(css, r"font-size:\s*[0-9]+px")
+        self.assertNotRegex(css, r"font:\s*[^;/]*\s[0-9]+px/")
 
     def test_client_palette_matches_the_registry_site(self):
         root = Path(__file__).parents[1]
