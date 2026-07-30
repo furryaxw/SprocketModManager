@@ -1,0 +1,118 @@
+name: Build Windows executable
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Verify tag matches application version
+        shell: pwsh
+        run: |
+          $appVersion = (& python -c "from modman import APP_VERSION; print(APP_VERSION)").Trim()
+          if ($env:GITHUB_REF_NAME -ne "v$appVersion") {
+            throw "Tag $env:GITHUB_REF_NAME does not match APP_VERSION $appVersion"
+          }
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Run site tests
+        shell: pwsh
+        run: |
+          node --check site/app.js
+          node --check site/release-api.js
+          node tests/site_release_api.test.js
+
+      - name: Validate Registry
+        shell: pwsh
+        run: |
+          python gen-index.py --mods-dir mods --output index.json
+          python validate_registry.py --mods-dir mods --offline
+
+      - name: Build executable
+        shell: pwsh
+        run: .\build_exe.ps1 -SkipInstall
+
+      - name: Write SHA-256 checksum
+        shell: pwsh
+        run: |
+          $exe = "dist/SprocketModManager.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Build output not found: $exe"
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(
+            (Join-Path $PWD "dist/SprocketModManager.exe.sha256"),
+            "$hash  SprocketModManager.exe`n",
+            [Text.Encoding]::ASCII
+          )
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: SprocketModManager-${{ github.ref_name }}-windows-x64
+          path: |
+            dist/SprocketModManager.exe
+            dist/SprocketModManager.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          overwrite: true
+
+      - name: Upload build to draft Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $release = gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $isDraft = ($release | ConvertFrom-Json).isDraft
+            if (-not $isDraft) {
+              throw "Release $tag is already published; refusing to replace its assets"
+            }
+          } else {
+            gh release create $tag `
+              --verify-tag `
+              --draft `
+              --title "Sprocket Mod Manager $tag" `
+              --notes "Write release notes before publishing."
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create draft Release $tag"
+            }
+          }
+
+          gh release upload $tag `
+            dist/SprocketModManager.exe `
+            dist/SprocketModManager.exe.sha256 `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload build assets to draft Release $tag"
+          }
