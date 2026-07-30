@@ -60,11 +60,12 @@ only while `Mods` contains no DLL. Once any mod exists, the catalog returns to i
 sort. This marker never opens a prompt, selects, or installs a package.
 
 When the catalog loads or the Installed page refreshes, the client scans unmanaged DLLs
-under `Mods`. It adopts a package only when the file name, static install target, and
-GitHub Release SHA-256 all match uniquely. Unknown, locally modified, digest-less, or
-ambiguous files remain unmanaged. Adopted packages can be updated and removed normally;
-all other DLLs under `Mods` appear as read-only "Unrecognized" rows on the Installed page,
-showing only their file name and path with no update or removal action.
+under `Mods` and `UserLibs`. It adopts a package only when the file name, static install
+target, and GitHub Release SHA-256 all match uniquely. Unknown, locally modified,
+digest-less, or ambiguous files remain unmanaged. Adopted packages can be updated and
+removed normally; all other DLLs under `Mods` and `UserLibs` appear as read-only
+"Unrecognized" rows on the Installed page, showing only their file name and path with no
+update or removal action.
 
 Use a local Registry with the CLI:
 

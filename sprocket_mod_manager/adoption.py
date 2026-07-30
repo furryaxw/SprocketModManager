@@ -39,13 +39,9 @@ class ExistingModsAdopter:
 
     def adopt(self, registry: Registry, game_dir: Path) -> tuple[AdoptionRecord, ...]:
         game_dir = self.installer.validate_game_dir(game_dir)
-        mods_dir = game_dir / "Mods"
-        if not mods_dir.is_dir():
-            return ()
-
         state = self.installer.state_store.load()
         managed_paths = {relative.casefold() for relative in state["files"]}
-        local_files = tuple(self._local_dlls(game_dir, mods_dir, managed_paths))
+        local_files = tuple(self._local_dlls(game_dir, managed_paths))
         if not local_files:
             return ()
 
@@ -155,19 +151,25 @@ class ExistingModsAdopter:
     def _local_dlls(
         cls,
         game_dir: Path,
-        mods_dir: Path,
         managed_paths: set[str],
     ) -> Iterator[Path]:
-        for path in mods_dir.rglob("*"):
-            try:
-                if (
-                    path.is_symlink()
-                    or not path.is_file()
-                    or path.suffix.casefold() != ".dll"
-                ):
-                    continue
-                relative = cls._relative_target(game_dir, path)
-            except (OSError, ValueError):
+        for root_name in ("Mods", "UserLibs"):
+            root = game_dir / root_name
+            if not root.is_dir():
                 continue
-            if relative.casefold() not in managed_paths:
-                yield path
+            try:
+                for path in root.rglob("*"):
+                    try:
+                        if (
+                            path.is_symlink()
+                            or not path.is_file()
+                            or path.suffix.casefold() != ".dll"
+                        ):
+                            continue
+                        relative = cls._relative_target(game_dir, path)
+                    except (OSError, ValueError):
+                        continue
+                    if relative.casefold() not in managed_paths:
+                        yield path
+            except OSError:
+                continue
