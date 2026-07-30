@@ -294,6 +294,37 @@ class WebGuiTests(unittest.TestCase):
         )
         self.assertEqual(unknown_content, b"unknown mod")
 
+    def test_get_installed_reports_unrecognized_userlib_without_mods(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = root / "game"
+            userlib = game / "UserLibs" / "LocalLibrary.dll"
+            userlib.parent.mkdir(parents=True)
+            userlib.write_bytes(b"unmanaged library")
+            (game / "Sprocket.exe").touch()
+            ConfigStore(app_dir).save(
+                {"language": "en", "game_path": str(game), "index_url": ""}
+            )
+            service = ModManagerService(app_dir)
+            service.registry = Registry([])
+            api = ClientApi(
+                "0.3.3",
+                app_dir=app_dir,
+                service_factory=lambda _app_dir: service,
+            )
+            try:
+                result = api.get_installed()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["unrecognized"],
+            [{"name": "LocalLibrary.dll", "path": "UserLibs/LocalLibrary.dll"}],
+        )
+        self.assertFalse(result["has_any_mods"])
+
     def test_official_melonloader_repository_is_an_allowed_link(self):
         with TemporaryDirectory() as directory:
             api = ClientApi("0.2.0", app_dir=Path(directory))

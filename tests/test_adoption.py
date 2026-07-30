@@ -106,6 +106,31 @@ class ExistingModsAdoptionTests(unittest.TestCase):
             self.assertEqual(service.adopt_existing(game), ())
             self.assertEqual(service.installed(game), {})
 
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_exact_release_userlib_is_adopted(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = self.game(root)
+            content = b"published library"
+            installed_file = game / "UserLibs" / "TestLibrary.dll"
+            installed_file.parent.mkdir()
+            installed_file.write_bytes(content)
+            service = ModManagerService(root / "app")
+            item = package(
+                "test.library",
+                installed_file.name,
+                content,
+                target="UserLibs",
+            )
+            service.registry = Registry([item])
+
+            adopted = service.adopt_existing(game)
+            state = service._installer_for(game).state_store.load()
+
+            self.assertEqual([record.package_id for record in adopted], [item.id])
+            self.assertEqual(adopted[0].files, ("UserLibs/TestLibrary.dll",))
+            self.assertTrue(state["files"]["UserLibs/TestLibrary.dll"]["adopted"])
+
     def test_install_target_mismatch_is_left_unmanaged(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

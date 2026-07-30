@@ -341,9 +341,6 @@ class ClientApi:
         game_path = Path(value).expanduser()
         if not (game_path / "Sprocket.exe").is_file():
             return []
-        mods_dir = game_path / "Mods"
-        if not mods_dir.is_dir():
-            return []
         managed_paths = {
             relative.replace("\\", "/").casefold()
             for package in self._installed(service).values()
@@ -351,21 +348,25 @@ class ClientApi:
             if isinstance(relative, str)
         }
         unrecognized: list[dict[str, str]] = []
-        try:
-            for path in mods_dir.rglob("*"):
-                try:
-                    if path.suffix.casefold() != ".dll" or not (
-                        path.is_file() or path.is_symlink()
-                    ):
+        for root_name in ("Mods", "UserLibs"):
+            root = game_path / root_name
+            if not root.is_dir():
+                continue
+            try:
+                for path in root.rglob("*"):
+                    try:
+                        if path.suffix.casefold() != ".dll" or not (
+                            path.is_file() or path.is_symlink()
+                        ):
+                            continue
+                        relative = path.relative_to(game_path).as_posix()
+                    except (OSError, ValueError):
                         continue
-                    relative = path.relative_to(game_path).as_posix()
-                except (OSError, ValueError):
-                    continue
-                if relative.casefold() in managed_paths:
-                    continue
-                unrecognized.append({"name": path.name, "path": relative})
-        except OSError:
-            return []
+                    if relative.casefold() in managed_paths:
+                        continue
+                    unrecognized.append({"name": path.name, "path": relative})
+            except OSError:
+                continue
         return sorted(unrecognized, key=lambda item: item["path"].casefold())
 
     def get_package_readme(self, package_id: str, refresh: bool = False) -> dict[str, Any]:
