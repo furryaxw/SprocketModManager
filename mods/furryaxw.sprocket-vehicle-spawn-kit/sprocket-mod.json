@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.sprocket-vehicle-spawn-kit",
+  "name": "SprocketVehicleSpawnKit",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/SprocketVehicleSpawnKit",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "Sprocket Vehicle Spawn Kit"
+  },
+  "description": {
+    "en": "Shared native vehicle spawning library for Sprocket MelonLoader mods."
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketVehicleSpawnKit.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "library",
+  "tags": ["library", "vehicle", "spawning"]
+}
