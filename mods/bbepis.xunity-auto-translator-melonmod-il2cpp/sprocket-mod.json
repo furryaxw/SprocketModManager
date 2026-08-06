@@ -1,0 +1,41 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+  "name": "XUnity.AutoTranslator-MelonMod-IL2CPP",
+  "authors": ["bbepis"],
+  "repository": "bbepis/XUnity.AutoTranslator",
+  "license": "MIT",
+  "display_name": {
+    "en": "XUnity AutoTranslator (MelonMod IL2CPP)",
+    "zh": "XUnity 自动翻译器（MelonMod IL2CPP）"
+  },
+  "description": {
+    "en": "Runtime translation framework for MelonLoader IL2CPP games.",
+    "zh": "适用于 MelonLoader IL2CPP 游戏的运行时翻译框架。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["XUnity.AutoTranslator-MelonMod-IL2CPP-*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "furryaxw.xunity-il2cpptmpro-bridge",
+      "version": ">=0.1.0 <1.0.0",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "scan_dlls": true,
+    "exclude": ["Mods/README (AutoTranslator).md"],
+    "overrides": []
+  },
+  "category": "utility",
+  "tags": ["translation", "localization", "xunity", "textmeshpro"]
+}
