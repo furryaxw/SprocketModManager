@@ -6,6 +6,7 @@
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#101213" />
     <title>Sprocket Mod Manager</title>
+    <link rel="icon" type="image/png" href="./app-icon.png" />
     <link rel="stylesheet" href="./app.css" />
     <script src="./app.js" defer></script>
   </head>
@@ -178,6 +179,30 @@
               </div>
               <label class="field-label" for="index-url" data-i18n="indexUrl">索引 URL 或本地路径</label>
               <input id="index-url" name="index_url" type="text" autocomplete="off" />
+            </div>
+            <div class="form-section">
+              <div class="section-heading">
+                <span>05</span>
+                <div><strong data-i18n="networkProxy">网络代理</strong><small>HTTP / GITHUB</small></div>
+              </div>
+              <div class="field-stack proxy-setting">
+                <label class="toggle-row" for="proxy-enabled">
+                  <span data-i18n="proxyEnabled">启用 HTTP/HTTPS 代理</span>
+                  <input class="toggle-input" id="proxy-enabled" name="proxy_enabled" type="checkbox" />
+                </label>
+                <label class="field-label" for="proxy-url" data-i18n="proxyUrl">代理地址</label>
+                <input id="proxy-url" name="proxy_url" type="url" inputmode="url" autocomplete="off"
+                  placeholder="http://127.0.0.1:7890" />
+              </div>
+              <div class="field-stack proxy-setting">
+                <label class="toggle-row" for="github-proxy-enabled">
+                  <span data-i18n="githubProxyEnabled">启用 GitHub 下载加速</span>
+                  <input class="toggle-input" id="github-proxy-enabled" name="github_proxy_enabled" type="checkbox" />
+                </label>
+                <label class="field-label" for="github-proxy-url" data-i18n="githubProxyUrl">加速前缀</label>
+                <input id="github-proxy-url" name="github_proxy_url" type="url" inputmode="url" autocomplete="off"
+                  placeholder="https://gh-proxy.com/" />
+              </div>
             </div>
             <div class="form-actions">
               <button class="primary-button" type="submit" data-i18n="saveSettings">保存设置</button>

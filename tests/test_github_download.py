@@ -75,6 +75,35 @@ class GitHubDownloadTests(unittest.TestCase):
             )
         self.assertNotIn("Authorization", requests[0].headers)
 
+    def test_http_proxy_is_used_for_https_requests(self):
+        opener = unittest.mock.MagicMock()
+        opener.open.return_value = FakeResponse(b"test", self.asset.download_url)
+        with patch("sprocket_mod_manager.github.build_opener", return_value=opener) as build:
+            HttpClient(self.root / "cache", proxy_url="http://127.0.0.1:7890").download(
+                self.asset,
+                self.root / "TestMod.dll",
+            )
+
+        build.assert_called_once()
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, self.asset.download_url)
+
+    def test_github_download_proxy_wraps_release_asset_url(self):
+        requests = []
+        proxy_url = "https://mirror.example.com/"
+
+        def respond(request, **_kwargs):
+            requests.append(request)
+            return FakeResponse(b"test", f"{proxy_url}{self.asset.download_url}")
+
+        with patch("sprocket_mod_manager.github.urlopen", side_effect=respond):
+            HttpClient(
+                self.root / "cache",
+                github_proxy_url=proxy_url,
+            ).download(self.asset, self.root / "TestMod.dll")
+
+        self.assertEqual(requests[0].full_url, f"{proxy_url}{self.asset.download_url}")
+
     def test_http_cache_varies_by_accept_media_type(self):
         http = HttpClient(self.root / "cache")
 

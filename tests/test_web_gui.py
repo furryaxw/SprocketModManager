@@ -101,6 +101,13 @@ def installable_package(
 
 
 class WebGuiTests(unittest.TestCase):
+    def test_client_ui_uses_packaged_application_icon(self):
+        ui_root = Path(__file__).resolve().parents[1] / "sprocket_mod_manager" / "client_ui"
+        html = (ui_root / "index.html").read_text(encoding="utf-8")
+
+        self.assertTrue((ui_root / "app-icon.png").is_file())
+        self.assertIn('rel="icon" type="image/png" href="./app-icon.png"', html)
+
     def test_catalog_exposes_new_install_recommendation_marker(self):
         with TemporaryDirectory() as directory:
             package = installable_package("test.featured", "Featured.dll", featured=True)
@@ -208,6 +215,10 @@ class WebGuiTests(unittest.TestCase):
                         "language": "en",
                         "game_path": "",
                         "index_url": "",
+                        "proxy_enabled": True,
+                        "proxy_url": "http://127.0.0.1:7890",
+                        "github_proxy_enabled": True,
+                        "github_proxy_url": "https://mirror.example.com",
                         "text_scale": 150,
                     }
                 )
@@ -218,6 +229,38 @@ class WebGuiTests(unittest.TestCase):
         self.assertTrue(saved["ok"])
         self.assertEqual(saved["settings"]["text_scale"], 150)
         self.assertEqual(loaded["settings"]["text_scale"], 150)
+        self.assertTrue(saved["settings"]["proxy_enabled"])
+        self.assertEqual(saved["settings"]["proxy_url"], "http://127.0.0.1:7890")
+        self.assertTrue(loaded["settings"]["github_proxy_enabled"])
+        self.assertEqual(
+            loaded["settings"]["github_proxy_url"],
+            "https://mirror.example.com/",
+        )
+
+    def test_enabled_empty_proxy_settings_apply_default_addresses(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi("0.3.3", app_dir=Path(directory))
+            try:
+                saved = api.save_settings(
+                    {
+                        "language": "en",
+                        "game_path": "",
+                        "index_url": "",
+                        "proxy_enabled": True,
+                        "proxy_url": "",
+                        "github_proxy_enabled": True,
+                        "github_proxy_url": "",
+                        "text_scale": 100,
+                    }
+                )
+                proxy_url = api.service.http.proxy_url
+                github_proxy_url = api.service.http.github_proxy_url
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(saved["ok"])
+        self.assertEqual(proxy_url, "http://127.0.0.1:7890")
+        self.assertEqual(github_proxy_url, "https://gh-proxy.com/")
 
     def test_install_plan_returns_optional_recommendations(self):
         with TemporaryDirectory() as directory:

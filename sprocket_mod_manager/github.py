@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from .errors import DownloadError, RegistryError
 from .models import ProgressCallback, RegistryPackage, ReleaseAsset, ReleaseInfo
@@ -58,9 +58,36 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 class HttpClient:
-    def __init__(self, cache_dir: Path, token: str | None = None):
+    def __init__(
+        self,
+        cache_dir: Path,
+        token: str | None = None,
+        *,
+        proxy_url: str = "",
+        github_proxy_url: str = "",
+    ):
         self.cache_dir = cache_dir
         self.token = token or os.environ.get("GITHUB_TOKEN")
+        self.proxy_url = ""
+        self.github_proxy_url = ""
+        self._opener = None
+        self.configure_network(proxy_url, github_proxy_url)
+
+    def configure_network(self, proxy_url: str = "", github_proxy_url: str = "") -> None:
+        from .config import normalize_github_proxy_url, normalize_proxy_url
+
+        self.proxy_url = normalize_proxy_url(proxy_url)
+        self.github_proxy_url = normalize_github_proxy_url(github_proxy_url)
+        self._opener = (
+            build_opener(ProxyHandler({"http": self.proxy_url, "https": self.proxy_url}))
+            if self.proxy_url
+            else None
+        )
+
+    def _open(self, request: Request, timeout: int):
+        if self._opener is not None:
+            return self._opener.open(request, timeout=timeout)
+        return urlopen(request, timeout=timeout)
 
     def _cache_paths(self, url: str, accept: str = "") -> tuple[Path, Path]:
         key = hashlib.sha256(f"{url}\0{accept}".encode("utf-8")).hexdigest()
@@ -120,7 +147,7 @@ class HttpClient:
             headers["If-None-Match"] = str(cached_meta["etag"])
         request = Request(url, headers=headers)
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with self._open(request, timeout=timeout) as response:
                 self._validate_https(
                     response.geturl(),
                     allowed_hosts,
@@ -178,11 +205,19 @@ class HttpClient:
     def download(self, asset: ReleaseAsset, destination: Path, progress: ProgressCallback | None = None) -> Path:
         if asset.size < 0 or asset.size > MAX_ASSET_BYTES:
             raise DownloadError(f"asset size is outside the allowed range: {asset.name}")
+        self._validate_https(asset.download_url, GITHUB_ASSET_HOSTS)
+        request_url = asset.download_url
+        allowed_hosts = set(GITHUB_ASSET_HOSTS)
+        if self.github_proxy_url:
+            request_url = f"{self.github_proxy_url}{asset.download_url}"
+            proxy_host = urlparse(self.github_proxy_url).hostname
+            if proxy_host:
+                allowed_hosts.add(proxy_host)
         data = self.get_bytes(
-            asset.download_url,
+            request_url,
             timeout=180,
             max_bytes=max(asset.size + 1024 * 1024, 1024 * 1024),
-            allowed_hosts=GITHUB_ASSET_HOSTS,
+            allowed_hosts=allowed_hosts,
             progress=progress,
         )
         if asset.size and len(data) != asset.size:

@@ -7,6 +7,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .service import DEFAULT_INDEX_URL, default_app_dir
 
@@ -15,6 +16,8 @@ SPROCKET_STEAM_APP_ID = "1674170"
 DEFAULT_TEXT_SCALE = 100
 MIN_TEXT_SCALE = 100
 MAX_TEXT_SCALE = 160
+DEFAULT_PROXY_URL = "http://127.0.0.1:7890"
+DEFAULT_GITHUB_PROXY_URL = "https://gh-proxy.com/"
 _VDF_PAIR = re.compile(r'^\s*"(?P<key>[^"]+)"\s+"(?P<value>(?:\\.|[^"])*)"', re.MULTILINE)
 
 
@@ -168,6 +171,47 @@ def effective_index_url(config: dict[str, Any]) -> str:
     return _configured_text(config, "index_url") or DEFAULT_INDEX_URL
 
 
+def normalize_proxy_url(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError("proxy URL must be an HTTP(S) server URL")
+    return text.rstrip("/")
+
+
+def normalize_github_proxy_url(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.query or parsed.fragment:
+        raise ValueError("GitHub proxy URL must use HTTPS")
+    return text.rstrip("/") + "/"
+
+
+def effective_proxy_url(config: dict[str, Any]) -> str:
+    if config.get("proxy_enabled") is not True:
+        return ""
+    return normalize_proxy_url(config.get("proxy_url", "")) or DEFAULT_PROXY_URL
+
+
+def effective_github_proxy_url(config: dict[str, Any]) -> str:
+    if config.get("github_proxy_enabled") is not True:
+        return ""
+    return (
+        normalize_github_proxy_url(config.get("github_proxy_url", ""))
+        or DEFAULT_GITHUB_PROXY_URL
+    )
+
+
 def normalize_text_scale(value: object) -> int:
     if isinstance(value, bool):
         return DEFAULT_TEXT_SCALE
@@ -188,6 +232,10 @@ class ConfigStore:
             "language": "auto",
             "game_path": "",
             "index_url": "",
+            "proxy_enabled": False,
+            "proxy_url": "",
+            "github_proxy_enabled": False,
+            "github_proxy_url": "",
             "text_scale": DEFAULT_TEXT_SCALE,
         }
         if not self.path.is_file():

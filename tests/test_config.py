@@ -5,10 +5,16 @@ from unittest.mock import patch
 
 from sprocket_mod_manager.config import (
     ConfigStore,
+    DEFAULT_GITHUB_PROXY_URL,
+    DEFAULT_PROXY_URL,
     detect_game_path,
     effective_game_path,
+    effective_github_proxy_url,
     effective_index_url,
+    effective_proxy_url,
     language_from_locale_name,
+    normalize_github_proxy_url,
+    normalize_proxy_url,
     normalize_text_scale,
 )
 from sprocket_mod_manager.service import DEFAULT_INDEX_URL
@@ -51,6 +57,33 @@ class ConfigTests(unittest.TestCase):
             config = ConfigStore(Path(temporary)).load()
         self.assertEqual(config["game_path"], "")
         self.assertEqual(config["index_url"], "")
+        self.assertFalse(config["proxy_enabled"])
+        self.assertEqual(config["proxy_url"], "")
+        self.assertFalse(config["github_proxy_enabled"])
+        self.assertEqual(config["github_proxy_url"], "")
+
+    def test_network_urls_are_normalized_and_validated(self):
+        self.assertEqual(normalize_proxy_url(" http://127.0.0.1:7890/ "), "http://127.0.0.1:7890")
+        self.assertEqual(
+            normalize_github_proxy_url("https://mirror.example.com/github"),
+            "https://mirror.example.com/github/",
+        )
+        with self.assertRaises(ValueError):
+            normalize_proxy_url("socks5://127.0.0.1:1080")
+        with self.assertRaises(ValueError):
+            normalize_github_proxy_url("http://mirror.example.com/")
+
+    def test_enabled_network_settings_use_defaults_for_empty_addresses(self):
+        self.assertEqual(effective_proxy_url({"proxy_enabled": True}), DEFAULT_PROXY_URL)
+        self.assertEqual(
+            effective_github_proxy_url({"github_proxy_enabled": True}),
+            DEFAULT_GITHUB_PROXY_URL,
+        )
+        self.assertEqual(effective_proxy_url({"proxy_url": DEFAULT_PROXY_URL}), "")
+        self.assertEqual(
+            effective_github_proxy_url({"github_proxy_url": DEFAULT_GITHUB_PROXY_URL}),
+            "",
+        )
 
     def test_empty_sources_resolve_to_automatic_defaults(self):
         with patch("sprocket_mod_manager.config.detect_game_path", return_value="G:/Steam/Sprocket"):
