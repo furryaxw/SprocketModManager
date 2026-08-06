@@ -261,6 +261,15 @@ select option { color: var(--text); background: #111516; }
 .section-heading small { margin-top: 2px; color: var(--muted); font: 0.5625rem/0.75rem "Cascadia Mono", Consolas, monospace; }
 .field-label { display: block; margin-bottom: 8px; color: var(--text-soft); font-size: 0.75rem; font-weight: 650; }
 .field-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.field-stack + .field-stack { margin-top: 16px; }
+.proxy-setting { display: grid; gap: 9px; }
+.proxy-setting .field-label { margin: 0; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; color: var(--text); font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+.toggle-input { position: relative; width: 38px; height: 22px; flex: 0 0 38px; margin: 0; padding: 0; appearance: none; border: 1px solid #4b5152; border-radius: 11px; background: #202526; cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+.toggle-input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #aeb4b1; transition: transform 120ms ease, background 120ms ease; }
+.toggle-input:checked { border-color: var(--accent); background: var(--accent-quiet); }
+.toggle-input:checked::after { transform: translateX(16px); background: var(--accent); }
+.proxy-setting input[type="url"]:disabled { color: var(--muted); background: #121516; cursor: not-allowed; opacity: 0.72; }
 .range-control { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: center; gap: 14px; }
 .range-control input[type="range"] { height: 32px; padding: 0; accent-color: var(--accent); }
 .range-control output { color: var(--text); font: 700 0.8125rem/1 "Cascadia Mono", Consolas, monospace; text-align: right; }

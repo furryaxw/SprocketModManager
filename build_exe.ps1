@@ -21,7 +21,9 @@ try {
         --onefile `
         --windowed `
         --name SprocketModManager `
+        --icon "resources\app-icon.ico" `
         --add-data "sprocket_mod_manager\client_ui;sprocket_mod_manager\client_ui" `
+        --add-data "resources\app-icon.ico;resources" `
         --collect-submodules dnfile `
         modman.py
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }

@@ -68,6 +68,11 @@ const TEXT = {
     errorLabel: "不可用",
     versionUnknown: "版本未知",
     indexUrl: "索引 URL 或本地路径",
+    networkProxy: "网络代理",
+    proxyEnabled: "启用 HTTP/HTTPS 代理",
+    proxyUrl: "代理地址",
+    githubProxyEnabled: "启用 GitHub 下载加速",
+    githubProxyUrl: "加速前缀",
     saveSettings: "保存设置",
     currentVersion: "当前版本",
     latestVersion: "最新版本",
@@ -207,6 +212,11 @@ const TEXT = {
     errorLabel: "Unavailable",
     versionUnknown: "Unknown version",
     indexUrl: "Index URL or local path",
+    networkProxy: "Network proxy",
+    proxyEnabled: "Enable HTTP/HTTPS proxy",
+    proxyUrl: "Proxy address",
+    githubProxyEnabled: "Enable GitHub download proxy",
+    githubProxyUrl: "Proxy prefix",
     saveSettings: "Save settings",
     currentVersion: "Current version",
     latestVersion: "Latest version",
@@ -294,7 +304,11 @@ const state = {
   queue: [],
   selectedId: null,
   batch: new Set(),
-  settings: { language: "auto", game_path: "", index_url: "", index_placeholder: "", text_scale: 100 },
+  settings: {
+    language: "auto", game_path: "", index_url: "", index_placeholder: "",
+    proxy_enabled: false, proxy_url: "", github_proxy_enabled: false,
+    github_proxy_url: "", text_scale: 100,
+  },
   links: { repository: "", registry: "" },
   melonloader: null,
   melonloaderLoading: false,
@@ -369,6 +383,11 @@ function applyTextScale(value) {
   if (input) input.value = String(scale);
   if (output) output.textContent = `${scale}%`;
   return scale;
+}
+
+function syncProxyControls() {
+  $("#proxy-url").disabled = !$("#proxy-enabled").checked;
+  $("#github-proxy-url").disabled = !$("#github-proxy-enabled").checked;
 }
 
 function applyTranslations() {
@@ -1304,6 +1323,13 @@ async function reloadSettings() {
   $("#game-path").value = result.settings.game_path;
   $("#index-url").value = result.settings.index_url;
   $("#index-url").placeholder = result.settings.index_placeholder;
+  $("#proxy-enabled").checked = result.settings.proxy_enabled;
+  $("#proxy-url").value = result.settings.proxy_url;
+  $("#proxy-url").placeholder = result.settings.proxy_placeholder;
+  $("#github-proxy-enabled").checked = result.settings.github_proxy_enabled;
+  $("#github-proxy-url").value = result.settings.github_proxy_url;
+  $("#github-proxy-url").placeholder = result.settings.github_proxy_placeholder;
+  syncProxyControls();
   applyTextScale(result.settings.text_scale);
   updatePageHeader();
 }
@@ -1314,6 +1340,10 @@ async function saveSettings(values = null) {
     language: state.languageMode,
     game_path: $("#game-path").value.trim(),
     index_url: $("#index-url").value.trim(),
+    proxy_enabled: $("#proxy-enabled").checked,
+    proxy_url: $("#proxy-url").value.trim(),
+    github_proxy_enabled: $("#github-proxy-enabled").checked,
+    github_proxy_url: $("#github-proxy-url").value.trim(),
     text_scale: applyTextScale($("#text-scale").value),
   };
   const result = await callApi("save_settings", payload);
@@ -1559,6 +1589,8 @@ function wireEvents() {
     }
   });
   $("#browse-game-path").addEventListener("click", chooseGamePath);
+  $("#proxy-enabled").addEventListener("change", syncProxyControls);
+  $("#github-proxy-enabled").addEventListener("change", syncProxyControls);
   $("#melonloader-action").addEventListener("click", async () => {
     const editedPath = $("#game-path").value.trim();
     if (editedPath !== (state.settings.game_path || "") && !(await saveSettings())) return;
@@ -1574,6 +1606,10 @@ function wireEvents() {
       language: state.languageMode,
       game_path: state.settings.game_path || "",
       index_url: state.settings.index_url || "",
+      proxy_enabled: state.settings.proxy_enabled === true,
+      proxy_url: state.settings.proxy_url || "",
+      github_proxy_enabled: state.settings.github_proxy_enabled === true,
+      github_proxy_url: state.settings.github_proxy_url || "",
       text_scale: state.settings.text_scale || 100,
     };
     await saveSettings(saved);
@@ -1613,6 +1649,13 @@ async function initialize() {
     $("#game-path").value = result.settings.game_path;
     $("#index-url").value = result.settings.index_url;
     $("#index-url").placeholder = result.settings.index_placeholder;
+    $("#proxy-enabled").checked = result.settings.proxy_enabled;
+    $("#proxy-url").value = result.settings.proxy_url;
+    $("#proxy-url").placeholder = result.settings.proxy_placeholder;
+    $("#github-proxy-enabled").checked = result.settings.github_proxy_enabled;
+    $("#github-proxy-url").value = result.settings.github_proxy_url;
+    $("#github-proxy-url").placeholder = result.settings.github_proxy_placeholder;
+    syncProxyControls();
     applyTextScale(result.settings.text_scale);
     setLanguage(result.language);
     await pollQueue(true);

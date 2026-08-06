@@ -10,10 +10,16 @@ from urllib.parse import urlparse
 from .catalog import load_catalog
 from .config import (
     ConfigStore,
+    DEFAULT_GITHUB_PROXY_URL,
+    DEFAULT_PROXY_URL,
     detect_game_path,
     detect_language,
     effective_game_path,
+    effective_github_proxy_url,
     effective_index_url,
+    effective_proxy_url,
+    normalize_github_proxy_url,
+    normalize_proxy_url,
     normalize_text_scale,
 )
 from .errors import ModManagerError
@@ -44,6 +50,12 @@ def _ui_directory() -> Path:
     if bundled.is_dir():
         return bundled
     return Path(__file__).resolve().with_name("client_ui")
+
+
+def _app_icon_path() -> Path | None:
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    icon = bundle_root / "resources" / "app-icon.ico"
+    return icon if icon.is_file() else None
 
 
 def _source_from_config(config: dict[str, Any]) -> str | Path:
@@ -80,6 +92,7 @@ class ClientApi:
         self.config = self.config_store.load()
         self._service_factory = service_factory
         self.service = service_factory(self.config_store.app_dir)
+        self._configure_service_network(self.service)
         self.latest: dict[str, ReleaseInfo | None] = {}
         self._catalog_lock = threading.Lock()
         self._state_lock = threading.RLock()
@@ -94,6 +107,15 @@ class ClientApi:
         if http is None:
             http = ModManagerService(self.config_store.app_dir).http
         self.melonloader = MelonLoaderManager(self.config_store.app_dir, http)
+
+    def _configure_service_network(self, service: ModManagerService) -> None:
+        http = getattr(service, "http", None)
+        configure = getattr(http, "configure_network", None)
+        if configure is not None:
+            configure(
+                effective_proxy_url(self.config),
+                effective_github_proxy_url(self.config),
+            )
 
     def bind_window(self, window: Any) -> None:
         self._window = window
@@ -130,6 +152,12 @@ class ClientApi:
             "game_path": str(self.config.get("game_path", "") or ""),
             "index_url": str(self.config.get("index_url", "") or ""),
             "index_placeholder": DEFAULT_INDEX_URL,
+            "proxy_enabled": self.config.get("proxy_enabled") is True,
+            "proxy_url": str(self.config.get("proxy_url", "") or ""),
+            "proxy_placeholder": DEFAULT_PROXY_URL,
+            "github_proxy_enabled": self.config.get("github_proxy_enabled") is True,
+            "github_proxy_url": str(self.config.get("github_proxy_url", "") or ""),
+            "github_proxy_placeholder": DEFAULT_GITHUB_PROXY_URL,
             "game_path_placeholder": "",
             "text_scale": normalize_text_scale(self.config.get("text_scale")),
         }
@@ -170,9 +198,23 @@ class ClientApi:
                 "language": language,
                 "game_path": str(values.get("game_path", "")).strip(),
                 "index_url": str(values.get("index_url", "")).strip(),
+                "proxy_enabled": values.get("proxy_enabled") is True,
+                "proxy_url": normalize_proxy_url(values.get("proxy_url", "")),
+                "github_proxy_enabled": values.get("github_proxy_enabled") is True,
+                "github_proxy_url": normalize_github_proxy_url(
+                    values.get("github_proxy_url", "")
+                ),
                 "text_scale": normalize_text_scale(values.get("text_scale")),
             }
             self.config_store.save(self.config)
+            self._configure_service_network(self.service)
+            melonloader_http = getattr(self.melonloader, "http", None)
+            configure = getattr(melonloader_http, "configure_network", None)
+            if configure is not None:
+                configure(
+                    effective_proxy_url(self.config),
+                    effective_github_proxy_url(self.config),
+                )
             return self._success(settings=self._settings_data(), language=self.language)
         except (OSError, ValueError) as exc:
             return self._failure(exc, code="settings_save_failed")
@@ -183,6 +225,7 @@ class ClientApi:
         try:
             self.config = self.config_store.load()
             service = self._service_factory(self.config_store.app_dir)
+            self._configure_service_network(service)
             service, latest = load_catalog(
                 service,
                 _source_from_config(self.config),
@@ -807,9 +850,11 @@ def run_gui(version: str) -> None:
     api.bind_window(window)
     window.events.closing += api.on_closing
     window.events.closed += api.on_closed
+    icon_path = _app_icon_path()
     webview.start(
         gui="edgechromium",
         debug=False,
         private_mode=False,
         storage_path=str(api.config_store.app_dir / "webview"),
+        icon=str(icon_path) if icon_path else None,
     )
