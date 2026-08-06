@@ -7,6 +7,14 @@ SITE_ROOT = Path(__file__).resolve().parents[1] / "site"
 
 
 class SiteUiTests(unittest.TestCase):
+    def test_site_uses_packaged_application_icon(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        icon = SITE_ROOT / "favicon.png"
+
+        self.assertTrue(icon.is_file())
+        self.assertIn('rel="icon" type="image/png" href="./favicon.png"', html)
+        self.assertIn('<span class="brand-mark"><img src="./favicon.png" alt="" /></span>', html)
+
     def test_primary_button_color_meets_text_contrast(self):
         styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
 
