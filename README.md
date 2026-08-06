@@ -95,6 +95,7 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 - 只接受 HTTPS Registry 和 GitHub Release 下载地址。
 - DLL 分类只读 PE/.NET 元数据，不使用 `Assembly.Load`。
 - ZIP 限制条目数、单文件/总解压体积和压缩比，并拒绝绝对路径、`..` 与设备路径。
+- “翻译”分类使用受限安装模式：替换前按时间备份并保留最新 5 份，只能用 ZIP 事务性替换 `AutoTranslator`，失败时恢复原目录。
 - 原生或无法识别的 DLL 必须由 Registry override 指定目标。
 - 同一路径的不同内容、外部修改的托管文件和不同哈希的手工文件会阻止安装。
 - Sprocket 运行时拒绝修改游戏目录。

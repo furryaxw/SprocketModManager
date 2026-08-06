@@ -64,6 +64,7 @@ CATEGORY_KEYS = {
     "library": "category_library",
     "visual": "category_visual",
     "audio": "category_audio",
+    "translation": "category_translation",
     "other": "category_other",
 }
 
@@ -163,6 +164,7 @@ TEXT = {
         "category_library": "Libraries",
         "category_visual": "Visual",
         "category_audio": "Audio",
+        "category_translation": "Translations",
         "category_other": "Other",
         "package_id": "PACKAGE ID",
         "release_state": "RELEASE STATE",
@@ -275,6 +277,7 @@ TEXT = {
         "category_library": "依赖库",
         "category_visual": "视觉",
         "category_audio": "音频",
+        "category_translation": "翻译",
         "category_other": "其他",
         "package_id": "包 ID",
         "release_state": "RELEASE 状态",

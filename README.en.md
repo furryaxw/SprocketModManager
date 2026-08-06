@@ -111,6 +111,9 @@ Edge installations.
 - DLL classification reads PE/.NET metadata only and never uses `Assembly.Load`.
 - ZIP archives are limited by entry count, per-file and total extracted size, and
   compression ratio. Absolute paths, `..`, and device paths are rejected.
+- The Translations category uses a restricted mode that can only transactionally
+  replace `AutoTranslator` from a ZIP, retains the five newest timestamped backups,
+  and restores the old directory on failure.
 - Native or unrecognized DLLs require a Registry override that selects a target.
 - Conflicting content at the same path, externally modified managed files, and
   manually installed files with a different hash block installation.

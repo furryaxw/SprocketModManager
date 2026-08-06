@@ -12,7 +12,9 @@ from .hashing import sha256_file
 from .models import PreparedFile, RegistryPackage
 
 
-ALLOWED_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
+STANDARD_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
+ALLOWED_ROOTS = STANDARD_ROOTS | {"AutoTranslator"}
+XUNITY_TRANSLATION_MODE = "xunity-translation"
 MAX_ARCHIVE_FILES = 4096
 MAX_ARCHIVE_FILE_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_TOTAL_BYTES = 1024 * 1024 * 1024
@@ -56,6 +58,8 @@ def _override_target(package: RegistryPackage, source_name: str) -> PurePosixPat
     for override in package.install.get("overrides", ()):
         if _matches(str(override.get("match", "")), source_name):
             directory = validate_target(str(override.get("target", "")))
+            if directory.parts[0] not in STANDARD_ROOTS:
+                raise ScanError(f"override target root is not allowed: {directory.as_posix()!r}")
             return directory / PurePosixPath(source_name).name
     return None
 
@@ -67,9 +71,9 @@ def _is_excluded(package: RegistryPackage, source_name: str) -> bool:
 def _declared_target(source_name: str) -> PurePosixPath | None:
     path = validate_relative_path(source_name)
     parts = path.parts
-    if parts[0] in ALLOWED_ROOTS:
+    if parts[0] in STANDARD_ROOTS:
         return path
-    if len(parts) > 1 and parts[1] in ALLOWED_ROOTS:
+    if len(parts) > 1 and parts[1] in STANDARD_ROOTS:
         return PurePosixPath(*parts[1:])
     return None
 
@@ -123,6 +127,8 @@ class PackageScanner:
         output_dir: Path,
     ) -> tuple[list[PreparedFile], list[str]]:
         suffix = asset_path.suffix.casefold()
+        if package.install.get("mode") == XUNITY_TRANSLATION_MODE and suffix != ".zip":
+            raise ScanError("XUnity translation packages must use a ZIP Release asset")
         if suffix == ".dll":
             return self._scan_file(package, asset_path.name, asset_path, output_dir)
         if suffix not in {".zip", ".smod"}:
@@ -176,6 +182,19 @@ class PackageScanner:
         del output_dir
         if _is_excluded(package, source_name):
             return [], [source_name]
+        if package.install.get("mode") == XUNITY_TRANSLATION_MODE:
+            source = validate_relative_path(source_name)
+            target = PurePosixPath("AutoTranslator", *source.parts)
+            validate_target(target.as_posix())
+            return [
+                PreparedFile(
+                    package_id=package.id,
+                    source=source_path,
+                    source_name=source_name,
+                    target=target.as_posix(),
+                    sha256=sha256_file(source_path),
+                )
+            ], []
         suffix = source_path.suffix.casefold()
         target = _override_target(package, source_name)
         if target is None and suffix == ".dll":

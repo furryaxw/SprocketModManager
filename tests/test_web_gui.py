@@ -469,6 +469,18 @@ class WebGuiTests(unittest.TestCase):
         self.assertNotRegex(css, r"font-size:\s*[0-9]+px")
         self.assertNotRegex(css, r"font:\s*[^;/]*\s[0-9]+px/")
 
+    def test_translations_use_a_separate_client_page(self):
+        root = Path(__file__).parents[1] / "sprocket_mod_manager" / "client_ui"
+        html = (root / "index.html").read_text(encoding="utf-8")
+        javascript = (root / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-page-target="translations"', html)
+        self.assertIn('id="page-translations" data-page="translations"', html)
+        self.assertIn('id="translation-list"', html)
+        self.assertNotIn('<option value="translation"', html)
+        self.assertIn('pkg.category === "translation") !== translations', javascript)
+        self.assertIn('translations: { kicker: "LOCALIZATION"', javascript)
+
     def test_native_select_options_use_the_dark_palette(self):
         css = (
             Path(__file__).parents[1]

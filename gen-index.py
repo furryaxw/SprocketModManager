@@ -35,7 +35,9 @@ REQUIRED_FIELDS = {
 OPTIONAL_FIELDS = {"description", "recommendations", "featured"}
 FORBIDDEN_VERSION_FIELDS = {"version", "latest_version", "download_url", "tag"}
 ALLOWED_TARGET_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
-ALLOWED_CATEGORIES = {"gameplay", "utility", "library", "visual", "audio", "other"}
+ALLOWED_CATEGORIES = {"gameplay", "utility", "library", "visual", "audio", "translation", "other"}
+XUNITY_TRANSLATION_MODE = "xunity-translation"
+XUNITY_TRANSLATOR_PACKAGE_ID = "bbepis.xunity-auto-translator-melonmod-il2cpp"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ID_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$")
 LANGUAGE_TAG_RE = re.compile(
@@ -307,14 +309,20 @@ def validate_meta(meta: dict, directory_name: str) -> None:
     install = meta.get("install")
     if not isinstance(install, dict):
         raise RegistryError("install must be an object")
-    if set(install) != {"scan_dlls", "exclude", "overrides"}:
-        raise RegistryError("install requires exactly scan_dlls, exclude, and overrides")
+    if set(install) not in (
+        {"scan_dlls", "exclude", "overrides"},
+        {"scan_dlls", "exclude", "overrides", "mode"},
+    ):
+        raise RegistryError("install requires scan_dlls, exclude, overrides, and optional mode")
     if not isinstance(install.get("scan_dlls"), bool):
         raise RegistryError("install.scan_dlls must be a boolean")
     if not isinstance(install.get("exclude", []), list):
         raise RegistryError("install.exclude must be a list")
     if not isinstance(install.get("overrides", []), list):
         raise RegistryError("install.overrides must be a list")
+    mode = install.get("mode", "standard")
+    if mode not in {"standard", XUNITY_TRANSLATION_MODE}:
+        raise RegistryError(f"invalid install mode: {mode!r}")
     for override in install.get("overrides", []):
         if not isinstance(override, dict):
             raise RegistryError("install overrides must be objects")
@@ -323,6 +331,20 @@ def validate_meta(meta: dict, directory_name: str) -> None:
         if not isinstance(override["match"], str) or not override["match"]:
             raise RegistryError("install override match must be a non-empty string")
         validate_target(override["target"])
+
+    is_translation = meta.get("category") == "translation"
+    if is_translation != (mode == XUNITY_TRANSLATION_MODE):
+        raise RegistryError(
+            "translation category packages must use install.mode xunity-translation"
+        )
+    if is_translation:
+        if install["scan_dlls"] or install["overrides"]:
+            raise RegistryError("XUnity translation packages cannot scan DLLs or use overrides")
+        dependency_ids = {dependency["id"] for dependency in dependencies}
+        if XUNITY_TRANSLATOR_PACKAGE_ID not in dependency_ids:
+            raise RegistryError(
+                f"translation packages must depend on {XUNITY_TRANSLATOR_PACKAGE_ID}"
+            )
 
 
 def find_dependency_cycle(packages: dict[str, dict]) -> list[str] | None:

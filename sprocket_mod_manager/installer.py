@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,11 @@ from .models import (
     ReleaseAsset,
     ReleaseInfo,
 )
-from .scanner import validate_target
+from .scanner import XUNITY_TRANSLATION_MODE, validate_target
 from .state import StateStore
+
+
+XUNITY_TRANSLATION_BACKUP_LIMIT = 5
 
 
 def sprocket_is_running() -> bool:
@@ -55,6 +59,11 @@ def _safe_game_path(game_dir: Path, relative: str) -> Path:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _is_xunity_translation_path(relative: str) -> bool:
+    parts = relative.replace("\\", "/").split("/")
+    return bool(parts) and parts[0].casefold() == "autotranslator"
 
 
 class Installer:
@@ -96,8 +105,42 @@ class Installer:
         next_state = copy.deepcopy(state)
         incoming = self._incoming_files(prepared)
         package_ids = {package.resolved.package.id for package in prepared.packages}
+        translation_packages = [
+            package
+            for package in prepared.packages
+            if package.resolved.package.install.get("mode") == XUNITY_TRANSLATION_MODE
+        ]
+        if len(translation_packages) > 1:
+            raise InstallError("only one XUnity translation package can be installed at a time")
+        replaces_translation_root = bool(translation_packages)
         root_id = prepared.resolution.root_id
         warnings: list[str] = []
+
+        if replaces_translation_root:
+            previous_translation_ids = {
+                package_id
+                for package_id, info in next_state["packages"].items()
+                if info.get("install_mode") == XUNITY_TRANSLATION_MODE
+            }
+            reverse = self._reverse_dependencies(next_state)
+            for package_id in previous_translation_ids - package_ids:
+                required_by = set(reverse.get(package_id, ())) - previous_translation_ids
+                if required_by:
+                    raise InstallError(
+                        f"installed translation package {package_id} is required by: "
+                        + ", ".join(sorted(required_by))
+                    )
+                next_state["packages"].pop(package_id, None)
+            for relative, entry in list(next_state["files"].items()):
+                if not _is_xunity_translation_path(relative):
+                    continue
+                outside_owners = set(entry.get("owners", ())) - previous_translation_ids
+                if outside_owners:
+                    raise InstallError(
+                        f"{relative} is managed by a non-translation package: "
+                        + ", ".join(sorted(outside_owners))
+                    )
+                del next_state["files"][relative]
 
         for package_id in package_ids:
             old_package = next_state["packages"].get(package_id, {})
@@ -132,7 +175,9 @@ class Installer:
                     del next_state["files"][state_key]
                     next_state["files"][relative] = existing_entry
             else:
-                preexisting = target.is_file()
+                preexisting = target.is_file() and not (
+                    replaces_translation_root and _is_xunity_translation_path(relative)
+                )
                 if preexisting and sha256_file(target) != sample.sha256:
                     raise InstallError(f"unmanaged file already exists at {relative}")
                 if preexisting:
@@ -163,6 +208,7 @@ class Installer:
                 "tag": resolved.release.tag,
                 "release_id": resolved.release.id,
                 "requested": bool(old.get("requested")) or resolved.package.id == root_id,
+                "install_mode": resolved.package.install.get("mode", "standard"),
                 "dependencies": list(resolved.dependency_ids),
                 "files": sorted({file.target for file in package.files}),
                 "assets": [
@@ -193,7 +239,19 @@ class Installer:
 
         transaction = self._create_transaction_dir()
         backups: dict[Path, Path | None] = {}
+        directory_backups: dict[Path, Path | None] = {}
         try:
+            if replaces_translation_root:
+                translation_root = _safe_game_path(game_dir, "AutoTranslator")
+                archive = self._archive_xunity_translation_backup(translation_root)
+                if archive is not None and progress:
+                    progress(f"Backed up AutoTranslator: {archive.name}")
+                self._backup_directory(translation_root, game_dir, transaction, directory_backups)
+                if translation_root.exists():
+                    shutil.rmtree(translation_root)
+                if progress:
+                    progress("Cleared AutoTranslator")
+
             for relative, entry in obsolete:
                 target = _safe_game_path(game_dir, relative)
                 if entry.get("preexisting"):
@@ -222,6 +280,7 @@ class Installer:
             self.state_store.save(next_state)
         except Exception:
             self._rollback(backups)
+            self._rollback_directories(directory_backups)
             raise
         finally:
             shutil.rmtree(transaction, ignore_errors=True)
@@ -409,6 +468,77 @@ class Installer:
         backups[target] = backup
 
     @staticmethod
+    def _backup_directory(
+        target: Path,
+        game_dir: Path,
+        transaction: Path,
+        backups: dict[Path, Path | None],
+    ) -> None:
+        if target in backups:
+            return
+        if not target.exists():
+            backups[target] = None
+            return
+        if not target.is_dir():
+            raise InstallError(f"translation target is not a directory: {target}")
+        relative = target.resolve().relative_to(game_dir.resolve())
+        backup = transaction / "directory-backup" / relative
+        shutil.copytree(target, backup)
+        backups[target] = backup
+
+    def _archive_xunity_translation_backup(self, target: Path) -> Path | None:
+        if not target.exists():
+            return None
+        if not target.is_dir():
+            raise InstallError(f"translation target is not a directory: {target}")
+
+        backup_dir = self.app_dir / "backups" / "AutoTranslator"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S-%f")
+        archive_path = backup_dir / f"AutoTranslator-{timestamp}.zip"
+        temporary = backup_dir / f".{archive_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            with zipfile.ZipFile(
+                temporary,
+                "x",
+                compression=zipfile.ZIP_DEFLATED,
+                allowZip64=True,
+            ) as archive:
+                for current, directories, files in os.walk(target, topdown=True, followlinks=False):
+                    current_path = Path(current)
+                    directories.sort(key=str.casefold)
+                    files.sort(key=str.casefold)
+                    for name in directories:
+                        self._reject_linked_backup_path(current_path / name)
+                    for name in files:
+                        path = current_path / name
+                        self._reject_linked_backup_path(path)
+                        if not path.is_file():
+                            raise InstallError(f"cannot back up unsupported path: {path}")
+                        archive.write(path, path.relative_to(target).as_posix())
+                    if current_path != target and not directories and not files:
+                        relative = current_path.relative_to(target).as_posix()
+                        archive.writestr(relative.rstrip("/") + "/", b"")
+            os.replace(temporary, archive_path)
+            archives = sorted(backup_dir.glob("AutoTranslator-*.zip"), key=lambda item: item.name)
+            for obsolete in archives[:-XUNITY_TRANSLATION_BACKUP_LIMIT]:
+                obsolete.unlink()
+            return archive_path
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            if archive_path.exists():
+                archive_path.unlink(missing_ok=True)
+            if isinstance(exc, InstallError):
+                raise
+            raise InstallError(f"cannot archive AutoTranslator backup: {exc}") from exc
+
+    @staticmethod
+    def _reject_linked_backup_path(path: Path) -> None:
+        is_junction = getattr(path, "is_junction", lambda: False)
+        if path.is_symlink() or is_junction():
+            raise InstallError(f"cannot back up linked path: {path}")
+
+    @staticmethod
     def _rollback(backups: dict[Path, Path | None]) -> None:
         for target, backup in reversed(list(backups.items())):
             try:
@@ -417,6 +547,17 @@ class Installer:
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(backup, target)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _rollback_directories(backups: dict[Path, Path | None]) -> None:
+        for target, backup in reversed(list(backups.items())):
+            try:
+                if target.exists():
+                    shutil.rmtree(target)
+                if backup is not None:
+                    shutil.copytree(backup, target)
             except OSError:
                 pass
 
