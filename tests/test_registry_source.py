@@ -9,7 +9,7 @@ from sprocket_mod_manager.errors import RegistryError
 from sprocket_mod_manager.service import ModManagerService
 
 
-REGISTRY_BYTES = (Path(__file__).resolve().parents[1] / "site" / "index.json").read_bytes()
+REGISTRY_BYTES = json.dumps({"schema_version": 1, "packages": []}).encode("utf-8")
 REGISTRY_PACKAGE_COUNT = len(json.loads(REGISTRY_BYTES.decode("utf-8"))["packages"])
 
 
