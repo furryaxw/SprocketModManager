@@ -1,0 +1,40 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.xunity-il2cpptmpro-bridge",
+  "name": "XUnity.Il2CppTMProBridge",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/XUnity-Il2CppTMPro-Bridge",
+  "license": "MIT",
+  "display_name": {
+    "en": "XUnity Il2CppTMPro Bridge",
+    "zh": "XUnity Il2CppTMPro 桥接模组"
+  },
+  "description": {
+    "en": "Bridges XUnity.AutoTranslator to Il2CppInterop-generated Il2CppTMPro text components in MelonLoader IL2CPP games.",
+    "zh": "让 XUnity.AutoTranslator 能够处理 MelonLoader IL2CPP 游戏中由 Il2CppInterop 生成的 Il2CppTMPro 文本组件。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["XUnity.Il2CppTMProBridge.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": [
+      {
+        "match": "XUnity.Il2CppTMProBridge.dll",
+        "target": "Mods"
+      }
+    ]
+  },
+  "category": "library",
+  "tags": ["translation", "localization", "xunity", "textmeshpro"]
+}
