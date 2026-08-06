@@ -1,10 +1,12 @@
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from sprocket_mod_manager.errors import InstallError
 from sprocket_mod_manager.hashing import sha256_file
 from sprocket_mod_manager.installer import Installer, sprocket_is_running
 from sprocket_mod_manager.models import (
@@ -92,7 +94,170 @@ def prepared_with_dependency(root: Path) -> PreparedPlan:
     )
 
 
+def prepared_translation(
+    root: Path,
+    package_id: str = "test.translation",
+    files: dict[str, bytes] | None = None,
+) -> PreparedPlan:
+    package = RegistryPackage(
+        id=package_id,
+        name="TestTranslation",
+        authors=("test",),
+        repository="test/translation",
+        license="MIT",
+        display_name={"en": "Test translation"},
+        description={"en": "Test translation"},
+        release={},
+        dependencies=(),
+        install={
+            "mode": "xunity-translation",
+            "scan_dlls": False,
+            "exclude": [],
+            "overrides": [],
+        },
+        category="translation",
+        tags=(),
+    )
+    release = ReleaseInfo(1, "v1.0.0", Version.parse("1.0.0"), False, "", ())
+    resolved = ResolvedPackage(package, release, ())
+    prepared_files = []
+    for index, (relative, content) in enumerate(
+        (files or {"Config.ini": b"new config"}).items()
+    ):
+        source = root / f"translation-source-{index}"
+        source.write_bytes(content)
+        prepared_files.append(
+            PreparedFile(
+                package.id,
+                source,
+                relative,
+                f"AutoTranslator/{relative}",
+                sha256_file(source),
+            )
+        )
+    plan = ResolutionPlan(package.id, (resolved,))
+    return PreparedPlan(plan, [PreparedPackage(resolved, files=prepared_files)], root)
+
+
 class InstallerTests(unittest.TestCase):
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_translation_install_replaces_entire_autotranslator_directory(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            (game / "AutoTranslator" / "stale").mkdir(parents=True)
+            (game / "Sprocket.exe").write_bytes(b"")
+            (game / "AutoTranslator" / "old.txt").write_bytes(b"old")
+            (game / "AutoTranslator" / "stale" / "cache.txt").write_bytes(b"cache")
+            store = StateStore(root / "app" / "installed.json")
+
+            Installer(root / "app", store).apply(
+                prepared_translation(
+                    root,
+                    files={
+                        "Config.ini": b"new config",
+                        "Translation/zh-CN/Text/Translations.txt": b"Hello=translated",
+                    },
+                ),
+                game,
+            )
+
+            self.assertFalse((game / "AutoTranslator" / "old.txt").exists())
+            self.assertFalse((game / "AutoTranslator" / "stale").exists())
+            self.assertEqual((game / "AutoTranslator" / "Config.ini").read_bytes(), b"new config")
+            archives = sorted((root / "app" / "backups" / "AutoTranslator").glob("*.zip"))
+            self.assertEqual(len(archives), 1)
+            with zipfile.ZipFile(archives[0]) as archive:
+                self.assertEqual(archive.read("old.txt"), b"old")
+                self.assertEqual(archive.read("stale/cache.txt"), b"cache")
+                self.assertNotIn("Config.ini", archive.namelist())
+            state = store.load()
+            self.assertEqual(
+                state["packages"]["test.translation"]["install_mode"],
+                "xunity-translation",
+            )
+
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_translation_install_rolls_back_directory_when_state_save_fails(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            (game / "AutoTranslator").mkdir(parents=True)
+            (game / "Sprocket.exe").write_bytes(b"")
+            (game / "AutoTranslator" / "old.txt").write_bytes(b"old")
+            store = StateStore(root / "app" / "installed.json")
+            installer = Installer(root / "app", store)
+
+            with patch.object(store, "save", side_effect=OSError("state failure")):
+                with self.assertRaisesRegex(OSError, "state failure"):
+                    installer.apply(prepared_translation(root), game)
+
+            self.assertEqual((game / "AutoTranslator" / "old.txt").read_bytes(), b"old")
+            self.assertFalse((game / "AutoTranslator" / "Config.ini").exists())
+
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_translation_backups_keep_only_five_newest_archives(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            (game / "AutoTranslator").mkdir(parents=True)
+            (game / "Sprocket.exe").write_bytes(b"")
+            (game / "AutoTranslator" / "seed.txt").write_bytes(b"seed")
+            store = StateStore(root / "app" / "installed.json")
+            installer = Installer(root / "app", store)
+
+            for index in range(6):
+                installer.apply(
+                    prepared_translation(root, files={"Config.ini": f"version {index}".encode()}),
+                    game,
+                )
+
+            archives = sorted((root / "app" / "backups" / "AutoTranslator").glob("*.zip"))
+            self.assertEqual(len(archives), 5)
+            self.assertEqual(len({archive.name for archive in archives}), 5)
+
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_translation_backup_failure_does_not_clear_directory(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            (game / "AutoTranslator").mkdir(parents=True)
+            (game / "Sprocket.exe").write_bytes(b"")
+            (game / "AutoTranslator" / "old.txt").write_bytes(b"old")
+            store = StateStore(root / "app" / "installed.json")
+            installer = Installer(root / "app", store)
+
+            with patch(
+                "sprocket_mod_manager.installer.zipfile.ZipFile",
+                side_effect=OSError("disk full"),
+            ):
+                with self.assertRaisesRegex(InstallError, "cannot archive"):
+                    installer.apply(prepared_translation(root), game)
+
+            self.assertEqual((game / "AutoTranslator" / "old.txt").read_bytes(), b"old")
+            self.assertFalse((game / "AutoTranslator" / "Config.ini").exists())
+
+    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    def test_new_translation_replaces_previous_translation_package_state(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            game.mkdir()
+            (game / "Sprocket.exe").write_bytes(b"")
+            store = StateStore(root / "app" / "installed.json")
+            installer = Installer(root / "app", store)
+
+            installer.apply(prepared_translation(root, "test.translation-a"), game)
+            installer.apply(
+                prepared_translation(root, "test.translation-b", {"Config.ini": b"second"}),
+                game,
+            )
+
+            state = store.load()
+            self.assertNotIn("test.translation-a", state["packages"])
+            self.assertIn("test.translation-b", state["packages"])
+            self.assertEqual((game / "AutoTranslator" / "Config.ini").read_bytes(), b"second")
+
     def test_process_check_treats_missing_tasklist_stdout_as_not_running(self):
         with (
             patch("sprocket_mod_manager.installer.os.name", "nt"),

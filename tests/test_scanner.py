@@ -8,7 +8,7 @@ from sprocket_mod_manager.models import RegistryPackage
 from sprocket_mod_manager.scanner import PackageScanner
 
 
-def package():
+def package(*, translation=False):
     return RegistryPackage(
         id="test.mod",
         name="TestMod",
@@ -19,13 +19,45 @@ def package():
         description={"en": "Test"},
         release={},
         dependencies=(),
-        install={"scan_dlls": True, "exclude": [], "overrides": []},
-        category="utility",
+        install={
+            "scan_dlls": not translation,
+            "exclude": [],
+            "overrides": [],
+            **({"mode": "xunity-translation"} if translation else {}),
+        },
+        category="translation" if translation else "utility",
         tags=(),
     )
 
 
 class ScannerTests(unittest.TestCase):
+    def test_xunity_translation_zip_preserves_all_relative_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "zh_cn.zip"
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("Config.ini", b"language=zh-CN")
+                output.writestr("Translation/zh-CN/Text/Translations.txt", "Hello=你好")
+
+            files, ignored = PackageScanner().scan(package(translation=True), archive, root / "out")
+
+            self.assertEqual(
+                [item.target for item in files],
+                [
+                    "AutoTranslator/Config.ini",
+                    "AutoTranslator/Translation/zh-CN/Text/Translations.txt",
+                ],
+            )
+            self.assertEqual(ignored, [])
+
+    def test_xunity_translation_rejects_non_zip_asset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            asset = root / "Translations.txt"
+            asset.write_text("Hello=你好", encoding="utf-8")
+            with self.assertRaisesRegex(ScanError, "must use a ZIP"):
+                PackageScanner().scan(package(translation=True), asset, root / "out")
+
     def test_rejects_zip_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

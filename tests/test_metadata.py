@@ -45,6 +45,33 @@ def metadata():
 
 
 class MetadataLocalizationTests(unittest.TestCase):
+    def test_translation_package_requires_xunity_mode_and_dependency(self):
+        meta = metadata()
+        meta["category"] = "translation"
+        meta["release"]["assets"]["include"] = ["*.zip"]
+        meta["install"] = {
+            "mode": "xunity-translation",
+            "scan_dlls": False,
+            "exclude": [],
+            "overrides": [],
+        }
+        meta["dependencies"] = [
+            {
+                "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+                "version": "*",
+                "when": "*",
+            }
+        ]
+        INDEX.validate_meta(meta, "example.mod")
+
+        without_dependency = {**meta, "dependencies": []}
+        with self.assertRaisesRegex(INDEX.RegistryError, "must depend on"):
+            INDEX.validate_meta(without_dependency, "example.mod")
+
+        standard_mode = {**meta, "install": {"scan_dlls": False, "exclude": [], "overrides": []}}
+        with self.assertRaisesRegex(INDEX.RegistryError, "must use install.mode"):
+            INDEX.validate_meta(standard_mode, "example.mod")
+
     def test_one_display_language_without_description_is_valid(self):
         INDEX.validate_meta(metadata(), "example.mod")
 

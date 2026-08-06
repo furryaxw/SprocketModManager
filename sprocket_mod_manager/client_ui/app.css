@@ -138,7 +138,7 @@ button:disabled { opacity: 0.42; cursor: default; }
 
 .page { min-width: 0; min-height: 0; overflow: auto; padding: 20px 30px 28px; }
 .page.active { display: block; }
-#page-catalog.active {
+#page-catalog.active, #page-translations.active {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -150,6 +150,7 @@ button:disabled { opacity: 0.42; cursor: default; }
   align-items: center;
   margin-bottom: 14px;
 }
+.translation-tools { grid-template-columns: minmax(260px, 1fr) 165px auto; }
 input, select {
   height: 38px;
   border: 1px solid var(--line);
@@ -309,6 +310,7 @@ select option { color: var(--text); background: #111516; }
 .close-button:hover { color: var(--text); background: var(--surface-hover); }
 .modal-body { overflow: auto; padding: 20px 22px; color: var(--text-soft); font-size: 0.8125rem; line-height: 1.25rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .modal-plan { display: grid; gap: 12px; }
+.translation-replace-warning { padding: 10px 12px; border: 1px solid rgba(203, 153, 82, 0.55); border-radius: 4px; color: #e0bd83; background: rgba(203, 153, 82, 0.08); }
 .detail-readme { padding-top: 20px; border-top: 1px solid var(--line); }
 .readme-status { min-height: 110px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 0.75rem; }
 .readme-status.error { flex-wrap: wrap; color: var(--danger); }
@@ -372,7 +374,7 @@ html.large-text .queue-message { max-width: min(460px, 48vw); overflow: visible;
   .page-header, .page { padding-left: 22px; padding-right: 22px; }
   .catalog-workspace { grid-template-columns: minmax(330px, 0.9fr) minmax(350px, 1.1fr); }
   html.large-text .app-shell { grid-template-columns: 230px minmax(0, 1fr); }
-  html.large-text #page-catalog.active { grid-template-rows: auto auto; overflow: auto; }
+  html.large-text #page-catalog.active, html.large-text #page-translations.active { grid-template-rows: auto auto; overflow: auto; }
   html.large-text .catalog-tools { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   html.large-text .search-control { grid-column: 1 / -1; }
   html.large-text .catalog-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(360px, 48vh) minmax(360px, auto); }

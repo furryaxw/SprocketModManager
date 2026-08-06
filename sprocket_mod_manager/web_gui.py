@@ -541,6 +541,10 @@ class ClientApi:
             "id": package.id,
             "display_name": dict(package.display_name),
             "name": package.name,
+            "replaces_autotranslator": any(
+                item.package.install.get("mode") == "xunity-translation"
+                for item in plan.packages
+            ),
             "packages": [
                 {
                     "id": item.package.id,

@@ -25,18 +25,21 @@
           <button class="nav-item active" type="button" data-page-target="catalog">
             <span class="nav-index">01</span><span data-i18n="catalog">模组目录</span>
           </button>
+          <button class="nav-item" type="button" data-page-target="translations">
+            <span class="nav-index">02</span><span data-i18n="translations">翻译</span>
+          </button>
           <button class="nav-item" type="button" data-page-target="installed">
-            <span class="nav-index">02</span><span data-i18n="installed">已安装</span>
+            <span class="nav-index">03</span><span data-i18n="installed">已安装</span>
           </button>
           <button class="nav-item" type="button" data-page-target="downloads">
-            <span class="nav-index">03</span><span data-i18n="downloads">下载队列</span>
+            <span class="nav-index">04</span><span data-i18n="downloads">下载队列</span>
             <b id="queue-badge" hidden>0</b>
           </button>
           <button class="nav-item" type="button" data-page-target="settings">
-            <span class="nav-index">04</span><span data-i18n="settings">设置</span>
+            <span class="nav-index">05</span><span data-i18n="settings">设置</span>
           </button>
           <button class="nav-item" type="button" data-page-target="about">
-            <span class="nav-index">05</span><span data-i18n="about">关于</span>
+            <span class="nav-index">06</span><span data-i18n="about">关于</span>
           </button>
         </nav>
 
@@ -106,6 +109,33 @@
               <div class="loading-state"><span class="loader"></span><span data-i18n="loadingCatalog">正在加载目录</span></div>
             </section>
             <aside class="detail-panel" id="detail-panel">
+              <div class="empty-detail">
+                <strong data-i18n="nothingSelected">未选择模组</strong>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-translations" data-page="translations" hidden>
+          <div class="catalog-tools translation-tools">
+            <label class="search-control">
+              <span class="visually-hidden" data-i18n="search">搜索</span>
+              <input id="translation-search" type="search" autocomplete="off"
+                placeholder="搜索翻译包" data-i18n-placeholder="translationSearchPlaceholder" />
+            </label>
+            <label class="select-control sort-control">
+              <span data-i18n="sort">排序</span>
+              <select id="translation-sort">
+                <option value="name" data-i18n="sortName">名称</option>
+                <option value="release" data-i18n="sortRelease">版本</option>
+              </select>
+            </label>
+            <span class="result-count" id="translation-count">0</span>
+          </div>
+
+          <div class="catalog-workspace">
+            <section class="package-list" id="translation-list" aria-live="polite"></section>
+            <aside class="detail-panel" id="translation-detail">
               <div class="empty-detail">
                 <strong data-i18n="nothingSelected">未选择模组</strong>
               </div>

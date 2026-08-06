@@ -4,6 +4,7 @@ const TEXT = {
   zh: {
     primaryNav: "主导航",
     catalog: "模组目录",
+    translations: "翻译",
     installed: "已安装",
     downloads: "下载队列",
     settings: "设置",
@@ -14,6 +15,7 @@ const TEXT = {
     connected: "Registry 已连接",
     connectionFailed: "Registry 连接失败",
     catalogTitle: "模组目录",
+    translationsTitle: "翻译包",
     installedTitle: "安装管理",
     downloadsTitle: "下载队列",
     settingsTitle: "应用设置",
@@ -22,6 +24,7 @@ const TEXT = {
     batchInstall: "批量安装",
     search: "搜索",
     searchPlaceholder: "搜索名称、作者或标签",
+    translationSearchPlaceholder: "搜索翻译包名称、作者或标签",
     category: "分类",
     categoryAll: "全部分类",
     categoryGameplay: "玩法",
@@ -29,6 +32,7 @@ const TEXT = {
     categoryLibrary: "依赖库",
     categoryVisual: "视觉",
     categoryAudio: "音频",
+    categoryTranslation: "翻译",
     categoryOther: "其他",
     sort: "排序",
     sortName: "名称",
@@ -126,6 +130,7 @@ const TEXT = {
     close: "关闭",
     confirmInstall: "确认安装",
     confirmBatchInstall: "确认批量安装",
+    translationReplaceWarning: "安装前会备份 AutoTranslator，并仅保留最新 5 份；随后清空并替换游戏目录中的该文件夹。",
     confirmRemove: "确认卸载",
     removeMessage: "卸载 {name}？不再使用的依赖也会一并卸载。",
     resolving: "正在解析安装计划",
@@ -148,6 +153,7 @@ const TEXT = {
   en: {
     primaryNav: "Primary navigation",
     catalog: "Catalog",
+    translations: "Translations",
     installed: "Installed",
     downloads: "Download queue",
     settings: "Settings",
@@ -158,6 +164,7 @@ const TEXT = {
     connected: "Registry connected",
     connectionFailed: "Registry connection failed",
     catalogTitle: "Mod catalog",
+    translationsTitle: "Translations",
     installedTitle: "Managed installation",
     downloadsTitle: "Download queue",
     settingsTitle: "Application settings",
@@ -166,6 +173,7 @@ const TEXT = {
     batchInstall: "Batch install",
     search: "Search",
     searchPlaceholder: "Search name, author or tag",
+    translationSearchPlaceholder: "Search translation name, author or tag",
     category: "Category",
     categoryAll: "All categories",
     categoryGameplay: "Gameplay",
@@ -173,6 +181,7 @@ const TEXT = {
     categoryLibrary: "Libraries",
     categoryVisual: "Visual",
     categoryAudio: "Audio",
+    categoryTranslation: "Translations",
     categoryOther: "Other",
     sort: "Sort",
     sortName: "Name",
@@ -270,6 +279,7 @@ const TEXT = {
     close: "Close",
     confirmInstall: "Confirm install",
     confirmBatchInstall: "Confirm batch install",
+    translationReplaceWarning: "AutoTranslator is backed up before installation, with the five newest archives retained, then the directory in the game folder is cleared and replaced.",
     confirmRemove: "Confirm removal",
     removeMessage: "Remove {name}? Unused dependencies will also be removed.",
     resolving: "Resolving install plan",
@@ -323,6 +333,7 @@ const state = {
 
 const PAGE_META = {
   catalog: { kicker: "REGISTRY", title: "catalogTitle", subtitle: () => "sprocketmods.furryaxw.top" },
+  translations: { kicker: "LOCALIZATION", title: "translationsTitle", subtitle: () => "XUNITY TRANSLATION PACKAGES" },
   installed: { kicker: "INSTALLATION", title: "installedTitle", subtitle: gamePathSummary },
   downloads: { kicker: "TRANSFERS", title: "downloadsTitle", subtitle: queueSummary },
   settings: { kicker: "CONFIGURATION", title: "settingsTitle", subtitle: () => "LOCAL SETTINGS" },
@@ -445,7 +456,7 @@ function updatePageHeader() {
   $("#page-kicker").textContent = meta.kicker;
   $("#page-title").textContent = tr(meta.title);
   $("#page-subtitle").textContent = meta.subtitle();
-  $("#header-actions").hidden = state.page !== "catalog";
+  $("#header-actions").hidden = !["catalog", "translations"].includes(state.page);
 }
 
 async function showPage(page) {
@@ -462,6 +473,13 @@ async function showPage(page) {
     await reloadSettings();
     await refreshMelonLoaderStatus(false);
   }
+  if (["catalog", "translations"].includes(page)) {
+    const selected = state.packages.find((item) => item.id === state.selectedId);
+    if (selected && (selected.category === "translation") !== (page === "translations")) {
+      state.selectedId = null;
+    }
+    renderCatalog();
+  }
   if (page === "installed") await refreshInstalled();
   if (page === "downloads") await pollQueue(true);
   if (page === "about" && !state.update) await checkManagerUpdate(false);
@@ -474,6 +492,7 @@ function categoryText(category) {
     library: "categoryLibrary",
     visual: "categoryVisual",
     audio: "categoryAudio",
+    translation: "categoryTranslation",
     other: "categoryOther",
   }[category] || "categoryOther";
   return tr(key);
@@ -496,11 +515,23 @@ function compareVersions(left, right) {
   return String(a[3]).localeCompare(String(b[3]));
 }
 
-function filteredPackages() {
-  const keyword = $("#catalog-search").value.trim().toLocaleLowerCase();
-  const category = $("#category-select").value;
-  const sort = $("#sort-select").value;
+function packageBrowserView() {
+  const translations = state.page === "translations";
+  return {
+    translations,
+    keyword: $(translations ? "#translation-search" : "#catalog-search").value.trim().toLocaleLowerCase(),
+    category: translations ? "translation" : $("#category-select").value,
+    sort: $(translations ? "#translation-sort" : "#sort-select").value,
+    container: $(translations ? "#translation-list" : "#package-list"),
+    count: $(translations ? "#translation-count" : "#catalog-count"),
+    panel: $(translations ? "#translation-detail" : "#detail-panel"),
+  };
+}
+
+function filteredPackages(view) {
+  const { keyword, category, sort, translations } = view;
   const result = state.packages.filter((pkg) => {
+    if ((pkg.category === "translation") !== translations) return false;
     if (category !== "all" && pkg.category !== category) return false;
     const haystack = [
       pkg.id,
@@ -540,10 +571,11 @@ function packageEligible(pkg) {
 }
 
 function renderCatalog() {
-  const container = $("#package-list");
+  const view = packageBrowserView();
+  const { container } = view;
   if (!container) return;
-  const packages = filteredPackages();
-  $("#catalog-count").textContent = String(packages.length);
+  const packages = filteredPackages(view);
+  view.count.textContent = String(packages.length);
   container.replaceChildren();
   if (state.catalogLoading && !state.packages.length) {
     const loading = document.createElement("div");
@@ -652,9 +684,13 @@ function appendFact(list, label, value) {
 }
 
 function renderDetail() {
-  const panel = $("#detail-panel");
+  const view = packageBrowserView();
+  const { panel } = view;
   if (!panel) return;
-  const pkg = state.packages.find((item) => item.id === state.selectedId);
+  const pkg = state.packages.find(
+    (item) => item.id === state.selectedId
+      && (item.category === "translation") === view.translations,
+  );
   panel.replaceChildren();
   if (!pkg) {
     const empty = document.createElement("div");
@@ -856,6 +892,12 @@ async function loadCatalog(refresh = false) {
 function createPlanBody(plans, recommendations = []) {
   const body = document.createElement("div");
   body.className = "modal-plan";
+  if (plans.some((plan) => plan.replaces_autotranslator)) {
+    const warning = document.createElement("div");
+    warning.className = "translation-replace-warning";
+    warning.textContent = tr("translationReplaceWarning");
+    body.append(warning);
+  }
   for (const plan of plans) {
     const group = document.createElement("section");
     group.className = "plan-group";
@@ -1574,6 +1616,8 @@ function wireEvents() {
   $("#catalog-search").addEventListener("input", renderCatalog);
   $("#category-select").addEventListener("change", renderCatalog);
   $("#sort-select").addEventListener("change", renderCatalog);
+  $("#translation-search").addEventListener("input", renderCatalog);
+  $("#translation-sort").addEventListener("change", renderCatalog);
   $("#refresh-catalog").addEventListener("click", () => loadCatalog(true));
   $("#batch-install").addEventListener("click", () => beginInstall([...state.batch]));
   $("#update-all").addEventListener("click", updateAll);
