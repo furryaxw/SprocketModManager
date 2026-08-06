@@ -58,7 +58,7 @@
     "featured": { "type": "boolean" },
     "install": { "$ref": "#/$defs/install" },
     "category": {
-      "enum": ["gameplay", "utility", "library", "visual", "audio", "other"]
+      "enum": ["gameplay", "utility", "library", "visual", "audio", "translation", "other"]
     },
     "tags": {
       "type": "array",
@@ -125,6 +125,7 @@
       "additionalProperties": false,
       "required": ["scan_dlls", "exclude", "overrides"],
       "properties": {
+        "mode": { "enum": ["standard", "xunity-translation"] },
         "scan_dlls": { "type": "boolean" },
         "exclude": {
           "type": "array",

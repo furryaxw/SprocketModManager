@@ -34,6 +34,7 @@ const I18N = {
     categoryLibrary: "Libraries",
     categoryVisual: "Visual",
     categoryAudio: "Audio",
+    categoryTranslation: "Translations",
     categoryOther: "Other",
     registrySummary: "Registry summary",
     packages: "Packages",
@@ -153,6 +154,7 @@ const I18N = {
     categoryLibrary: "依赖库",
     categoryVisual: "视觉",
     categoryAudio: "音频",
+    categoryTranslation: "翻译",
     categoryOther: "其他",
     registrySummary: "Registry 概览",
     packages: "模组",
@@ -830,6 +832,14 @@ function buildMeta(validate = true) {
     version: row.querySelector('[data-field="version"]').value.trim() || "*",
     when: row.querySelector('[data-field="when"]').value.trim() || "*",
   })).filter((item) => item.id);
+  const category = data.get("category");
+  if (category === "translation" && !dependencies.some((item) => item.id === "bbepis.xunity-auto-translator-melonmod-il2cpp")) {
+    dependencies.push({
+      id: "bbepis.xunity-auto-translator-melonmod-il2cpp",
+      version: "*",
+      when: "*",
+    });
+  }
   const recommendations = [...new Set(split(data.get("recommendations")))];
   return {
     $schema: "../../schemas/sprocket-mod.schema.json",
@@ -849,8 +859,10 @@ function buildMeta(validate = true) {
     dependencies,
     ...(recommendations.length ? { recommendations } : {}),
     ...(data.has("featured") ? { featured: true } : {}),
-    install: { scan_dlls: true, exclude: [], overrides: [] },
-    category: data.get("category"),
+    install: category === "translation"
+      ? { mode: "xunity-translation", scan_dlls: false, exclude: [], overrides: [] }
+      : { scan_dlls: true, exclude: [], overrides: [] },
+    category,
     tags: split(data.get("tags")).map((tag) => tag.toLocaleLowerCase()),
   };
 }

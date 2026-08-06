@@ -99,6 +99,37 @@ Pages 不保存以下字段：
 支持 `*`、精确版本、比较运算符、`^` 和 `~`。依赖关系可以按当前包版本
 写多条规则。Registry CI 拒绝不存在的依赖和静态依赖环。
 
+## 翻译包
+
+翻译包使用 `"category": "translation"` 和受限的
+`"install.mode": "xunity-translation"`。Release 资产必须是 ZIP，并且必须依赖
+`bbepis.xunity-auto-translator-melonmod-il2cpp`；此模式不允许扫描 DLL 或配置 override。
+
+客户端仍会对每个 ZIP 条目执行常规的路径与解压限制检查。安装前会将当前目录归档到管理器数据
+目录的 `backups/AutoTranslator`，按时间保留最新 5 份 ZIP；备份失败时不会清空游戏目录。
+安装时会以事务方式，用 ZIP 内容替换游戏的 `AutoTranslator` 目录；如果解压或状态保存失败，
+会恢复替换前的完整目录。安装另一个翻译包会替换之前由管理器安装的翻译包，但两者共享的
+XUnity 依赖会继续保留。
+
+```json
+{
+  "dependencies": [
+    {
+      "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "install": {
+    "mode": "xunity-translation",
+    "scan_dlls": false,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "translation"
+}
+```
+
 ## 推荐模组
 
 `recommendations` 是可省略的模组 ID 列表。推荐项必须已在 Registry 注册，不能重复或

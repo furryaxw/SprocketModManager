@@ -106,6 +106,41 @@ Constraints support `*`, exact versions, comparison operators, `^`, and `~`.
 Multiple dependency rules may target different versions of the current package.
 Registry CI rejects missing dependencies and static dependency cycles.
 
+## Translation Packages
+
+Translation packages use `"category": "translation"` and the restricted
+`"install.mode": "xunity-translation"`. They must select ZIP Release assets and
+depend on `bbepis.xunity-auto-translator-melonmod-il2cpp`. DLL scanning and install
+overrides are not allowed for this mode.
+
+The client validates every ZIP entry with the normal archive safety limits. During
+installation it transactionally replaces the game's `AutoTranslator` directory with
+the ZIP contents. Before replacement, the current directory is archived under the
+manager data directory at `backups/AutoTranslator`; the five newest timestamped ZIP
+archives are retained. A backup failure stops installation before the game directory
+is cleared. A failed extraction or state update restores the complete previous directory.
+Installing another translation package replaces the previously managed translation
+package; their shared XUnity dependency remains installed.
+
+```json
+{
+  "dependencies": [
+    {
+      "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "install": {
+    "mode": "xunity-translation",
+    "scan_dlls": false,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "translation"
+}
+```
+
 ## Recommended Mods
 
 `recommendations` is an optional list of registered package IDs. Entries must be

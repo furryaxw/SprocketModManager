@@ -1,0 +1,42 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.sprocket-chinese-translation",
+  "name": "SprocketChineseTranslation",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/Sprocket-Chinese-Translation",
+  "license": "MIT",
+  "display_name": {
+    "en": "Sprocket Simplified Chinese Translation",
+    "zh-Hans": "Sprocket 简体中文翻译"
+  },
+  "description": {
+    "en": "Community Simplified Chinese translation package for Sprocket using XUnity.AutoTranslator.",
+    "zh-Hans": "通过 XUnity.AutoTranslator 加载的 Sprocket 简体中文社区翻译包。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["Sprocket-Chinese-Translation-*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+      "version": ">=5.6.1 <6.0.0",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "mode": "xunity-translation",
+    "scan_dlls": false,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "translation",
+  "tags": ["translation", "localization", "chinese", "xunity"]
+}
