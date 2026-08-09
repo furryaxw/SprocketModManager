@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "sectumsempra.sprocket-material-editor",
+  "name": "SprocketMaterialEditor",
+  "authors": ["Sectumsempra"],
+  "repository": "furryaxw/SprocketMaterialEditor",
+  "license": "MIT",
+  "display_name": {
+    "en": "Sec's Material Editor"
+  },
+  "description": {
+    "en": "In-game editor for changing armour materials on saved Sprocket vehicle blueprints."
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketMaterialEditor.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "utility",
+  "tags": ["blueprint", "materials", "vehicle-editor"]
+}
