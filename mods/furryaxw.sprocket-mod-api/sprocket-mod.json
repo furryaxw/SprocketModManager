@@ -1,0 +1,32 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 1,
+  "id": "furryaxw.sprocket-mod-api",
+  "name": "SprocketModAPI",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/SprocketModAPI",
+  "license": "LGPL-3.0-or-later",
+  "display_name": {
+    "en": "Sprocket Mod API",
+    "zh": "Sprocket 模组 API"
+  },
+  "description": {
+    "en": "Shared services and unified input bindings for Sprocket mods.",
+    "zh": "为 Sprocket 模组提供公共服务和统一键位管理。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": { "include": ["SprocketModAPI.dll"], "exclude": [] }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "scan_dlls": true,
+    "exclude": [],
+    "overrides": []
+  },
+  "category": "utility",
+  "tags": ["api", "input", "keybindings"]
+}
