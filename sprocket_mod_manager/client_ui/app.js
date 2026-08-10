@@ -64,6 +64,12 @@ const TEXT = {
     installNow: "现在安装",
     continueWithout: "暂不安装并继续",
     officialRelease: "官方 Release",
+    uploadLatestLog: "上传 Latest.log",
+    uploadConfirmTitle: "上传日志",
+    uploadConfirmMessage: "将会上传 MelonLoader/Latest.log 到日志服务并生成公开链接。继续吗？",
+    uploadDoneTitle: "日志上传完成",
+    copyLink: "复制链接",
+    copied: "已复制链接",
     checking: "检查中",
     checkStatus: "重新检查",
     installedLabel: "已安装",
@@ -213,6 +219,12 @@ const TEXT = {
     installNow: "Install now",
     continueWithout: "Continue without it",
     officialRelease: "Official Release",
+    uploadLatestLog: "Upload Latest.log",
+    uploadConfirmTitle: "Upload log",
+    uploadConfirmMessage: "MelonLoader/Latest.log will be uploaded to the log service and a public link will be created. Continue?",
+    uploadDoneTitle: "Log uploaded",
+    copyLink: "Copy link",
+    copied: "Link copied",
     checking: "Checking",
     checkStatus: "Check again",
     installedLabel: "Installed",
@@ -1412,6 +1424,60 @@ async function chooseGamePath() {
   if (result.path) $("#game-path").value = result.path;
 }
 
+async function uploadLatestLog() {
+  const button = $("#upload-latest-log");
+  const confirmed = await showModal({
+    kicker: "LOG UPLOAD",
+    title: tr("uploadConfirmTitle"),
+    body: tr("uploadConfirmMessage"),
+    confirmText: tr("confirm"),
+    closeOnBackdrop: false,
+  });
+  if (!confirmed) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await callApi("upload_latest_log");
+    if (!result.ok) {
+      resultError(result);
+      return;
+    }
+    const body = document.createElement("div");
+    body.className = "log-upload-link-row";
+    const link = document.createElement("input");
+    link.type = "text";
+    link.readOnly = true;
+    link.value = result.url;
+    link.className = "field-input";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "secondary-button";
+    copy.textContent = tr("copyLink");
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(result.url);
+      } catch {
+        link.select();
+        document.execCommand("copy");
+      }
+      copy.textContent = tr("copied");
+      toast(tr("copied"));
+    });
+    body.append(link, copy);
+    showModal({
+      kicker: "LOG UPLOAD",
+      title: tr("uploadDoneTitle"),
+      body,
+      confirmText: tr("close"),
+      closeOnBackdrop: false,
+    });
+    $("#modal-cancel").hidden = true;
+    link.focus();
+    link.select();
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function detectGamePathPlaceholder() {
   const result = await callApi("find_game_path");
   if (!result.ok) return;
@@ -1578,10 +1644,11 @@ function closeModal(result = false) {
   document.body.classList.remove("modal-open");
   const action = state.modalAction;
   state.modalAction = null;
+  state.modalCloseOnBackdrop = true;
   if (action) action(result);
 }
 
-function showModal({ kicker, title, body, confirmText, cancelText = null, destructive = false }) {
+function showModal({ kicker, title, body, confirmText, cancelText = null, destructive = false, closeOnBackdrop = true }) {
   if (state.modalAction) closeModal(false);
   $("#modal-kicker").textContent = kicker;
   $("#modal-title").textContent = title;
@@ -1596,6 +1663,7 @@ function showModal({ kicker, title, body, confirmText, cancelText = null, destru
   cancel.textContent = cancelText || tr("cancel");
   cancel.hidden = false;
   $("#modal-layer").hidden = false;
+  state.modalCloseOnBackdrop = closeOnBackdrop;
   document.body.classList.add("modal-open");
   window.setTimeout(() => confirm.focus(), 0);
   return new Promise((resolve) => { state.modalAction = resolve; });
@@ -1644,6 +1712,7 @@ function wireEvents() {
   $("#open-melonloader-release").addEventListener("click", () => {
     openUrl(state.melonloader?.page_url || state.links.melonloader);
   });
+  $("#upload-latest-log").addEventListener("click", uploadLatestLog);
   $("#language-select").addEventListener("change", async (event) => {
     state.languageMode = event.target.value;
     const saved = {
@@ -1671,7 +1740,7 @@ function wireEvents() {
   $("#modal-cancel").addEventListener("click", () => closeModal(false));
   $("#modal-confirm").addEventListener("click", () => closeModal(true));
   $("#modal-layer").addEventListener("click", (event) => {
-    if (event.target === $("#modal-layer")) closeModal(false);
+    if (event.target === $("#modal-layer") && state.modalCloseOnBackdrop !== false) closeModal(false);
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !$("#modal-layer").hidden) closeModal(false);

@@ -31,6 +31,7 @@ from .melonloader import (
     MelonLoaderRelease,
 )
 from .models import RegistryPackage, ReleaseInfo, ResolutionPlan
+from .log_upload import upload_latest_log
 from .semver import Version
 from .service import DEFAULT_INDEX_URL, ModManagerService
 
@@ -218,6 +219,14 @@ class ClientApi:
             return self._success(settings=self._settings_data(), language=self.language)
         except (OSError, ValueError) as exc:
             return self._failure(exc, code="settings_save_failed")
+
+    def upload_latest_log(self) -> dict[str, Any]:
+        endpoint = "https://paste.furryaxw.top/api/q/"
+        try:
+            result = upload_latest_log(Path(effective_game_path(self.config)), endpoint, app_version=self.version)
+            return self._success(request_id=result.request_id, status=result.status, bytes_uploaded=result.bytes_uploaded, url=result.url)
+        except (OSError, ValueError, ModManagerError) as exc:
+            return self._failure(exc, code="log_upload_failed")
 
     def load_catalog(self, refresh: bool = False) -> dict[str, Any]:
         if not self._catalog_lock.acquire(blocking=False):
