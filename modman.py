@@ -15,7 +15,7 @@ from sprocket_mod_manager.preparer import PlanPreparer
 from sprocket_mod_manager.service import DEFAULT_INDEX_URL, ModManagerService, default_app_dir
 
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 
 
 def _prepared_dict(prepared: PreparedPlan) -> dict:
