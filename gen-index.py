@@ -8,6 +8,8 @@ import fnmatch
 import json
 import os
 import re
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -45,6 +47,7 @@ LANGUAGE_TAG_RE = re.compile(
 )
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
+FALLBACK_INDEX_URL = "https://sprocketmods.furryaxw.top/index.json"
 INSTALLABLE_SUFFIXES = {".dll", ".zip", ".smod"}
 
 
@@ -61,13 +64,24 @@ def _github_json(path: str) -> Any:
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    try:
-        with urlopen(Request(GITHUB_API_URL + path, headers=headers), timeout=30) as response:
-            return json.load(response)
-    except HTTPError as exc:
-        raise RegistryError(f"GitHub API returned HTTP {exc.code} for {path}") from exc
-    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise RegistryError(f"GitHub API request failed for {path}: {exc}") from exc
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urlopen(
+                Request(GITHUB_API_URL + path, headers=headers), timeout=30
+            ) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code not in {429, 500, 502, 503, 504}:
+                raise RegistryError(
+                    f"GitHub API returned HTTP {exc.code} for {path}"
+                ) from exc
+        except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_error = exc
+        if attempt < 2:
+            time.sleep(attempt + 1)
+    raise RegistryError(f"GitHub API request failed for {path}: {last_error}") from last_error
 
 
 def normalize_release_records(package: dict[str, Any], records: object) -> list[dict[str, Any]]:
@@ -95,9 +109,6 @@ def normalize_release_records(package: dict[str, Any], records: object) -> list[
             version = Version.parse(match.group(1))
         except (IndexError, ValueError):
             continue
-        if version.prerelease and not include_prerelease:
-            continue
-
         page_url = str(record.get("html_url", ""))
         parsed_page = urlparse(page_url)
         if (
@@ -411,16 +422,68 @@ def scan_mods(mods_dir: Path) -> list[dict]:
     return [packages[key] for key in sorted(packages)]
 
 
+def load_fallback_releases(index_url: str) -> dict[str, list[dict[str, Any]]]:
+    request = Request(index_url, headers={"User-Agent": "sprocket-mod-registry-indexer/1"})
+    with urlopen(request, timeout=30) as response:
+        index = json.load(response)
+    if not isinstance(index, dict) or not isinstance(index.get("packages"), list):
+        raise RegistryError("fallback index has an invalid package list")
+
+    releases_by_id: dict[str, list[dict[str, Any]]] = {}
+    for package in index["packages"]:
+        if not isinstance(package, dict):
+            continue
+        package_id = package.get("id")
+        releases = package.get("releases")
+        if isinstance(package_id, str) and isinstance(releases, list):
+            releases_by_id[package_id] = releases
+    return releases_by_id
+
+
 def generate_index(
     mods_dir: Path,
     output: Path,
     *,
     release_loader: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+    fallback_index_url: str = FALLBACK_INDEX_URL,
 ) -> dict:
     packages = scan_mods(mods_dir)
     if release_loader:
+        fallback_releases: dict[str, list[dict[str, Any]]] | None = None
+        fallback_error: Exception | None = None
         for package in packages:
-            package["releases"] = release_loader(package)
+            try:
+                package["releases"] = release_loader(package)
+                continue
+            except Exception as exc:
+                release_error = exc
+
+            if fallback_releases is None and fallback_error is None:
+                try:
+                    fallback_releases = load_fallback_releases(fallback_index_url)
+                except Exception as exc:
+                    fallback_error = exc
+
+            releases = (fallback_releases or {}).get(package["id"])
+            if releases is not None:
+                package["releases"] = releases
+                print(
+                    f"warning: {package['id']}: release fetch failed ({release_error}); "
+                    "restored releases from fallback index",
+                    file=sys.stderr,
+                )
+            else:
+                package["releases"] = []
+                fallback_reason = (
+                    str(fallback_error)
+                    if fallback_error is not None
+                    else f"package is missing from {fallback_index_url}"
+                )
+                print(
+                    f"warning: {package['id']}: release fetch failed ({release_error}); "
+                    f"no release data available ({fallback_reason})",
+                    file=sys.stderr,
+                )
     index = {
         "schema_version": 1,
         "game": "sprocket",
@@ -443,12 +506,18 @@ def main() -> int:
         action="store_true",
         help="embed normalized GitHub Release data using one API request per package",
     )
+    parser.add_argument(
+        "--fallback-index-url",
+        default=FALLBACK_INDEX_URL,
+        help="index URL used to restore releases when a package fetch fails",
+    )
     args = parser.parse_args()
     try:
         index = generate_index(
             Path(args.mods_dir),
             Path(args.output),
             release_loader=fetch_package_releases if args.fetch_releases else None,
+            fallback_index_url=args.fallback_index_url,
         )
     except RegistryError as exc:
         print(f"registry error: {exc}")
