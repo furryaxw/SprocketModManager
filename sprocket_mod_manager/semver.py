@@ -5,6 +5,21 @@ from dataclasses import dataclass
 from functools import total_ordering
 
 
+PRERELEASE_KEYWORDS = frozenset(
+    {
+        "alpha",
+        "beta",
+        "rc",
+        "pre",
+        "preview",
+        "dev",
+        "canary",
+        "snapshot",
+        "nightly",
+    }
+)
+
+
 _VERSION_RE = re.compile(
     r"^(0|[1-9]\d*)\."
     r"(0|[1-9]\d*)\."
@@ -37,6 +52,15 @@ class Version:
         base = f"{self.major}.{self.minor}.{self.patch}"
         return base if not self.prerelease else base + "-" + ".".join(self.prerelease)
 
+    def _prerelease_rank(self) -> int:
+        if not self.prerelease:
+            return 1
+        first = self.prerelease[0].lower()
+        base = re.sub(r"[\d.]+$", "", first) or first
+        if base in PRERELEASE_KEYWORDS:
+            return 0
+        return 2
+
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Version):
             return NotImplemented
@@ -44,6 +68,10 @@ class Version:
         right = (other.major, other.minor, other.patch)
         if left != right:
             return left < right
+        self_rank = self._prerelease_rank()
+        other_rank = other._prerelease_rank()
+        if self_rank != other_rank:
+            return self_rank < other_rank
         if not self.prerelease:
             return False
         if not other.prerelease:
