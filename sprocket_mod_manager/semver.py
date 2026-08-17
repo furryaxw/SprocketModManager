@@ -85,6 +85,10 @@ class Version:
                 return int(left_part) < int(right_part)
             if left_numeric != right_numeric:
                 return left_numeric
+            left_match = re.match(r"^([A-Za-z]+)(\d+)$", left_part)
+            right_match = re.match(r"^([A-Za-z]+)(\d+)$", right_part)
+            if left_match and right_match and left_match.group(1) == right_match.group(1):
+                return int(left_match.group(2)) < int(right_match.group(2))
             return left_part < right_part
         return len(self.prerelease) < len(other.prerelease)
 

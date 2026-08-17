@@ -27,6 +27,11 @@ class VersionTests(unittest.TestCase):
         self.assertGreater(Version.parse("0.2.0-fix2"), Version.parse("0.2.0-fix1"))
         self.assertLess(Version.parse("0.2.0-fix1"), Version.parse("0.3.0"))
 
+    def test_fix_suffix_numeric_ordering(self):
+        self.assertGreater(Version.parse("0.2.0-fix10"), Version.parse("0.2.0-fix4"))
+        self.assertGreater(Version.parse("0.2.0-fix4"), Version.parse("0.2.0-fix2"))
+        self.assertGreater(Version.parse("0.2.0-patch10"), Version.parse("0.2.0-patch2"))
+
     def test_fix_suffix_satisfies_release_range(self):
         self.assertTrue(satisfies("0.2.0-fix1", ">=0.2.0"))
         self.assertTrue(satisfies("0.2.0-fix1", "^0.2.0"))
