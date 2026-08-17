@@ -96,8 +96,6 @@ def matching_release_assets(meta: dict[str, Any], releases: list[dict[str, Any]]
             version = Version.parse(version_match.group(1))
         except (IndexError, ValueError):
             continue
-        if version.prerelease and not include_prerelease:
-            continue
         for asset in release.get("assets") or []:
             name = str(asset.get("name", "")).casefold()
             if any(fnmatch.fnmatchcase(name, pattern) for pattern in includes) and not any(
