@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import URLError
 
 from sprocket_mod_manager.models import RegistryPackage
 from sprocket_mod_manager.registry import Registry
@@ -200,6 +201,92 @@ class MetadataLocalizationTests(unittest.TestCase):
             )
 
         self.assertEqual(index["packages"][0]["releases"], [release])
+
+    def test_github_release_field_controls_prerelease_filtering(self):
+        meta = metadata()
+        meta["release"]["version_pattern"] = (
+            r"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$"
+        )
+        record = {
+            "id": 42,
+            "tag_name": "v0.2.0-fix1",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-07-29T00:00:00Z",
+            "html_url": (
+                "https://github.com/ExampleAuthor/ExampleMod/releases/tag/v0.2.0-fix1"
+            ),
+            "assets": [
+                {
+                    "id": 7,
+                    "name": "ExampleMod.dll",
+                    "size": 123,
+                    "browser_download_url": (
+                        "https://github.com/ExampleAuthor/ExampleMod/releases/"
+                        "download/v0.2.0-fix1/ExampleMod.dll"
+                    ),
+                    "updated_at": "2026-07-29T00:00:00Z",
+                }
+            ],
+        }
+
+        releases = INDEX.normalize_release_records(meta, [record])
+
+        self.assertEqual([release["tag"] for release in releases], ["v0.2.0-fix1"])
+        self.assertFalse(releases[0]["prerelease"])
+
+    def test_github_json_retries_transient_errors(self):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value = response
+        with (
+            patch.object(INDEX, "urlopen", side_effect=[URLError("temporary"), response]) as opener,
+            patch.object(INDEX.json, "load", return_value={"ok": True}),
+            patch.object(INDEX.time, "sleep") as sleep,
+        ):
+            result = INDEX._github_json("/repos/example/mod")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(opener.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_generated_index_restores_releases_after_package_fetch_failure(self):
+        release = {
+            "id": 42,
+            "tag": "v1.2.3",
+            "version": "1.2.3",
+            "prerelease": False,
+            "published_at": "2026-07-29T00:00:00Z",
+            "page_url": "https://github.com/ExampleAuthor/ExampleMod/releases/tag/v1.2.3",
+            "assets": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package_dir = root / "mods" / "example.mod"
+            package_dir.mkdir(parents=True)
+            (package_dir / "sprocket-mod.json").write_text(
+                json.dumps(metadata()),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(
+                    INDEX,
+                    "load_fallback_releases",
+                    return_value={"example.mod": [release]},
+                ) as fallback,
+                patch("builtins.print") as warning,
+            ):
+                index = INDEX.generate_index(
+                    root / "mods",
+                    root / "index.json",
+                    release_loader=unittest.mock.Mock(
+                        side_effect=INDEX.RegistryError("temporary failure")
+                    ),
+                    fallback_index_url="https://example.com/index.json",
+                )
+
+        self.assertEqual(index["packages"][0]["releases"], [release])
+        fallback.assert_called_once_with("https://example.com/index.json")
+        self.assertIn("restored releases", warning.call_args.args[0])
 
     def test_release_fetch_falls_back_to_latest_when_list_has_no_compatible_asset(self):
         invalid = {
