@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
-from sprocket_mod_manager.semver import Version, validate_range
+from sprocket_mod_manager.domain.semver import Version, validate_range
 
 
 REQUIRED_FIELDS = {
@@ -48,7 +48,7 @@ LANGUAGE_TAG_RE = re.compile(
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
 FALLBACK_INDEX_URL = "https://sprocketmods.furryaxw.top/index.json"
-INSTALLABLE_SUFFIXES = {".dll", ".zip", ".smod"}
+INSTALLABLE_SUFFIXES = {".dll", ".zip"}
 
 
 class RegistryError(ValueError):
