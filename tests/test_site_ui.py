@@ -6,6 +6,13 @@ from pathlib import Path
 SITE_ROOT = Path(__file__).resolve().parents[1] / "site"
 
 
+def site_javascript() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((SITE_ROOT / "js").glob("*.js"))
+    )
+
+
 class SiteUiTests(unittest.TestCase):
     def test_site_uses_packaged_application_icon(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
@@ -48,7 +55,7 @@ class SiteUiTests(unittest.TestCase):
 
     def test_catalog_uses_embedded_release_cache_without_github_api(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
-        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+        script = site_javascript()
 
         self.assertIn("pkg.releases", script)
         self.assertIn('cache: "no-store"', script)
@@ -80,7 +87,7 @@ class SiteUiTests(unittest.TestCase):
         self.assertNotIn('value="__custom__"', html)
 
     def test_language_picker_options_are_data_driven(self):
-        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+        script = site_javascript()
 
         self.assertIn("const SUBMISSION_LANGUAGES = [", script)
         self.assertIn("populateLanguageOptions(languageSelect);", script)
@@ -96,7 +103,7 @@ class SiteUiTests(unittest.TestCase):
 
     def test_submission_and_details_support_recommendations(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
-        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+        script = site_javascript()
 
         self.assertIn('name="recommendations"', html)
         self.assertIn('id="detail-recommendations"', html)
@@ -105,7 +112,7 @@ class SiteUiTests(unittest.TestCase):
 
     def test_featured_packages_are_pinned_and_labeled(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
-        script = (SITE_ROOT / "app.js").read_text(encoding="utf-8")
+        script = site_javascript()
 
         self.assertIn('name="featured" type="checkbox"', html)
         self.assertIn('id="detail-featured" hidden', html)
