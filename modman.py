@@ -5,17 +5,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
-from sprocket_mod_manager.config import ConfigStore
-from sprocket_mod_manager.errors import ModManagerError
-from sprocket_mod_manager.models import PreparedPlan, ResolutionPlan
-from sprocket_mod_manager.preparer import PlanPreparer
-from sprocket_mod_manager.service import DEFAULT_INDEX_URL, ModManagerService, default_app_dir
-
+from sprocket_mod_manager.infrastructure.config import ConfigStore
+from sprocket_mod_manager.domain.errors import ModManagerError
+from sprocket_mod_manager.domain.models import PreparedPlan, ResolutionPlan
+from sprocket_mod_manager.application.preparer import PlanPreparer
+from sprocket_mod_manager.application.service import ModManagerService, default_app_dir
+from sprocket_mod_manager.infrastructure.app_logging import configure_logging
+from sprocket_mod_manager.infrastructure.defaults import DEFAULT_INDEX_URL
 
 APP_VERSION = "0.4.2"
+LOGGER = logging.getLogger(__name__)
 
 
 def _prepared_dict(prepared: PreparedPlan) -> dict:
@@ -72,6 +75,7 @@ def _game_path(args: argparse.Namespace, config: dict) -> Path:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sprocket Mod Manager")
     parser.add_argument("--version", action="version", version=APP_VERSION)
+    parser.add_argument("--debug", action="store_true", help="enable verbose diagnostic logging")
     parser.add_argument("--app-dir", help="manager data directory")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--index", help="HTTPS registry index URL")
@@ -99,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
 def cli_main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    LOGGER.info("CLI command started command=%s debug=%s", args.command, args.debug)
     try:
         service, config = _load_service(args)
         registry = service.registry
@@ -187,6 +192,7 @@ def cli_main(argv: list[str] | None = None) -> int:
                 print("No updates available")
         return 0
     except ModManagerError as exc:
+        LOGGER.warning("CLI command failed command=%s error=%s", args.command, exc)
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -220,16 +226,48 @@ def _plan_for(service: ModManagerService, plan: ResolutionPlan) -> dict:
 
 def main() -> int:
     argv = sys.argv[1:]
-    if argv and argv[0] == "--cli":
-        argv = argv[1:]
-    if argv:
-        return cli_main(argv)
+    debug_flag = "--debug" in argv
+    cli_marker = "--cli" in argv
+    cli_args = [argument for argument in argv if argument != "--cli"]
+    is_cli = cli_marker or any(argument != "--debug" for argument in cli_args)
+    app_dir = default_app_dir()
+    if "--app-dir" in cli_args:
+        index = cli_args.index("--app-dir")
+        if index + 1 < len(cli_args):
+            app_dir = Path(cli_args[index + 1]).expanduser()
+    else:
+        inline_app_dir = next(
+            (argument.partition("=")[2] for argument in cli_args if argument.startswith("--app-dir=")),
+            "",
+        )
+        if inline_app_dir:
+            app_dir = Path(inline_app_dir).expanduser()
+    config_debug = ConfigStore(app_dir).load().get("debug") is True
+    debug = debug_flag or config_debug
+    configure_logging(app_dir, debug=debug, console=is_cli)
+    LOGGER.info(
+        "Sprocket Mod Manager %s starting mode=%s debug=%s debug_flag=%s config_debug=%s app_dir=%s",
+        APP_VERSION,
+        "cli" if is_cli else "gui",
+        debug,
+        debug_flag,
+        config_debug,
+        app_dir,
+    )
+    if is_cli:
+        return cli_main(cli_args)
     try:
-        from sprocket_mod_manager.web_gui import run_gui
+        from sprocket_mod_manager.presentation.web_gui import run_gui
     except ImportError as exc:
+        LOGGER.exception("GUI dependencies are unavailable")
         print(f"GUI dependencies are unavailable: {exc}", file=sys.stderr)
         return 1
-    run_gui(APP_VERSION)
+    try:
+        run_gui(APP_VERSION, debug=debug, debug_override=debug_flag)
+    except Exception:
+        LOGGER.exception("GUI terminated with an unhandled error")
+        raise
+    LOGGER.info("Sprocket Mod Manager stopped")
     return 0
 
 
