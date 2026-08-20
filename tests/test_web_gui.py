@@ -1,4 +1,6 @@
 import hashlib
+import shutil
+import subprocess
 import threading
 import unittest
 from pathlib import Path
@@ -6,14 +8,22 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sprocket_mod_manager.config import ConfigStore
-from sprocket_mod_manager.github import RepositoryReadme
-from sprocket_mod_manager.melonloader import MelonLoaderInstallation
-from sprocket_mod_manager.models import RegistryPackage, ReleaseAsset, ReleaseInfo
-from sprocket_mod_manager.registry import Registry
-from sprocket_mod_manager.semver import Version
-from sprocket_mod_manager.service import ModManagerService
-from sprocket_mod_manager.web_gui import ClientApi
+from sprocket_mod_manager.infrastructure.config import ConfigStore
+from sprocket_mod_manager.infrastructure.github import RepositoryReadme
+from sprocket_mod_manager.infrastructure.melonloader import MelonLoaderInstallation
+from sprocket_mod_manager.infrastructure.log_upload import LogUploadResult
+from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
+from sprocket_mod_manager.domain.registry import Registry
+from sprocket_mod_manager.domain.semver import Version
+from sprocket_mod_manager.application.service import ModManagerService
+from sprocket_mod_manager.presentation.web_gui import ClientApi
+
+
+def client_javascript(root: Path) -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((root / "js").glob("*.js"))
+    )
 
 
 class BlockingService:
@@ -101,8 +111,63 @@ def installable_package(
 
 
 class WebGuiTests(unittest.TestCase):
+    def test_open_manager_directory_uses_app_data_directory(self):
+        with TemporaryDirectory() as directory:
+            app_dir = Path(directory)
+            api = ClientApi("test", app_dir=app_dir)
+            try:
+                with patch("sprocket_mod_manager.presentation.web_gui.open_directory") as opener:
+                    result = api.open_manager_directory()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["path"], str(app_dir))
+        opener.assert_called_once_with(app_dir)
+
+    def test_upload_manager_log_uses_current_manager_log(self):
+        with TemporaryDirectory() as directory:
+            app_dir = Path(directory)
+            api = ClientApi("test", app_dir=app_dir)
+            uploaded = LogUploadResult("request", 201, 12, "https://logs.example/result")
+            try:
+                with patch(
+                    "sprocket_mod_manager.presentation.web_gui.upload_log_file",
+                    return_value=uploaded,
+                ) as upload:
+                    result = api.upload_manager_log()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["url"], uploaded.url)
+        self.assertEqual(upload.call_args.args[0], app_dir / "Latest.log")
+
+    def test_force_conflict_queue_item_reaches_service_install(self):
+        with TemporaryDirectory() as directory:
+            calls = []
+            service = SimpleNamespace(
+                install=lambda package_id, game_path, **kwargs: calls.append(
+                    (package_id, game_path, kwargs)
+                )
+            )
+            entry = SimpleNamespace(
+                package_id="test.mod",
+                game_path=Path("game"),
+                context=service,
+                force_conflicts=True,
+            )
+            api = ClientApi("test", app_dir=Path(directory))
+            try:
+                api._run_queued_install(entry, lambda _message: None)
+            finally:
+                api.install_queue.close()
+
+            self.assertEqual(calls[0][0:2], ("test.mod", Path("game")))
+            self.assertTrue(calls[0][2]["force_conflicts"])
+
     def test_client_ui_uses_packaged_application_icon(self):
-        ui_root = Path(__file__).resolve().parents[1] / "sprocket_mod_manager" / "client_ui"
+        ui_root = Path(__file__).resolve().parents[1] / "sprocket_mod_manager" / "presentation" / "client_ui"
         html = (ui_root / "index.html").read_text(encoding="utf-8")
 
         self.assertTrue((ui_root / "app-icon.png").is_file())
@@ -236,6 +301,24 @@ class WebGuiTests(unittest.TestCase):
             loaded["settings"]["github_proxy_url"],
             "https://mirror.example.com/",
         )
+
+    def test_debug_config_is_persisted_and_orred_with_flag_override(self):
+        with TemporaryDirectory() as directory:
+            app_dir = Path(directory)
+            api = ClientApi("0.3.2", app_dir=app_dir, debug_override=True)
+            try:
+                with patch(
+                    "sprocket_mod_manager.presentation.controllers.settings_controller.set_logging_level"
+                ) as set_level:
+                    saved = api.save_settings({"debug": False, "language": "en"})
+                    enabled = api.save_settings({"debug": True, "language": "en"})
+            finally:
+                api.install_queue.close()
+
+        self.assertFalse(saved["settings"]["debug"])
+        self.assertTrue(saved["settings"]["debug_active"])
+        self.assertTrue(enabled["settings"]["debug"])
+        self.assertEqual([call.args[0] for call in set_level.call_args_list], [True, True])
 
     def test_enabled_empty_proxy_settings_apply_default_addresses(self):
         with TemporaryDirectory() as directory:
@@ -372,7 +455,7 @@ class WebGuiTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             api = ClientApi("0.2.0", app_dir=Path(directory))
             try:
-                with patch("sprocket_mod_manager.web_gui.webbrowser.open") as open_browser:
+                with patch("sprocket_mod_manager.presentation.web_gui.webbrowser.open") as open_browser:
                     result = api.open_url("https://github.com/LavaGang/MelonLoader/releases")
             finally:
                 api.install_queue.close()
@@ -400,17 +483,17 @@ class WebGuiTests(unittest.TestCase):
     def test_default_entry_and_assets_do_not_depend_on_tk(self):
         root = Path(__file__).parents[1]
         entry = (root / "modman.py").read_text(encoding="utf-8")
-        web_gui = (root / "sprocket_mod_manager" / "web_gui.py").read_text(
+        web_gui = (root / "sprocket_mod_manager" / "presentation" / "web_gui.py").read_text(
             encoding="utf-8"
         )
         html = (
-            root / "sprocket_mod_manager" / "client_ui" / "index.html"
+            root / "sprocket_mod_manager" / "presentation" / "client_ui" / "index.html"
         ).read_text(encoding="utf-8")
-        javascript = (
-            root / "sprocket_mod_manager" / "client_ui" / "app.js"
-        ).read_text(encoding="utf-8")
+        javascript = client_javascript(
+            root / "sprocket_mod_manager" / "presentation" / "client_ui"
+        )
 
-        self.assertIn("from sprocket_mod_manager.web_gui import run_gui", entry)
+        self.assertIn("from sprocket_mod_manager.presentation.web_gui import run_gui", entry)
         self.assertNotIn("tkinter", web_gui)
         self.assertNotIn("customtkinter", web_gui)
         self.assertEqual(html.count('id="language-select"'), 1)
@@ -433,6 +516,10 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn("loaderDecision.allowWithout", javascript)
         self.assertIn("function applyTextScale", javascript)
         self.assertIn("checkbox.checked = false", javascript)
+        self.assertIn('className: "installed"', javascript)
+        self.assertIn(".state-chip.installed", (
+            root / "sprocket_mod_manager" / "presentation" / "client_ui" / "app.css"
+        ).read_text(encoding="utf-8"))
         self.assertIn("result.recommendations || []", javascript)
         self.assertIn("if (featured) return featured", javascript)
         self.assertIn('star.textContent = "★"', javascript)
@@ -446,11 +533,17 @@ class WebGuiTests(unittest.TestCase):
         self.assertNotIn("empty-glyph", html)
         self.assertIn('class="brand-line" aria-hidden="true"', html)
         self.assertNotIn("about-mark", html)
+        self.assertIn('id="open-manager-directory"', html)
+        self.assertIn('id="upload-manager-log"', html)
+        self.assertIn('id="debug-mode"', html)
+        self.assertIn('callApi("open_manager_directory")', javascript)
+        self.assertIn('"upload_manager_log"', javascript)
 
     def test_catalog_columns_share_one_bounded_scroll_area(self):
         css = (
             Path(__file__).parents[1]
             / "sprocket_mod_manager"
+            / "presentation"
             / "client_ui"
             / "app.css"
         ).read_text(encoding="utf-8")
@@ -470,21 +563,43 @@ class WebGuiTests(unittest.TestCase):
         self.assertNotRegex(css, r"font:\s*[^;/]*\s[0-9]+px/")
 
     def test_translations_use_a_separate_client_page(self):
-        root = Path(__file__).parents[1] / "sprocket_mod_manager" / "client_ui"
+        root = Path(__file__).parents[1] / "sprocket_mod_manager" / "presentation" / "client_ui"
         html = (root / "index.html").read_text(encoding="utf-8")
-        javascript = (root / "app.js").read_text(encoding="utf-8")
+        javascript = client_javascript(root)
 
         self.assertIn('data-page-target="translations"', html)
         self.assertIn('id="page-translations" data-page="translations"', html)
         self.assertIn('id="translation-list"', html)
         self.assertNotIn('<option value="translation"', html)
         self.assertIn('pkg.category === "translation") !== translations', javascript)
-        self.assertIn('translations: { kicker: "LOCALIZATION"', javascript)
+        self.assertRegex(
+            javascript,
+            r'translations:\s*\{\s*kicker:\s*"pageLocalization"',
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for the client initialization smoke test")
+    def test_translation_dictionary_initializes_without_tdz_errors(self):
+        script = (
+            Path(__file__).parents[1]
+            / "sprocket_mod_manager"
+            / "presentation"
+            / "client_ui"
+            / "js"
+            / "i18n.js"
+        )
+        result = subprocess.run(
+            [shutil.which("node"), str(script)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_native_select_options_use_the_dark_palette(self):
         css = (
             Path(__file__).parents[1]
             / "sprocket_mod_manager"
+            / "presentation"
             / "client_ui"
             / "app.css"
         ).read_text(encoding="utf-8")
@@ -498,7 +613,7 @@ class WebGuiTests(unittest.TestCase):
         root = Path(__file__).parents[1]
         site_css = (root / "site" / "styles.css").read_text(encoding="utf-8")
         client_css = (
-            root / "sprocket_mod_manager" / "client_ui" / "app.css"
+            root / "sprocket_mod_manager" / "presentation" / "client_ui" / "app.css"
         ).read_text(encoding="utf-8")
         shared_variables = (
             "canvas",

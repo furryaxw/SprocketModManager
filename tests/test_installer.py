@@ -6,10 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sprocket_mod_manager.errors import InstallError
-from sprocket_mod_manager.hashing import sha256_file
-from sprocket_mod_manager.installer import Installer, sprocket_is_running
-from sprocket_mod_manager.models import (
+from sprocket_mod_manager.domain.errors import InstallConflictError, InstallError
+from sprocket_mod_manager.utilities.checksums import sha256_file
+from sprocket_mod_manager.infrastructure.installer import Installer
+from sprocket_mod_manager.utilities.processes import sprocket_is_running
+from sprocket_mod_manager.domain.models import (
     PreparedFile,
     PreparedPackage,
     PreparedPlan,
@@ -18,8 +19,8 @@ from sprocket_mod_manager.models import (
     ResolvedPackage,
     ResolutionPlan,
 )
-from sprocket_mod_manager.semver import Version
-from sprocket_mod_manager.state import StateStore
+from sprocket_mod_manager.domain.semver import Version
+from sprocket_mod_manager.infrastructure.state import StateStore
 
 
 def registry_package(package_id="test.mod", name="TestMod"):
@@ -140,7 +141,7 @@ def prepared_translation(
 
 
 class InstallerTests(unittest.TestCase):
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_translation_install_replaces_entire_autotranslator_directory(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -177,7 +178,7 @@ class InstallerTests(unittest.TestCase):
                 "xunity-translation",
             )
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_translation_install_rolls_back_directory_when_state_save_fails(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -195,7 +196,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual((game / "AutoTranslator" / "old.txt").read_bytes(), b"old")
             self.assertFalse((game / "AutoTranslator" / "Config.ini").exists())
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_translation_backups_keep_only_five_newest_archives(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -216,7 +217,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(len(archives), 5)
             self.assertEqual(len({archive.name for archive in archives}), 5)
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_translation_backup_failure_does_not_clear_directory(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -228,7 +229,7 @@ class InstallerTests(unittest.TestCase):
             installer = Installer(root / "app", store)
 
             with patch(
-                "sprocket_mod_manager.installer.zipfile.ZipFile",
+                "sprocket_mod_manager.infrastructure.xunity_backup.zipfile.ZipFile",
                 side_effect=OSError("disk full"),
             ):
                 with self.assertRaisesRegex(InstallError, "cannot archive"):
@@ -237,7 +238,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual((game / "AutoTranslator" / "old.txt").read_bytes(), b"old")
             self.assertFalse((game / "AutoTranslator" / "Config.ini").exists())
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_new_translation_replaces_previous_translation_package_state(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -260,15 +261,15 @@ class InstallerTests(unittest.TestCase):
 
     def test_process_check_treats_missing_tasklist_stdout_as_not_running(self):
         with (
-            patch("sprocket_mod_manager.installer.os.name", "nt"),
+            patch("sprocket_mod_manager.utilities.processes.os.name", "nt"),
             patch(
-                "sprocket_mod_manager.installer.subprocess.run",
+                "sprocket_mod_manager.utilities.processes.subprocess.run",
                 return_value=SimpleNamespace(stdout=None),
             ),
         ):
             self.assertFalse(sprocket_is_running())
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_update_recovers_null_file_reference_from_installed_state(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -304,7 +305,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(state["packages"]["test.mod"]["files"], ["Mods/TestMod.dll"])
             self.assertEqual((game / "Mods" / "TestMod.dll").read_bytes(), b"fixed")
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_install_update_and_remove_same_path(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -327,7 +328,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(warnings, [])
             self.assertFalse((game / "Mods" / "TestMod.dll").exists())
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_remove_preserves_file_modified_after_install(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -345,7 +346,43 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(installed_file.read_bytes(), b"user change")
             self.assertEqual(warnings, ["preserved modified file: Mods/TestMod.dll"])
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_force_conflicts_overwrites_externally_modified_managed_file(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            game.mkdir()
+            (game / "Sprocket.exe").touch()
+            installer = Installer(root / "app", StateStore(root / "app" / "installed.json"))
+            installer.apply(prepared(root, "1.0.0", b"first"), game)
+            target = game / "Mods" / "TestMod.dll"
+            target.write_bytes(b"external change")
+
+            with self.assertRaises(InstallConflictError):
+                installer.apply(prepared(root, "1.1.0", b"second"), game)
+            installer.apply(prepared(root, "1.1.0", b"second"), game, force_conflicts=True)
+
+            self.assertEqual(target.read_bytes(), b"second")
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_force_conflicts_takes_ownership_of_unmanaged_target(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            target = game / "Mods" / "TestMod.dll"
+            target.parent.mkdir(parents=True)
+            (game / "Sprocket.exe").touch()
+            target.write_bytes(b"unmanaged")
+            store = StateStore(root / "app" / "installed.json")
+            installer = Installer(root / "app", store)
+
+            with self.assertRaises(InstallConflictError):
+                installer.apply(prepared(root, "1.0.0", b"managed"), game)
+            installer.apply(prepared(root, "1.0.0", b"managed"), game, force_conflicts=True)
+
+            self.assertFalse(store.load()["files"]["Mods/TestMod.dll"]["preexisting"])
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_update_removes_dependency_that_becomes_orphaned(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -1,9 +1,9 @@
 import unittest
 
-from sprocket_mod_manager.models import RegistryPackage, ReleaseAsset, ReleaseInfo
-from sprocket_mod_manager.registry import Registry
-from sprocket_mod_manager.semver import Version
-from sprocket_mod_manager.solver import DependencySolver
+from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
+from sprocket_mod_manager.domain.registry import Registry
+from sprocket_mod_manager.domain.semver import Version
+from sprocket_mod_manager.application.solver import DependencySolver
 
 
 def package(package_id, dependencies=()):

@@ -3,9 +3,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from sprocket_mod_manager.errors import DownloadError
-from sprocket_mod_manager.github import GitHubClient, HttpClient
-from sprocket_mod_manager.models import RegistryPackage, ReleaseAsset
+from sprocket_mod_manager.domain.errors import DownloadError
+from sprocket_mod_manager.infrastructure.github import GitHubClient, HttpClient
+from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset
 
 
 class FakeResponse:
@@ -51,13 +51,13 @@ class GitHubDownloadTests(unittest.TestCase):
             "https://release-assets.githubusercontent.com/github-production-release-asset/test",
         )
         destination = self.root / "TestMod.dll"
-        with patch("sprocket_mod_manager.github.urlopen", return_value=response):
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", return_value=response):
             HttpClient(self.root / "cache").download(self.asset, destination)
         self.assertEqual(destination.read_bytes(), b"test")
 
     def test_unexpected_release_redirect_host_is_rejected(self):
         response = FakeResponse(b"test", "https://downloads.example.com/TestMod.dll")
-        with patch("sprocket_mod_manager.github.urlopen", return_value=response):
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", return_value=response):
             with self.assertRaisesRegex(DownloadError, "download host is not allowed"):
                 HttpClient(self.root / "cache").download(self.asset, self.root / "TestMod.dll")
 
@@ -68,17 +68,32 @@ class GitHubDownloadTests(unittest.TestCase):
             requests.append(request)
             return FakeResponse(b"test", self.asset.download_url)
 
-        with patch("sprocket_mod_manager.github.urlopen", side_effect=respond):
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=respond):
             HttpClient(self.root / "cache", token="secret").download(
                 self.asset,
                 self.root / "TestMod.dll",
             )
         self.assertNotIn("Authorization", requests[0].headers)
 
+    def test_github_token_is_not_persisted_in_http_cache(self):
+        token = "gho-cache-secret"
+        http = HttpClient(self.root / "cache", token=token)
+        response = FakeResponse(b"{}", "https://api.github.com/repos/example/mod")
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", return_value=response):
+            http.get_bytes(
+                "https://api.github.com/repos/example/mod",
+                accept="application/vnd.github+json",
+                allowed_hosts={"api.github.com"},
+            )
+
+        persisted = b"\n".join(path.read_bytes() for path in (self.root / "cache").rglob("*.*"))
+        self.assertNotIn(token.encode("utf-8"), persisted)
+        self.assertNotIn(b"Authorization", persisted)
+
     def test_http_proxy_is_used_for_https_requests(self):
         opener = unittest.mock.MagicMock()
         opener.open.return_value = FakeResponse(b"test", self.asset.download_url)
-        with patch("sprocket_mod_manager.github.build_opener", return_value=opener) as build:
+        with patch("sprocket_mod_manager.infrastructure.http_client.build_opener", return_value=opener) as build:
             HttpClient(self.root / "cache", proxy_url="http://127.0.0.1:7890").download(
                 self.asset,
                 self.root / "TestMod.dll",
@@ -96,7 +111,7 @@ class GitHubDownloadTests(unittest.TestCase):
             requests.append(request)
             return FakeResponse(b"test", f"{proxy_url}{self.asset.download_url}")
 
-        with patch("sprocket_mod_manager.github.urlopen", side_effect=respond):
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=respond):
             HttpClient(
                 self.root / "cache",
                 github_proxy_url=proxy_url,

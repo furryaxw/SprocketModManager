@@ -1,6 +1,8 @@
 """Core package for the Sprocket Mod Manager."""
 
-from .errors import (
+import logging
+
+from .domain.errors import (
     DownloadError,
     InstallError,
     ModManagerError,
@@ -8,8 +10,10 @@ from .errors import (
     ResolutionError,
     ScanError,
 )
-from .models import RegistryPackage, ReleaseAsset, ReleaseInfo, ResolutionPlan
-from .semver import Version, satisfies
+from .domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo, ResolutionPlan
+from .domain.semver import Version, satisfies
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
     "DownloadError",

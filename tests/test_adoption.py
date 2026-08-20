@@ -4,10 +4,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from sprocket_mod_manager.models import RegistryPackage, ReleaseAsset, ReleaseInfo
-from sprocket_mod_manager.registry import Registry
-from sprocket_mod_manager.semver import Version
-from sprocket_mod_manager.service import ModManagerService
+from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
+from sprocket_mod_manager.domain.registry import Registry
+from sprocket_mod_manager.domain.semver import Version
+from sprocket_mod_manager.application.service import ModManagerService
 
 
 def package(
@@ -68,7 +68,7 @@ class ExistingModsAdoptionTests(unittest.TestCase):
         (game / "Sprocket.exe").touch()
         return game
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_exact_release_dll_is_adopted_and_can_be_removed(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -106,7 +106,7 @@ class ExistingModsAdoptionTests(unittest.TestCase):
             self.assertEqual(service.adopt_existing(game), ())
             self.assertEqual(service.installed(game), {})
 
-    @patch("sprocket_mod_manager.installer.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_exact_release_userlib_is_adopted(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

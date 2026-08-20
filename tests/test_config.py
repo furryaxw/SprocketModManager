@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
 
-from sprocket_mod_manager.config import (
+from sprocket_mod_manager.infrastructure.config import (
     ConfigStore,
     DEFAULT_GITHUB_PROXY_URL,
     DEFAULT_PROXY_URL,
@@ -13,14 +13,35 @@ from sprocket_mod_manager.config import (
     effective_index_url,
     effective_proxy_url,
     language_from_locale_name,
-    normalize_github_proxy_url,
-    normalize_proxy_url,
-    normalize_text_scale,
 )
-from sprocket_mod_manager.service import DEFAULT_INDEX_URL
+from sprocket_mod_manager.application.service import DEFAULT_INDEX_URL
+from sprocket_mod_manager.utilities.ui_values import normalize_text_scale
+from sprocket_mod_manager.utilities.urls import normalize_github_proxy_url, normalize_proxy_url
 
 
 class ConfigTests(unittest.TestCase):
+    def test_config_save_recursively_removes_credentials_and_download_urls(self):
+        with TemporaryDirectory() as temporary:
+            store = ConfigStore(Path(temporary))
+            store.save({
+                "language": "en",
+                "access_token": "gho-secret",
+                "developer_servers": [{
+                    "server_id": "test-server",
+                    "url": "https://mods.example",
+                    "session_token": "server-secret",
+                    "activation_key": "key-secret",
+                    "nested": {"download_url": "https://secret.example/download?id=1"},
+                }],
+            })
+            persisted = store.path.read_text(encoding="utf-8")
+
+        self.assertNotIn("gho-secret", persisted)
+        self.assertNotIn("server-secret", persisted)
+        self.assertNotIn("key-secret", persisted)
+        self.assertNotIn("secret.example", persisted)
+        self.assertIn("test-server", persisted)
+
     def test_default_index_uses_public_custom_domain(self):
         self.assertEqual(
             DEFAULT_INDEX_URL,
@@ -34,9 +55,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_new_config_uses_automatic_language_mode(self):
         with TemporaryDirectory() as temporary:
-            with patch("sprocket_mod_manager.config.detect_game_path", return_value=""):
+            with patch("sprocket_mod_manager.infrastructure.config.detect_game_path", return_value=""):
                 config = ConfigStore(Path(temporary)).load()
         self.assertEqual(config["language"], "auto")
+        self.assertFalse(config["debug"])
 
     def test_text_scale_defaults_and_clamps_to_accessible_range(self):
         with TemporaryDirectory() as temporary:
@@ -61,6 +83,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["proxy_url"], "")
         self.assertFalse(config["github_proxy_enabled"])
         self.assertEqual(config["github_proxy_url"], "")
+        self.assertEqual(config["github_user_id"], "")
+
+    def test_legacy_per_server_github_identity_moves_to_global_login(self):
+        with TemporaryDirectory() as temporary:
+            store = ConfigStore(Path(temporary))
+            store.save({
+                "developer_servers": [{
+                    "server_id": "test", "url": "https://test.example",
+                    "github_user_id": "123",
+                }]
+            })
+            config = store.load()
+        self.assertEqual(config["github_user_id"], "123")
+        self.assertNotIn("github_user_id", config["developer_servers"][0])
 
     def test_network_urls_are_normalized_and_validated(self):
         self.assertEqual(normalize_proxy_url(" http://127.0.0.1:7890/ "), "http://127.0.0.1:7890")
@@ -86,12 +122,12 @@ class ConfigTests(unittest.TestCase):
         )
 
     def test_empty_sources_resolve_to_automatic_defaults(self):
-        with patch("sprocket_mod_manager.config.detect_game_path", return_value="G:/Steam/Sprocket"):
+        with patch("sprocket_mod_manager.infrastructure.config.detect_game_path", return_value="G:/Steam/Sprocket"):
             self.assertEqual(effective_game_path({"game_path": "  "}), "G:/Steam/Sprocket")
         self.assertEqual(effective_index_url({"index_url": "  "}), DEFAULT_INDEX_URL)
 
     def test_explicit_sources_override_automatic_defaults(self):
-        with patch("sprocket_mod_manager.config.detect_game_path") as detect:
+        with patch("sprocket_mod_manager.infrastructure.config.detect_game_path") as detect:
             self.assertEqual(
                 effective_game_path({"game_path": " D:/Games/Sprocket "}),
                 "D:/Games/Sprocket",
@@ -133,8 +169,8 @@ class ConfigTests(unittest.TestCase):
             (game_path / "Sprocket.exe").touch()
 
             with (
-                patch("sprocket_mod_manager.config._steam_install_roots", return_value=(steam_root,)),
-                patch("sprocket_mod_manager.config.Path.cwd", return_value=root / "not-the-game"),
+                patch("sprocket_mod_manager.infrastructure.steam_locator._steam_install_roots", return_value=(steam_root,)),
+                patch("sprocket_mod_manager.infrastructure.steam_locator.Path.cwd", return_value=root / "not-the-game"),
             ):
                 detected = detect_game_path()
 

@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import URLError
 
-from sprocket_mod_manager.models import RegistryPackage
-from sprocket_mod_manager.registry import Registry
-from sprocket_mod_manager.errors import RegistryError
+from sprocket_mod_manager.domain.models import RegistryPackage
+from sprocket_mod_manager.domain.registry import Registry
+from sprocket_mod_manager.domain.errors import RegistryError
 
 
 def load_index_module():
