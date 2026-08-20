@@ -48,6 +48,8 @@ jobs:
         run: |
           node --check site/app.js
           node --check site/release-api.js
+          Get-ChildItem site/js/*.js, sprocket_mod_manager/presentation/client_ui/js/*.js |
+            ForEach-Object { node --check $_.FullName }
           node tests/site_release_api.test.js
 
       - name: Validate Registry

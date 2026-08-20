@@ -22,7 +22,7 @@ try {
         --windowed `
         --name SprocketModManager `
         --icon "resources\app-icon.ico" `
-        --add-data "sprocket_mod_manager\client_ui;sprocket_mod_manager\client_ui" `
+        --add-data "sprocket_mod_manager\presentation\client_ui;sprocket_mod_manager\presentation\client_ui" `
         --add-data "resources\app-icon.ico;resources" `
         --collect-submodules dnfile `
         modman.py

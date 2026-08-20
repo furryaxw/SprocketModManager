@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from sprocket_mod_manager.semver import Version
+from sprocket_mod_manager.domain.semver import Version
 
 
 SOURCE_SUFFIXES = {

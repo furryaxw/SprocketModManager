@@ -46,6 +46,20 @@ but the game cannot load them until MelonLoader is installed.
 .\.venv\Scripts\python.exe modman.py
 ```
 
+Diagnostic mode can be persisted on Settings or forced for one launch with `--debug`; the two
+values are combined with OR. It records `DEBUG` messages and enables WebView2 debugging. A normal launch records
+`INFO` and higher levels:
+
+```powershell
+.\.venv\Scripts\python.exe modman.py --debug
+.\SprocketModManager.exe --debug
+```
+
+Manager logs are stored at `%LOCALAPPDATA%\SprocketModManager\Latest.log`. Each launch clears
+`Latest.log`, archives the previous session with a timestamp, and retains the five newest history
+files. The About page can open this directory or upload the current manager log. The log upload
+button on Settings continues to upload `MelonLoader\Latest.log` from the game directory.
+
 The GUI is hardware-accelerated by Windows Edge WebView2, while Python continues to
 handle the Registry, scanning, dependency resolution, and installation. Individual
 installs, batch installs, and update-all share one sequential download queue. Users can

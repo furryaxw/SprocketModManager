@@ -41,6 +41,19 @@ furryaxw.sprocket-laser-rangefinder
 .\.venv\Scripts\python.exe modman.py
 ```
 
+设置页可以持久启用诊断模式；也可以通过 `--debug` 为本次启动强制开启。两者按 OR 计算。
+诊断模式会记录 `DEBUG` 级别日志并启用 WebView2 调试；普通启动记录 `INFO` 及以上级别：
+
+```powershell
+.\.venv\Scripts\python.exe modman.py --debug
+.\SprocketModManager.exe --debug
+```
+
+管理器日志位于 `%LOCALAPPDATA%\SprocketModManager\Latest.log`。每次启动都会清空
+`Latest.log`，将上一轮日志保存为带时间戳的历史文件，并只保留最新 5 份。关于页面可以直接打开
+该目录或上传当前管理器日志。设置页面的日志上传按钮仍用于上传游戏目录中的
+`MelonLoader\Latest.log`。
+
 GUI 使用 Windows Edge WebView2 的硬件加速渲染，Python 继续负责 Registry、扫描、依赖
 解析与安装。GUI 支持批量选择；单项安装、批量安装和全部更新共用一个顺序下载队列。队列
 运行期间仍可继续浏览并追加任务，正在执行安装事务时客户端会等待事务完成后再退出。模组列表
@@ -105,6 +118,9 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
   和非 GitHub 图片资源。
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改的文件。普通安装前已存在的文件仍受保护；
   通过 Release 哈希自动接管的文件会成为受管文件，并且仅在内容未变化时允许卸载删除。
+- 本地测试开发者服务器支持私有 ZIP/DLL 的授权下载、整包/文件 SHA-256 校验和事务安装；客户端已通过
+  GitHub Device Flow 换取服务器 session token，服务端负责验证 GitHub 身份。manifest 尚无固定公钥签名，
+  因此当前实现仍不适合作为公网正式分发系统。
 
 模组管理器自身的更新目前只检查 GitHub Release 并提供更新入口，不会自动下载或覆盖 EXE。
 若未来启用自身自动更新，应使用固定公钥验证的更新清单或可验证的 Windows 代码签名，不能只

@@ -31,6 +31,7 @@ jobs:
         run: |
           node --check site/app.js
           node --check site/release-api.js
+          find site/js sprocket_mod_manager/presentation/client_ui/js -name '*.js' -exec node --check {} \;
           node tests/site_release_api.test.js
       - name: Validate metadata and public sources
         if: github.event_name != 'schedule'
