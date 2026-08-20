@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sprocketmods.furryaxw.top/schemas/sprocket-private-mod.schema.json",
+  "title": "Sprocket Private Mod Distribution Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "authors",
+    "license",
+    "display_name",
+    "description",
+    "dependencies",
+    "install",
+    "category",
+    "tags",
+    "recommendations",
+    "releases",
+    "files"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,79}$"
+    },
+    "authors": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "license": { "type": "string", "minLength": 1 },
+    "display_name": { "$ref": "sprocket-mod.schema.json#/$defs/localized" },
+    "description": { "$ref": "sprocket-mod.schema.json#/$defs/localized" },
+    "dependencies": { "$ref": "sprocket-mod.schema.json#/properties/dependencies" },
+    "install": { "$ref": "sprocket-mod.schema.json#/properties/install" },
+    "category": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+    "tags": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "recommendations": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+      "uniqueItems": true
+    },
+    "releases": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "tag", "version", "prerelease", "published_at", "assets"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "tag": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1 },
+          "prerelease": { "type": "boolean" },
+          "published_at": { "type": "string" },
+          "assets": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "name", "size", "digest", "download_path"],
+              "properties": {
+                "id": { "type": "integer", "minimum": 0 },
+                "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}\\.(?:zip|dll)$" },
+                "size": { "type": "integer", "minimum": 1 },
+                "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                "download_path": { "type": "string", "pattern": "^/v1/packages/.+/download$" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "target", "sha256"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "target": { "type": "string", "pattern": "^(Mods|UserLibs)/.+\\.dll$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}
