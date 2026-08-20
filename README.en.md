@@ -140,6 +140,13 @@ Edge installations.
 - Installation state is isolated per game directory. Uninstalling never removes files
   modified by the user. Ordinary preexisting files remain protected; files adopted by
   an exact Release hash become managed and may be deleted only while unchanged.
+- The local developer server supports authorized private ZIP/DLL downloads, archive/file
+  SHA-256 verification, and transactional installation. The client exchanges a server
+  session token through GitHub Device Flow. Private manifests use Ed25519 detached
+  canonical-JSON signatures, with the server public-key fingerprint confirmed on first
+  use. The server remains a protocol proof of concept, not a production public backend.
+  See [the private server signature protocol](docs/private-server-signatures.md) for
+  client signatures, trust negotiation, key status, and rotation rules.
 
 For manager self-updates, the client currently checks GitHub Releases and provides
 an update link; it does not download or replace its EXE. Any future updater should
