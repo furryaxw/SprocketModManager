@@ -3,9 +3,9 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from sprocket_mod_manager.errors import ScanError
-from sprocket_mod_manager.models import RegistryPackage
-from sprocket_mod_manager.scanner import PackageScanner
+from sprocket_mod_manager.domain.errors import ScanError
+from sprocket_mod_manager.domain.models import RegistryPackage
+from sprocket_mod_manager.infrastructure.scanner import PackageScanner
 
 
 def package(*, translation=False):

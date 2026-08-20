@@ -6,12 +6,12 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from sprocket_mod_manager.errors import DownloadError, InstallError
-from sprocket_mod_manager.melonloader import (
+from sprocket_mod_manager.domain.errors import DownloadError, InstallError
+from sprocket_mod_manager.infrastructure.melonloader import (
     MELONLOADER_ASSET_NAME,
     MelonLoaderManager,
 )
-from sprocket_mod_manager.semver import Version
+from sprocket_mod_manager.domain.semver import Version
 
 
 def archive_bytes(*, unsafe_name: str | None = None) -> bytes:
@@ -81,7 +81,7 @@ class MelonLoaderManagerTests(unittest.TestCase):
             core.write_bytes(b"loader")
 
             with patch(
-                "sprocket_mod_manager.melonloader._file_version",
+                "sprocket_mod_manager.infrastructure.melonloader._file_version",
                 return_value=Version.parse("0.7.2"),
             ):
                 installation = MelonLoaderManager.detect(game)
@@ -100,7 +100,7 @@ class MelonLoaderManagerTests(unittest.TestCase):
         self.assertEqual(release.asset.name, MELONLOADER_ASSET_NAME)
         self.assertEqual(http.cache_seconds, 0)
 
-    @patch("sprocket_mod_manager.melonloader.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.melonloader.sprocket_is_running", return_value=False)
     def test_install_verifies_digest_overwrites_payload_and_preserves_generated_files(self, _running):
         payload = archive_bytes()
         digest = hashlib.sha256(payload).hexdigest()
@@ -125,7 +125,7 @@ class MelonLoaderManagerTests(unittest.TestCase):
             self.assertEqual(result.sha256, digest)
             self.assertTrue(result.publisher_verified)
 
-    @patch("sprocket_mod_manager.melonloader.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.melonloader.sprocket_is_running", return_value=False)
     def test_install_rejects_zip_path_traversal(self, _running):
         payload = archive_bytes(unsafe_name="../outside.dll")
         http = FakeHttp(payload)
@@ -139,7 +139,7 @@ class MelonLoaderManagerTests(unittest.TestCase):
             self.assertFalse((root / "outside.dll").exists())
             self.assertFalse((game / "version.dll").exists())
 
-    @patch("sprocket_mod_manager.melonloader.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.melonloader.sprocket_is_running", return_value=False)
     def test_install_rejects_digest_mismatch_before_writing_game(self, _running):
         payload = archive_bytes()
         http = FakeHttp(payload, digest="sha256:" + "0" * 64)
@@ -152,7 +152,7 @@ class MelonLoaderManagerTests(unittest.TestCase):
 
             self.assertFalse((game / "version.dll").exists())
 
-    @patch("sprocket_mod_manager.melonloader.sprocket_is_running", return_value=False)
+    @patch("sprocket_mod_manager.infrastructure.melonloader.sprocket_is_running", return_value=False)
     def test_install_rolls_back_files_when_replacement_fails(self, _running):
         payload = archive_bytes()
         http = FakeHttp(payload)
@@ -169,7 +169,7 @@ class MelonLoaderManagerTests(unittest.TestCase):
                 return real_replace(source, target)
 
             with (
-                patch("sprocket_mod_manager.melonloader.os.replace", side_effect=replace),
+                patch("sprocket_mod_manager.infrastructure.melonloader.os.replace", side_effect=replace),
                 self.assertRaisesRegex(OSError, "simulated locked file"),
             ):
                 MelonLoaderManager(root / "app", http).install(game)

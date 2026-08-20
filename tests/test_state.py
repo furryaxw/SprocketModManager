@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sprocket_mod_manager.errors import InstallError
-from sprocket_mod_manager.state import StateStore
+from sprocket_mod_manager.domain.errors import InstallError
+from sprocket_mod_manager.infrastructure.state import StateStore
 
 
 class StateStoreTests(unittest.TestCase):

@@ -5,8 +5,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from sprocket_mod_manager.errors import RegistryError
-from sprocket_mod_manager.service import ModManagerService
+from sprocket_mod_manager.domain.errors import RegistryError
+from sprocket_mod_manager.application.service import ModManagerService
 
 
 REGISTRY_BYTES = json.dumps({"schema_version": 1, "packages": []}).encode("utf-8")

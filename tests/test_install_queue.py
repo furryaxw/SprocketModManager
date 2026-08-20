@@ -2,13 +2,14 @@ import threading
 import unittest
 from pathlib import Path
 
-from sprocket_mod_manager.install_queue import (
+from sprocket_mod_manager.application.install_queue import (
     CANCELED,
     COMPLETED,
     FAILED,
     INSTALLING,
     InstallQueue,
 )
+from sprocket_mod_manager.domain.errors import InstallConflictError
 
 
 class InstallQueueTests(unittest.TestCase):
@@ -110,6 +111,32 @@ class InstallQueueTests(unittest.TestCase):
             queue.close()
 
         self.assertEqual(seen, [context])
+
+    def test_conflict_error_code_is_exposed_for_force_retry(self):
+        def runner(_entry, _progress):
+            raise InstallConflictError("unmanaged file already exists")
+
+        queue = InstallQueue(runner)
+        try:
+            queue.enqueue(["test.mod"], Path("game"))
+            self.assertTrue(queue.wait_until_idle(1))
+            entry = queue.snapshot()[0]
+        finally:
+            queue.close()
+
+        self.assertEqual(entry.state, FAILED)
+        self.assertEqual(entry.error_code, "file_conflict")
+
+    def test_force_conflicts_flag_reaches_runner(self):
+        seen = []
+        queue = InstallQueue(lambda entry, _progress: seen.append(entry.force_conflicts))
+        try:
+            queue.enqueue(["test.mod"], Path("game"), force_conflicts=True)
+            self.assertTrue(queue.wait_until_idle(1))
+        finally:
+            queue.close()
+
+        self.assertEqual(seen, [True])
 
 
 if __name__ == "__main__":

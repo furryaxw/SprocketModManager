@@ -1,0 +1,6 @@
+"""Shared resource limits for untrusted ZIP extraction."""
+
+MAX_ARCHIVE_FILES = 4096
+MAX_ARCHIVE_FILE_BYTES = 256 * 1024 * 1024
+MAX_ARCHIVE_TOTAL_BYTES = 1024 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 250

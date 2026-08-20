@@ -1,9 +1,19 @@
 import unittest
 
-from sprocket_mod_manager.semver import Version, satisfies, validate_range
+from sprocket_mod_manager.domain.semver import Version, satisfies, validate_range
 
 
 class VersionTests(unittest.TestCase):
+    def test_all_rich_comparison_operators_are_supported(self):
+        older = Version.parse("1.2.3")
+        newer = Version.parse("1.2.4")
+
+        self.assertEqual(Version.__ge__.__name__, "__ge__")
+        self.assertTrue(newer >= older)
+        self.assertTrue(older <= newer)
+        self.assertTrue(newer > older)
+        self.assertTrue(older < newer)
+
     def test_semver_prerelease_precedence(self):
         ordered = [
             "1.0.0-alpha",
