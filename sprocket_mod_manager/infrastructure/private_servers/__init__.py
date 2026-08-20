@@ -4,7 +4,7 @@ from .constants import (
     MAX_RESPONSE_BYTES,
     SUPPORTED_PROTOCOL_VERSION,
 )
-from .developer_server_client import DeveloperServerClient
+from .developer_server_client import DeveloperServerClient, DeveloperServerError
 from .github_sync import (
     GITHUB_GIST_FILENAME,
     GITHUB_OAUTH_CLIENT_ID,
@@ -24,6 +24,7 @@ from .models import (
 
 __all__ = [
     "DeveloperServerClient",
+    "DeveloperServerError",
     "DeveloperServerInfo",
     "GITHUB_GIST_FILENAME",
     "GITHUB_OAUTH_CLIENT_ID",
