@@ -119,8 +119,10 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改的文件。普通安装前已存在的文件仍受保护；
   通过 Release 哈希自动接管的文件会成为受管文件，并且仅在内容未变化时允许卸载删除。
 - 本地测试开发者服务器支持私有 ZIP/DLL 的授权下载、整包/文件 SHA-256 校验和事务安装；客户端已通过
-  GitHub Device Flow 换取服务器 session token，服务端负责验证 GitHub 身份。manifest 尚无固定公钥签名，
-  因此当前实现仍不适合作为公网正式分发系统。
+  GitHub Device Flow 换取服务器 session token，服务端负责验证 GitHub 身份。私有 manifest 现在使用
+  Ed25519 detached canonical-JSON 签名，并在首次使用时确认服务器公钥指纹；当前服务端仍只是协议技术验证，
+  不适合作为公网正式分发后台。客户端签名、信任协商、key-status 和轮换规则见
+  [私有服务器签名协议](docs/private-server-signatures.md)。
 
 模组管理器自身的更新目前只检查 GitHub Release 并提供更新入口，不会自动下载或覆盖 EXE。
 若未来启用自身自动更新，应使用固定公钥验证的更新清单或可验证的 Windows 代码签名，不能只
