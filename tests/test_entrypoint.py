@@ -14,7 +14,7 @@ class EntrypointTests(unittest.TestCase):
         with (
             patch.object(modman.sys, "argv", ["modman.py", "--debug"]),
             patch("modman.configure_logging") as configure,
-            patch("sprocket_mod_manager.presentation.web_gui.run_gui") as run_gui,
+            patch("sprocket_mod_manager.presentation.webview_app.run_gui") as run_gui,
         ):
             result = modman.main()
 
@@ -30,7 +30,7 @@ class EntrypointTests(unittest.TestCase):
                 patch.object(modman.sys, "argv", ["modman.py"]),
                 patch("modman.default_app_dir", return_value=app_dir),
                 patch("modman.configure_logging") as configure,
-                patch("sprocket_mod_manager.presentation.web_gui.run_gui") as run_gui,
+                patch("sprocket_mod_manager.presentation.webview_app.run_gui") as run_gui,
             ):
                 result = modman.main()
 

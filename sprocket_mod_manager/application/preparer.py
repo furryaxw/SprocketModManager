@@ -15,7 +15,8 @@ from ..domain.models import (
     ReleaseAsset,
     ResolutionPlan,
 )
-from ..infrastructure.github import GitHubClient, HttpClient
+from ..infrastructure.github import GitHubClient
+from ..infrastructure.http_client import HttpClient
 from ..infrastructure.release_checksums import publisher_checksum
 from ..infrastructure.scanner import PackageScanner
 from ..utilities.checksums import sha256_file

@@ -19,8 +19,8 @@ class SiteUiTests(unittest.TestCase):
         icon = SITE_ROOT / "favicon.png"
 
         self.assertTrue(icon.is_file())
-        self.assertIn('rel="icon" type="image/png" href="./favicon.png"', html)
-        self.assertIn('<span class="brand-mark"><img src="./favicon.png" alt="" /></span>', html)
+        self.assertRegex(html, r'<link\s+rel="icon"\s+type="image/png"\s+href="\./favicon\.png"')
+        self.assertRegex(html, r'<span class="brand-mark"><img\s+src="\./favicon\.png"\s+alt=""\s*/></span>')
 
     def test_primary_button_color_meets_text_contrast(self):
         styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
@@ -96,9 +96,9 @@ class SiteUiTests(unittest.TestCase):
     def test_localized_fields_match_catalog_tool_font_size(self):
         styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
 
-        self.assertIn(
-            ".localized-row input, .localized-row textarea, .localized-row select { font-size: 13px; }",
+        self.assertRegex(
             styles,
+            r"\.localized-row input, \.localized-row textarea, \.localized-row select\s*\{\s*font-size:\s*13px;\s*\}",
         )
 
     def test_submission_and_details_support_recommendations(self):

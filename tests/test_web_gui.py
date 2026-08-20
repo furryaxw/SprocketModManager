@@ -493,7 +493,7 @@ class WebGuiTests(unittest.TestCase):
             root / "sprocket_mod_manager" / "presentation" / "client_ui"
         )
 
-        self.assertIn("from sprocket_mod_manager.presentation.web_gui import run_gui", entry)
+        self.assertIn("from sprocket_mod_manager.presentation.webview_app import run_gui", entry)
         self.assertNotIn("tkinter", web_gui)
         self.assertNotIn("customtkinter", web_gui)
         self.assertEqual(html.count('id="language-select"'), 1)

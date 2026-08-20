@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import io
+import os
 import sys
 import threading
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -31,6 +35,18 @@ def load_access_server(source_root: Path):
 
 def run(access_server_root: Path) -> None:
     access_server = load_access_server(access_server_root)
+    signing_key = Ed25519PrivateKey.generate()
+    previous_signing_env = {
+        name: os.environ.get(name)
+        for name in ("SMAS_SIGNING_PRIVATE_KEY", "SMAS_SIGNING_KEY_ID", "SMAS_KEY_PEPPER")
+    }
+    os.environ["SMAS_SIGNING_PRIVATE_KEY"] = signing_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    os.environ["SMAS_SIGNING_KEY_ID"] = "integration-key-1"
+    os.environ["SMAS_KEY_PEPPER"] = "integration-test-pepper"
     with TemporaryDirectory(prefix="sprocket-private-integration-") as directory:
         root = Path(directory)
         database = root / "server" / "access.db"
@@ -84,7 +100,11 @@ def run(access_server_root: Path) -> None:
             api.config["game_path"] = str(game)
             api.config_store.save(api.config)
 
-            assert api.add_developer_server(url)["ok"]
+            first_add = api.add_developer_server(url)
+            assert first_add["ok"] and first_add["requires_confirmation"]
+            fingerprint = first_add["signing_identity"]["fingerprint"]
+            confirmed_add = api.add_developer_server(url, confirmed_fingerprint=fingerprint)
+            assert confirmed_add["ok"] and confirmed_add["server"]["status"] == "registered"
             assert api.set_demo_github_login("123")["ok"]
             assert api.activate_developer_server("local-test-server", key)["ok"]
             catalog = api.get_developer_servers()
@@ -110,6 +130,11 @@ def run(access_server_root: Path) -> None:
             server.shutdown()
             thread.join()
             server.server_close()
+    for name, value in previous_signing_env.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 def main() -> None:

@@ -17,8 +17,7 @@ def run_gui(version: str, *, debug: bool = False, debug_override: bool = False) 
     except ImportError as exc:
         raise RuntimeError("pywebview is required for the desktop client") from exc
 
-    # Import here so the API remains usable in headless contexts without loading
-    # the desktop host or creating a module cycle through the compatibility API.
+    # Import here so headless API users do not load the desktop host.
     from .web_gui import ClientApi
 
     LOGGER.info("desktop host starting version=%s debug=%s", version, debug)

@@ -110,17 +110,11 @@ class ConfigStore:
         defaults["text_scale"] = normalize_text_scale(defaults["text_scale"])
         if not isinstance(defaults.get("developer_servers"), list):
             defaults["developer_servers"] = []
-        cleaned_servers: list[dict[str, Any]] = []
-        legacy_user_id = ""
-        for raw_server in defaults["developer_servers"]:
-            if not isinstance(raw_server, dict):
-                continue
-            server = dict(raw_server)
-            legacy_user_id = legacy_user_id or str(server.pop("github_user_id", "") or "")
-            cleaned_servers.append(server)
-        defaults["developer_servers"] = cleaned_servers
-        if not str(defaults.get("github_user_id", "") or "") and legacy_user_id:
-            defaults["github_user_id"] = legacy_user_id
+        defaults["developer_servers"] = [
+            dict(server)
+            for server in defaults["developer_servers"]
+            if isinstance(server, dict)
+        ]
         return defaults
 
     def save(self, config: dict[str, Any]) -> None:

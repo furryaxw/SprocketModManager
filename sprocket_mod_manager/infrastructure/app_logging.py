@@ -6,12 +6,15 @@ from datetime import datetime
 from pathlib import Path
 
 LATEST_LOG_NAME = "Latest.log"
-HISTORY_PREFIX = "History-"
-HISTORY_LIMIT = 5
+HISTORY_LIMIT = 10
 
 
 def manager_log_path(app_dir: Path) -> Path:
     return app_dir.expanduser() / LATEST_LOG_NAME
+
+
+def manager_history_dir(app_dir: Path) -> Path:
+    return app_dir.expanduser() / "logs"
 
 
 def _close_manager_handlers() -> None:
@@ -25,16 +28,18 @@ def _close_manager_handlers() -> None:
 def rotate_logs(app_dir: Path, *, history_limit: int = HISTORY_LIMIT) -> Path:
     app_dir = app_dir.expanduser()
     app_dir.mkdir(parents=True, exist_ok=True)
+    history_dir = manager_history_dir(app_dir)
+    history_dir.mkdir(parents=True, exist_ok=True)
     latest = manager_log_path(app_dir)
     if latest.is_file() and latest.stat().st_size:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        history = latest.replace(app_dir / f"{HISTORY_PREFIX}{stamp}.log")
+        history = latest.replace(history_dir / f"{stamp}.log")
         history.touch()
     else:
         latest.write_text("", encoding="utf-8")
 
     histories = sorted(
-        app_dir.glob(f"{HISTORY_PREFIX}*.log"),
+        history_dir.glob(f"*.log"),
         key=lambda path: (path.stat().st_mtime_ns, path.name),
         reverse=True,
     )

@@ -10,8 +10,9 @@ from .solver import DependencySolver
 from ..domain.errors import RegistryError
 from ..domain.models import PreparedPlan, ProgressCallback, ResolutionPlan
 from ..domain.registry import Registry
-from ..infrastructure.defaults import DEFAULT_INDEX_URL, default_app_dir
-from ..infrastructure.github import GitHubClient, HttpClient
+from ..infrastructure.defaults import default_app_dir
+from ..infrastructure.github import GitHubClient
+from ..infrastructure.http_client import HttpClient
 from ..infrastructure.installer import Installer
 from ..infrastructure.profiles import InstallerProfiles
 from ..infrastructure.registry_source import RegistrySourceLoader

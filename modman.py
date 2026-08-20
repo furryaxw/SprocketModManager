@@ -257,7 +257,7 @@ def main() -> int:
     if is_cli:
         return cli_main(cli_args)
     try:
-        from sprocket_mod_manager.presentation.web_gui import run_gui
+        from sprocket_mod_manager.presentation.webview_app import run_gui
     except ImportError as exc:
         LOGGER.exception("GUI dependencies are unavailable")
         print(f"GUI dependencies are unavailable: {exc}", file=sys.stderr)

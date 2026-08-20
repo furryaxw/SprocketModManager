@@ -91,9 +91,6 @@ class MelonLoaderManager:
             if loader_root.is_dir()
             else []
         )
-        legacy_core = loader_root / "MelonLoader.dll"
-        if legacy_core.is_file():
-            core_candidates.append(legacy_core)
 
         installed = proxy.is_file() and bool(core_candidates)
         if not installed:

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 
-from .http_client import GITHUB_ASSET_HOSTS, GITHUB_RELEASE_CACHE_SECONDS, HttpClient
+from .http_client import GITHUB_RELEASE_CACHE_SECONDS, HttpClient
 from ..domain.errors import DownloadError, RegistryError
 from ..domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
 from ..domain.semver import Version

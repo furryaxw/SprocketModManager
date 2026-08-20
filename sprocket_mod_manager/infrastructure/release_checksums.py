@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .github import GITHUB_ASSET_HOSTS, HttpClient
+from .http_client import GITHUB_ASSET_HOSTS, HttpClient
 from ..domain.errors import DownloadError
 from ..domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
 from ..utilities.checksums import SHA256_PATTERN, parse_checksum_text

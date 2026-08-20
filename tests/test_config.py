@@ -14,7 +14,7 @@ from sprocket_mod_manager.infrastructure.config import (
     effective_proxy_url,
     language_from_locale_name,
 )
-from sprocket_mod_manager.application.service import DEFAULT_INDEX_URL
+from sprocket_mod_manager.infrastructure.defaults import DEFAULT_INDEX_URL
 from sprocket_mod_manager.utilities.ui_values import normalize_text_scale
 from sprocket_mod_manager.utilities.urls import normalize_github_proxy_url, normalize_proxy_url
 
@@ -84,19 +84,6 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(config["github_proxy_enabled"])
         self.assertEqual(config["github_proxy_url"], "")
         self.assertEqual(config["github_user_id"], "")
-
-    def test_legacy_per_server_github_identity_moves_to_global_login(self):
-        with TemporaryDirectory() as temporary:
-            store = ConfigStore(Path(temporary))
-            store.save({
-                "developer_servers": [{
-                    "server_id": "test", "url": "https://test.example",
-                    "github_user_id": "123",
-                }]
-            })
-            config = store.load()
-        self.assertEqual(config["github_user_id"], "123")
-        self.assertNotIn("github_user_id", config["developer_servers"][0])
 
     def test_network_urls_are_normalized_and_validated(self):
         self.assertEqual(normalize_proxy_url(" http://127.0.0.1:7890/ "), "http://127.0.0.1:7890")

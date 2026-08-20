@@ -35,18 +35,11 @@ class ModuleBoundaryTests(unittest.TestCase):
         self.assertIn("debug=debug", host)
 
     def test_presentation_api_exports_remain_available(self) -> None:
-        from sprocket_mod_manager.presentation.web_gui import ClientApi, GamePathRequiredError, run_gui
+        from sprocket_mod_manager.presentation.web_gui import ClientApi
+        from sprocket_mod_manager.presentation.webview_app import run_gui
 
         self.assertTrue(callable(ClientApi))
-        self.assertTrue(issubclass(GamePathRequiredError, ValueError))
         self.assertTrue(callable(run_gui))
-
-    def test_compatibility_constant_exports_remain_available(self) -> None:
-        from sprocket_mod_manager.application.service import DEFAULT_INDEX_URL
-        from sprocket_mod_manager.infrastructure.github import GITHUB_ASSET_HOSTS
-
-        self.assertTrue(DEFAULT_INDEX_URL.startswith("https://"))
-        self.assertIn("github.com", GITHUB_ASSET_HOSTS)
 
     def test_config_does_not_import_application_service(self) -> None:
         tree = ast.parse((INFRASTRUCTURE / "config.py").read_text(encoding="utf-8"))
