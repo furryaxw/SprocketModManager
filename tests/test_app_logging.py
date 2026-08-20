@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from sprocket_mod_manager.infrastructure.app_logging import (
     configure_logging,
     manager_log_path,
+    manager_history_dir,
     rotate_logs,
 )
 
@@ -24,7 +25,9 @@ class AppLoggingTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             app_dir = Path(directory)
             for index in range(5):
-                history = app_dir / f"History-20260101-00000{index}-000000.log"
+                history_dir = manager_history_dir(app_dir)
+                history_dir.mkdir(parents=True, exist_ok=True)
+                history = history_dir / f"History-20260101-00000{index}-000000.log"
                 history.write_text(str(index), encoding="utf-8")
                 history.touch()
             latest = manager_log_path(app_dir)
@@ -33,9 +36,10 @@ class AppLoggingTests(unittest.TestCase):
             rotated = rotate_logs(app_dir)
 
             self.assertEqual(rotated.read_text(encoding="utf-8"), "")
-            histories = list(app_dir.glob("History-*.log"))
+            histories = list(manager_history_dir(app_dir).glob("History-*.log"))
             self.assertEqual(len(histories), 5)
             self.assertTrue(any(path.read_text(encoding="utf-8") == "previous session" for path in histories))
+            self.assertEqual(list(app_dir.glob("History-*.log")), [])
 
     def test_debug_mode_controls_debug_records(self) -> None:
         with TemporaryDirectory() as directory:

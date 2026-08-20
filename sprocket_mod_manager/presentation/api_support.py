@@ -13,9 +13,8 @@ class GamePathRequiredError(ValueError):
     pass
 
 
-def startup_trace(path: Path, message: str) -> None:
-    """Compatibility shim for startup diagnostics in the unified manager log."""
-    del path
+def startup_trace(message: str) -> None:
+    """Write a startup diagnostic at debug level."""
     logging.getLogger("sprocket_mod_manager.startup").debug(message)
 
 

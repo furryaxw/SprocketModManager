@@ -34,6 +34,11 @@ class DeveloperServerInfo:
     operator: str
     protocol_version: int
     demo_auth: bool
+    signing_identity: dict[str, Any] | None = None
+    trust_method: str = ""
+    key_encoding: str = ""
+    manual_transport: str = ""
+    signing_rotation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -224,3 +229,5 @@ class PrivateCatalogSnapshot:
     synced_at: int
     packages: tuple[PrivatePackageManifest, ...]
     entitlements: dict[str, Any]
+    key_status: dict[str, Any] | None = None
+    signing_identity: dict[str, Any] | None = None

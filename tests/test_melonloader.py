@@ -89,6 +89,19 @@ class MelonLoaderManagerTests(unittest.TestCase):
         self.assertTrue(installation.installed)
         self.assertEqual(str(installation.version), "0.7.2")
 
+    def test_detect_rejects_removed_root_loader_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            game = game_directory(Path(temporary))
+            (game / "version.dll").write_bytes(b"proxy")
+            core = game / "MelonLoader" / "MelonLoader.dll"
+            core.parent.mkdir(parents=True)
+            core.write_bytes(b"old loader")
+
+            installation = MelonLoaderManager.detect(game)
+
+        self.assertFalse(installation.installed)
+        self.assertIsNone(installation.version)
+
     def test_latest_release_selects_official_x64_zip(self):
         payload = archive_bytes()
         http = FakeHttp(payload)

@@ -9,7 +9,7 @@ from typing import Any
 
 from .models import PrivateCatalogSnapshot, PrivatePackageManifest
 
-PRIVATE_CACHE_VERSION = 2
+PRIVATE_CACHE_VERSION = 3
 
 
 class PrivateCatalogCache:
@@ -35,6 +35,8 @@ class PrivateCatalogCache:
                 synced_at,
                 tuple(PrivatePackageManifest.from_dict(item) for item in packages),
                 dict(entitlements),
+                dict(raw["key_status"]) if isinstance(raw.get("key_status"), dict) else None,
+                dict(raw["signing_identity"]) if isinstance(raw.get("signing_identity"), dict) else None,
             )
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
             return None
@@ -47,6 +49,8 @@ class PrivateCatalogCache:
             entitlements: dict[str, Any],
             *,
             synced_at: int | None = None,
+            key_status: dict[str, Any] | None = None,
+            signing_identity: dict[str, Any] | None = None,
     ) -> None:
         root: dict[str, Any] = {"version": PRIVATE_CACHE_VERSION, "servers": {}}
         try:
@@ -86,6 +90,8 @@ class PrivateCatalogCache:
             "synced_at": int(time.time()) if synced_at is None else synced_at,
             "packages": sanitized_packages,
             "entitlements": sanitized_entitlements,
+            "key_status": key_status,
+            "signing_identity": signing_identity,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")

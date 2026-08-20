@@ -9,18 +9,17 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .api_constants import MANAGER_REPOSITORY
-from .api_support import GamePathRequiredError
 from .controllers import CatalogController, InstallationController, PrivateDistributionController, SettingsController
 from ..application.install_queue import InstallQueue
 from ..application.service import ModManagerService
 from ..domain.errors import ModManagerError
 from ..domain.models import ReleaseInfo
 from ..domain.semver import Version
-from ..infrastructure.app_logging import manager_log_path
 from ..infrastructure.config import ConfigStore, detect_language, effective_game_path, effective_github_proxy_url, \
     effective_proxy_url
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.desktop import open_directory
+from ..infrastructure.app_logging import manager_log_path
 from ..infrastructure.log_upload import upload_latest_log, upload_log_file
 from ..infrastructure.melonloader import MELONLOADER_REPOSITORY, MelonLoaderManager
 from ..infrastructure.private_servers import PrivateCatalogCache
@@ -41,7 +40,6 @@ class ClientApi:
         self.version = version
         self._debug_override = debug_override
         self.config_store = ConfigStore(app_dir)
-        self._startup_log_path = manager_log_path(self.config_store.app_dir)
         LOGGER.debug("ClientApi init: config store created app_dir=%s", self.config_store.app_dir)
         scope = hashlib.sha256(str(self.config_store.app_dir).encode("utf-8")).hexdigest()[:16]
         self.credentials = CredentialStore(f"SprocketModManager/{scope}")
@@ -332,10 +330,3 @@ class ClientApi:
         self._melonloader_idle.wait(5)
         if self._mutation_lock.acquire(timeout=5):
             self._mutation_lock.release()
-
-
-def run_gui(version: str, *, debug: bool = False, debug_override: bool = False) -> None:
-    """Compatibility entry point; desktop hosting lives in webview_app."""
-    from .webview_app import run_gui as run_webview_app
-
-    run_webview_app(version, debug=debug, debug_override=debug_override)

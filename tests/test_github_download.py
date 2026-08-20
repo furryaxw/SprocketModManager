@@ -4,7 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sprocket_mod_manager.domain.errors import DownloadError
-from sprocket_mod_manager.infrastructure.github import GitHubClient, HttpClient
+from sprocket_mod_manager.infrastructure.github import GitHubClient
+from sprocket_mod_manager.infrastructure.http_client import HttpClient
 from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset
 
 

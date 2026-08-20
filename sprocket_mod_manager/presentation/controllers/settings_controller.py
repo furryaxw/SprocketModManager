@@ -6,7 +6,7 @@ from typing import Any
 
 from .base import ApiController
 from ..api_constants import MANAGER_REPOSITORY_URL, REGISTRY_WEBSITE_URL
-from ...application.service import DEFAULT_INDEX_URL
+from ...infrastructure.defaults import DEFAULT_INDEX_URL
 from ...infrastructure.app_logging import set_logging_level
 from ...infrastructure.config import (
     DEFAULT_GITHUB_PROXY_URL,
