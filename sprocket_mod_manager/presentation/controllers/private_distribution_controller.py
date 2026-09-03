@@ -31,6 +31,7 @@ from ...utilities.signatures import verify_key_status_snapshot
 
 class PrivateDistributionController(ApiController):
     _SERVER_INFO_CACHE_SECONDS = 15
+    _GITHUB_LOGIN_CHECK_SECONDS = 60
 
     def _cached_server_clients(self) -> dict[tuple[str, str, str], tuple[float, DeveloperServerClient, Any]]:
         cache = getattr(self, "_server_client_cache", None)
@@ -74,11 +75,83 @@ class PrivateDistributionController(ApiController):
     def _github_token(self) -> str:
         return self._github_access_token or self.credentials.load("github-access-token")
 
-    def _background_gist_sync(self) -> None:
-        _startup_trace("Gist sync: entered")
+    def _clear_github_login(self) -> None:
+        self._github_access_token = ""
+        self.config["github_user_id"] = ""
+        self._github_login_checked_token = ""
+        self._github_login_checked_at = 0.0
+        try:
+            self.credentials.delete("github-access-token")
+        except (OSError, ValueError):
+            pass
+        self.config_store.save(self.config)
+
+    def _verify_github_login(self, *, force: bool = False) -> dict[str, Any]:
+        token = self._github_token()
+        if not token:
+            # Demo servers intentionally use the configured numeric identity
+            # without a GitHub OAuth credential, so there is nothing to verify.
+            return self._success(
+                logged_in=bool(self.config.get("github_user_id")),
+                github_user_id=str(self.config.get("github_user_id", "") or ""),
+            )
+        checked_token = getattr(self, "_github_login_checked_token", "")
+        checked_at = float(getattr(self, "_github_login_checked_at", 0.0))
+        if not force and token == checked_token and (
+                time.monotonic() - checked_at < self._GITHUB_LOGIN_CHECK_SECONDS
+        ):
+            return self._success(
+                logged_in=True,
+                github_user_id=str(self.config.get("github_user_id", "") or ""),
+            )
+        try:
+            identity = github_current_user(token)
+        except ValueError as exc:
+            if str(exc) == "GitHub access token is invalid":
+                self._clear_github_login()
+                return self._failure(exc, code="github_login_expired")
+            return self._failure(exc, code="github_login_check_failed")
+        user_id = str(identity["id"])
+        self._github_login_checked_token = token
+        self._github_login_checked_at = time.monotonic()
+        if self.config.get("github_user_id") != user_id:
+            self.config["github_user_id"] = user_id
+            self.config_store.save(self.config)
+        return self._success(logged_in=True, github_user_id=user_id)
+
+    def _reconnect_developer_servers(self) -> list[str]:
+        token = self._github_token()
+        if not token:
+            return []
+        refreshed: list[dict[str, Any]] = []
+        connected: list[str] = []
+        for raw in self._developer_server_entries():
+            item = dict(raw)
+            if item.get("url"):
+                try:
+                    exchanged = DeveloperServerClient(str(item["url"])).exchange_github_token(token)
+                    self._save_server_session_token(item, str(exchanged["token"]))
+                    connected.append(str(item["server_id"]))
+                except (OSError, ValueError, TypeError):
+                    pass
+            refreshed.append(item)
+        self.config["developer_servers"] = refreshed
+        self.config_store.save(self.config)
+        return connected
+
+    def _background_github_refresh(self) -> None:
+        _startup_trace("GitHub login refresh: entered")
+        login = self._verify_github_login(force=True)
+        if not login.get("ok"):
+            _startup_trace(f"GitHub login refresh: returned ok=False code={login.get('code', '')}")
+            return
+        if not login.get("logged_in"):
+            _startup_trace("GitHub login refresh: skipped without a saved token")
+            return
         result = self.sync_github_gist()
+        connected = self._reconnect_developer_servers()
         _startup_trace(
-            f"Gist sync: returned ok={result.get('ok') is True}",
+            f"GitHub login refresh: gist_ok={result.get('ok') is True} reconnected={len(connected)}",
         )
 
     def start_github_device_login(self) -> dict[str, Any]:
@@ -120,6 +193,8 @@ class PrivateDistributionController(ApiController):
             user_id = str(identity["id"])
             self._github_device = None
             self._github_access_token = access_token
+            self._github_login_checked_token = access_token
+            self._github_login_checked_at = time.monotonic()
             try:
                 self.credentials.save("github-access-token", access_token)
             except (OSError, ValueError):
@@ -127,24 +202,12 @@ class PrivateDistributionController(ApiController):
             self.config["github_user_id"] = user_id
             self.config_store.save(self.config)
             synced = self.sync_github_gist()
-            if synced.get("ok") and self._github_access_token:
-                refreshed: list[dict[str, Any]] = []
-                for raw in self._developer_server_entries():
-                    item = dict(raw)
-                    if not self._server_session_token(item) and item.get("url"):
-                        try:
-                            exchanged = DeveloperServerClient(str(item["url"])).exchange_github_token(
-                                self._github_access_token)
-                            self._save_server_session_token(item, str(exchanged["token"]))
-                        except (OSError, ValueError, TypeError):
-                            pass
-                    refreshed.append(item)
-                self.config["developer_servers"] = refreshed
-                self.config_store.save(self.config)
+            reconnected = self._reconnect_developer_servers()
             return self._success(
                 logged_in=True,
                 github_user_id=user_id,
                 conflicts=synced.get("conflicts", []) if synced.get("ok") else [],
+                reconnected_server_ids=reconnected,
             )
         except (OSError, ValueError, TypeError) as exc:
             return self._failure(exc, code="github_login_failed")
@@ -470,6 +533,7 @@ class PrivateDistributionController(ApiController):
 
     def get_developer_servers(self) -> dict[str, Any]:
         self.config = self.config_store.load()
+        login = self._verify_github_login()
         servers = self._developer_servers_data()
         packages = [package for server in servers for package in server.get("packages", [])]
         adopted = self._adopt_private_packages(packages)
@@ -480,6 +544,8 @@ class PrivateDistributionController(ApiController):
             servers=servers,
             packages=packages,
             adopted=adopted,
+            github_login_expired=login.get("code") == "github_login_expired",
+            github_user_id=str(self.config.get("github_user_id", "") or ""),
         )
 
     def add_developer_server(self, url: str, confirmed_fingerprint: str = "") -> dict[str, Any]:
@@ -542,6 +608,9 @@ class PrivateDistributionController(ApiController):
 
     def activate_developer_server(self, server_id: str, key: str) -> dict[str, Any]:
         try:
+            login = self._verify_github_login()
+            if not login.get("ok"):
+                return login
             entries = self._developer_server_entries()
             entry = next((item for item in entries if item.get("server_id") == server_id), None)
             if entry is None:
@@ -619,6 +688,13 @@ class PrivateDistributionController(ApiController):
             self,
             package_id: str,
     ) -> tuple[dict[str, Any], DeveloperServerClient, PrivatePackageManifest]:
+        login = self._verify_github_login()
+        if not login.get("ok"):
+            raise DeveloperServerError(
+                str(login.get("message", "GitHub login expired")),
+                status=401,
+                code="github_login_rejected",
+            )
         entry = next(
             (
                 item

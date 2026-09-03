@@ -916,10 +916,81 @@ class PrivateServerTests(unittest.TestCase):
                         self.target()
 
                 with patch("sprocket_mod_manager.presentation.controllers.settings_controller.threading.Thread", ImmediateThread), \
-                     patch.object(api._private_controller, "sync_github_gist", return_value={"ok": True}) as sync:
+                     patch.object(api._private_controller, "_verify_github_login",
+                                  return_value={"ok": True, "logged_in": True}), \
+                     patch.object(api._private_controller, "sync_github_gist", return_value={"ok": True}) as sync, \
+                     patch.object(api._private_controller, "_reconnect_developer_servers",
+                                  return_value=[]) as reconnect:
                     result = api.bootstrap()
                 self.assertTrue(result["ok"])
                 sync.assert_called_once_with()
+                reconnect.assert_called_once_with()
+            finally:
+                api.install_queue.close()
+
+    def test_bootstrap_clears_expired_saved_github_login(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi("test", app_dir=Path(directory))
+            try:
+                api.config["github_user_id"] = "42"
+                api.config_store.save(api.config)
+                api.credentials.save("github-access-token", "expired-token")
+
+                class ImmediateThread:
+                    def __init__(self, *, target, **_kwargs):
+                        self.target = target
+
+                    def start(self):
+                        self.target()
+
+                with patch("sprocket_mod_manager.presentation.controllers.settings_controller.threading.Thread", ImmediateThread), \
+                     patch("sprocket_mod_manager.presentation.controllers.private_distribution_controller.github_current_user",
+                           side_effect=ValueError("GitHub access token is invalid")), \
+                     patch.object(api._private_controller, "sync_github_gist") as sync:
+                    result = api.bootstrap()
+                self.assertTrue(result["ok"])
+                self.assertEqual(api.config["github_user_id"], "")
+                self.assertEqual(api._github_token(), "")
+                sync.assert_not_called()
+            finally:
+                api.install_queue.close()
+
+    def test_github_login_reconnects_servers_when_gist_sync_fails(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi("test", app_dir=Path(directory))
+            try:
+                api.config["developer_servers"] = [{
+                    "server_id": "test-server", "url": self.url,
+                }]
+                api._github_device = {"client_id": "client", "device_code": "device", "interval": 5}
+                with patch("sprocket_mod_manager.presentation.controllers.private_distribution_controller.github_device_poll",
+                           return_value={"access_token": "token"}), \
+                     patch("sprocket_mod_manager.presentation.controllers.private_distribution_controller.github_current_user",
+                           return_value={"id": 42}), \
+                     patch.object(api._private_controller, "sync_github_gist", return_value={"ok": False}), \
+                     patch.object(DeveloperServerClient, "exchange_github_token",
+                                  return_value={"token": "server-session"}):
+                    result = api.poll_github_device_login()
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["reconnected_server_ids"], ["test-server"])
+                self.assertEqual(api._server_session_token({"server_id": "test-server"}), "server-session")
+            finally:
+                api.install_queue.close()
+
+    def test_server_refresh_clears_expired_github_login(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi("test", app_dir=Path(directory))
+            try:
+                api.config["github_user_id"] = "42"
+                api.config_store.save(api.config)
+                api.credentials.save("github-access-token", "expired-token")
+                with patch("sprocket_mod_manager.presentation.controllers.private_distribution_controller.github_current_user",
+                           side_effect=ValueError("GitHub access token is invalid")):
+                    result = api.get_developer_servers()
+                self.assertTrue(result["ok"])
+                self.assertTrue(result["github_login_expired"])
+                self.assertEqual(result["github_user_id"], "")
+                self.assertEqual(api._github_token(), "")
             finally:
                 api.install_queue.close()
 

@@ -248,6 +248,13 @@ async function loadDeveloperServersOnce() {
             resultError(result);
             return;
         }
+        if (result.github_login_expired) {
+            state.settings.github_user_id = "";
+            renderGithubLogin();
+        } else if (typeof result.github_user_id === "string") {
+            state.settings.github_user_id = result.github_user_id;
+            renderGithubLogin();
+        }
         state.developerServers = result.servers || [];
         state.privatePackages = result.packages || [];
         state.packages = [...state.publicPackages, ...state.privatePackages];
