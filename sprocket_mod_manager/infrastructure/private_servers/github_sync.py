@@ -95,7 +95,11 @@ def github_current_user(access_token: str, *, timeout: int = 10) -> dict[str, An
     try:
         with urlopen(request, timeout=timeout) as response:
             value = json.loads(response.read(MAX_RESPONSE_BYTES).decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except HTTPError as exc:
+        if exc.code == 401:
+            raise ValueError("GitHub access token is invalid") from exc
+        raise ValueError(f"GitHub identity verification failed with HTTP {exc.code}") from exc
+    except (URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("GitHub identity verification failed") from exc
     if not isinstance(value, dict) or not isinstance(value.get("id"), int) or value["id"] < 1:
         raise ValueError("GitHub identity response is invalid")

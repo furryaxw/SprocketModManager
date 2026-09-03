@@ -27,14 +27,14 @@ class SettingsController(ApiController):
     def bootstrap(self) -> dict[str, Any]:
         LOGGER.debug("bootstrap entered")
         self.config = self.config_store.load()
-        # Do not put the network request on the WebView/API thread. The local
-        # configuration is sufficient to render the window; the next server
-        # refresh will observe the merged result written by this worker.
+        # Do not put GitHub validation, Gist sync, or private-server reconnects
+        # on the WebView/API thread. The local configuration is sufficient to
+        # render the window while this worker refreshes the saved login state.
         if self._github_token():
-            LOGGER.info("starting background Gist sync")
+            LOGGER.info("starting background GitHub login refresh")
             threading.Thread(
-                target=self._background_gist_sync,
-                name="sprocket-gist-sync",
+                target=self._background_github_refresh,
+                name="sprocket-github-login-refresh",
                 daemon=True,
             ).start()
         LOGGER.debug("bootstrap returning")
