@@ -7,10 +7,12 @@
   "repository": "furryaxw/SprocketVehicleSpawnKit",
   "license": "GPL-3.0-only",
   "display_name": {
-    "en": "Sprocket Vehicle Spawn Kit"
+    "en": "Sprocket Vehicle Spawn Kit",
+    "zh": "Sprocket 车辆生成工具包"
   },
   "description": {
-    "en": "Shared native vehicle spawning library for Sprocket MelonLoader mods."
+    "en": "Shared native vehicle spawning library for Sprocket MelonLoader mods.",
+    "zh": "供 Sprocket MelonLoader 模组共用的原生车辆生成库。"
   },
   "release": {
     "include_prerelease": false,

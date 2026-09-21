@@ -7,10 +7,12 @@
   "repository": "furryaxw/SprocketMaterialEditor",
   "license": "MIT",
   "display_name": {
-    "en": "Sec's Material Editor"
+    "en": "Sec's Material Editor",
+    "zh": "Sec 的材质编辑器"
   },
   "description": {
-    "en": "In-game editor for changing armour materials on saved Sprocket vehicle blueprints."
+    "en": "In-game editor for changing armour materials on saved Sprocket vehicle blueprints.",
+    "zh": "在游戏内编辑已保存的 Sprocket 车辆蓝图装甲材质。"
   },
   "release": {
     "include_prerelease": false,
