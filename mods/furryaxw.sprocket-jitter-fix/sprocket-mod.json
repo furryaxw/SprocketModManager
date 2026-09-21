@@ -22,7 +22,13 @@
       "exclude": []
     }
   },
-  "dependencies": [],
+  "dependencies": [
+    {
+      "id": "furryaxw.sprocket-mod-api",
+      "version": ">=0.3.0 <1.0.0",
+      "when": "*"
+    }
+  ],
   "recommendations": [],
   "featured": true,
   "install": {

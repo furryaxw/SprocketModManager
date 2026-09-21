@@ -22,7 +22,13 @@
       "exclude": []
     }
   },
-  "dependencies": [],
+  "dependencies": [
+    {
+      "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+      "version": ">=5.6.1 <6.0.0",
+      "when": "*"
+    }
+  ],
   "recommendations": [],
   "featured": false,
   "install": {

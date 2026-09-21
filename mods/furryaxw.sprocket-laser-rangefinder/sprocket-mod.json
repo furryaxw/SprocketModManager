@@ -25,12 +25,12 @@
   "dependencies": [
     {
       "id": "furryaxw.sprocket-mod-api",
-      "version": ">=0.1.0 <1.0.0",
+      "version": ">=0.3.0 <1.0.0",
       "when": "*"
     },
     {
       "id": "furryaxw.sprocket-depth",
-      "version": ">=0.1.1 <1.0.0",
+      "version": ">=0.1.2 <1.0.0",
       "when": "*"
     }
   ],
