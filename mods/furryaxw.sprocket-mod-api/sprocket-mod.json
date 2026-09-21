@@ -11,8 +11,8 @@
     "zh": "Sprocket 模组 API"
   },
   "description": {
-    "en": "Shared services and unified input bindings for Sprocket mods.",
-    "zh": "为 Sprocket 模组提供公共服务和统一键位管理。"
+    "en": "Shared runtime library: keybindings, input routing, native UI, mod metadata, declarative config and the in-game mod menu.",
+    "zh": "共享运行时库：键位与输入路由、原生 UI、模组元数据、声明式配置与游戏内 Mod 菜单。"
   },
   "release": {
     "include_prerelease": false,
