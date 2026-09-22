@@ -179,7 +179,7 @@ class WebGuiTests(unittest.TestCase):
             service = SimpleNamespace(
                 registry=Registry([package]),
                 github=SimpleNamespace(install_assets=lambda _package, release: release.assets),
-                installed=lambda _game_path: {},
+                installed=lambda _game_path, *, suppressed=(): {},
             )
             api = ClientApi("0.3.2", app_dir=Path(directory))
             try:
@@ -194,8 +194,8 @@ class WebGuiTests(unittest.TestCase):
             root = Path(directory)
             app_dir = root / "app"
             game = root / "game"
-            nested = game / "Mods" / "Nested"
-            nested.mkdir(parents=True)
+            mods = game / "Mods"
+            mods.mkdir(parents=True)
             (game / "Sprocket.exe").touch()
             ConfigStore(app_dir).save(
                 {"language": "en", "game_path": str(game), "index_url": ""}
@@ -203,7 +203,7 @@ class WebGuiTests(unittest.TestCase):
             api = ClientApi("0.3.2", app_dir=app_dir)
             try:
                 self.assertFalse(api._has_any_mods())
-                (nested / "UnknownMod.DLL").write_bytes(b"unmanaged")
+                (mods / "UnknownMod.DLL").write_bytes(b"unmanaged")
                 self.assertTrue(api._has_any_mods())
             finally:
                 api.install_queue.close()
@@ -391,8 +391,7 @@ class WebGuiTests(unittest.TestCase):
             (game / "Sprocket.exe").touch()
             content = b"published mod"
             (game / "Mods" / "TestMod.dll").write_bytes(content)
-            unknown = game / "Mods" / "Nested" / "UnknownMod.dll"
-            unknown.parent.mkdir()
+            unknown = game / "Mods" / "UnknownMod.dll"
             unknown.write_bytes(b"unknown mod")
             ConfigStore(app_dir).save(
                 {"language": "en", "game_path": str(game), "index_url": ""}
@@ -406,17 +405,22 @@ class WebGuiTests(unittest.TestCase):
                 service_factory=lambda _app_dir: service,
             )
             try:
-                result = api.get_installed()
+                # 列表本身不认领（不访问网络）……
+                listed = api.get_installed()
+                # ……认领是渲染完成之后的独立调用。
+                adopted_result = api.adopt_existing()
+                after = api.get_installed()
             finally:
                 api.install_queue.close()
             unknown_content = unknown.read_bytes()
 
-        self.assertTrue(result["ok"])
-        self.assertEqual([item["id"] for item in result["adopted"]], [package.id])
-        self.assertTrue(result["installed"][0]["adopted"])
+        self.assertTrue(listed["ok"])
+        self.assertTrue(adopted_result["ok"])
+        self.assertTrue(adopted_result["changed"], "认领成功要报告 changed")
+        self.assertEqual(after["installed"][0]["id"], package.id)
         self.assertEqual(
-            result["unrecognized"],
-            [{"name": "UnknownMod.dll", "path": "Mods/Nested/UnknownMod.dll"}],
+            after["unrecognized"],
+            [{"name": "UnknownMod.dll", "path": "Mods/UnknownMod.dll"}],
         )
         self.assertEqual(unknown_content, b"unknown mod")
 
@@ -528,11 +532,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn("state.unrecognized = result.unrecognized || []", javascript)
         self.assertIn('status.textContent = tr("unrecognized")', javascript)
         self.assertIn("if (item.unrecognized)", javascript)
-        self.assertNotIn("recommendedOptional", javascript)
-        self.assertNotIn("recommendation-hint", javascript)
-        self.assertNotIn("empty-glyph", html)
         self.assertIn('class="brand-line" aria-hidden="true"', html)
-        self.assertNotIn("about-mark", html)
         self.assertIn('id="open-manager-directory"', html)
         self.assertIn('id="upload-manager-log"', html)
         self.assertIn('id="debug-mode"', html)
@@ -570,7 +570,6 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn('data-page-target="translations"', html)
         self.assertIn('id="page-translations" data-page="translations"', html)
         self.assertIn('id="translation-list"', html)
-        self.assertNotIn('<option value="translation"', html)
         self.assertIn('pkg.category === "translation") !== translations', javascript)
         self.assertRegex(
             javascript,

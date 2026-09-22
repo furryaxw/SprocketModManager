@@ -30,14 +30,14 @@
         </div>
 
         <nav class="primary-nav" aria-label="主导航" data-i18n-aria="primaryNav">
-            <button class="nav-item active" type="button" data-page-target="catalog">
-                <span class="nav-index">01</span><span data-i18n="catalog">模组目录</span>
+            <button class="nav-item active" type="button" data-page-target="installed">
+                <span class="nav-index">01</span><span data-i18n="installed">已安装</span>
+            </button>
+            <button class="nav-item" type="button" data-page-target="catalog">
+                <span class="nav-index">02</span><span data-i18n="catalog">模组目录</span>
             </button>
             <button class="nav-item" type="button" data-page-target="translations">
-                <span class="nav-index">02</span><span data-i18n="translations">翻译</span>
-            </button>
-            <button class="nav-item" type="button" data-page-target="installed">
-                <span class="nav-index">03</span><span data-i18n="installed">已安装</span>
+                <span class="nav-index">03</span><span data-i18n="translations">翻译</span>
             </button>
             <button class="nav-item" type="button" data-page-target="downloads">
                 <span class="nav-index">04</span><span data-i18n="downloads">下载队列</span>
@@ -70,8 +70,8 @@
     <main class="main-area">
         <header class="page-header">
             <div>
-                <p class="page-kicker" id="page-kicker">REGISTRY</p>
-                <h1 id="page-title" data-i18n="catalogTitle">模组目录</h1>
+                <p class="page-kicker" id="page-kicker" data-i18n="pageInstallation">安装</p>
+                <h1 id="page-title" data-i18n="installedTitle">安装管理</h1>
                 <p id="page-subtitle">sprocketmods.furryaxw.top</p>
             </div>
             <div class="header-actions" id="header-actions">
@@ -82,7 +82,42 @@
             </div>
         </header>
 
-        <section class="page active" id="page-catalog" data-page="catalog">
+        <section class="page active" id="page-installed" data-page="installed">
+            <div class="list-toolbar">
+                <span id="installed-count">0</span>
+                <div class="toolbar-actions">
+                    <div class="filter-chips" role="group" data-i18n-aria="installedFilter">
+                        <button class="filter-chip active" type="button" id="installed-filter-all"
+                                data-installed-filter="all">全部
+                        </button>
+                        <button class="filter-chip" type="button" id="installed-filter-enabled"
+                                data-installed-filter="enabled">已启用
+                        </button>
+                        <button class="filter-chip" type="button" id="installed-filter-disabled"
+                                data-installed-filter="disabled">已禁用
+                        </button>
+                        <button class="filter-chip" type="button" id="installed-filter-outdated"
+                                data-installed-filter="outdated">有更新
+                        </button>
+                    </div>
+                    <span class="selection-count" id="installed-selection"></span>
+                    <button class="secondary-button" id="update-selected" type="button" data-i18n="update"
+                            disabled>更新
+                    </button>
+                    <button class="secondary-button" id="disable-selected" type="button" data-i18n="disableMod"
+                            disabled>禁用
+                    </button>
+                    <button class="secondary-button" id="enable-selected" type="button" data-i18n="enableMod"
+                            disabled>启用
+                    </button>
+                    <button class="danger-button" id="remove-selected" type="button" data-i18n="remove" disabled>卸载
+                    </button>
+                </div>
+            </div>
+            <div class="data-list" id="installed-list"></div>
+        </section>
+
+        <section class="page" id="page-catalog" data-page="catalog" hidden>
             <div class="catalog-tools">
                 <label class="search-control">
                     <span class="visually-hidden" data-i18n="search">搜索</span>
@@ -150,14 +185,6 @@
                     </div>
                 </aside>
             </div>
-        </section>
-
-        <section class="page" id="page-installed" data-page="installed" hidden>
-            <div class="list-toolbar">
-                <span id="installed-count">0</span>
-                <button class="primary-button" id="update-all" type="button" data-i18n="updateAll">全部更新</button>
-            </div>
-            <div class="data-list" id="installed-list"></div>
         </section>
 
         <section class="page" id="page-downloads" data-page="downloads" hidden>

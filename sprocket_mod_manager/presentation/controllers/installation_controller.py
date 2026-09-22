@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -13,6 +14,8 @@ from ...domain.errors import ModManagerError
 from ...domain.models import RegistryPackage, ResolutionPlan
 from ...infrastructure.config import effective_game_path
 from ...infrastructure.melonloader import MelonLoaderInstallation, MelonLoaderRelease
+
+LOGGER = logging.getLogger(__name__)
 
 
 class InstallationController(ApiController):
@@ -138,6 +141,19 @@ class InstallationController(ApiController):
             ],
         }
 
+    @staticmethod
+    def _record_failure(failed: list[dict[str, str]], package_id: str, exc: Exception) -> None:
+        """记下一个解析不了的模组：批量操作跳过它，继续处理剩下的。"""
+        LOGGER.warning("skipping %s: %s", package_id, exc)
+        failed.append({"id": package_id, "message": str(exc)})
+
+    @staticmethod
+    def _failure_message(failed: list[dict[str, str]]) -> str:
+        """整批都没成时把原因原样带出去；只有一条就直接用它的话（不要包一层壳）。"""
+        if len(failed) == 1:
+            return failed[0]["message"]
+        return " | ".join(f"{item['id']}: {item['message']}" for item in failed)
+
     def plan_install(self, package_ids: list[str]) -> dict[str, Any]:
         try:
             game_path = self._valid_game_path()
@@ -146,24 +162,28 @@ class InstallationController(ApiController):
             plans: list[dict[str, Any]] = []
             resolved_plans: list[tuple[RegistryPackage, ResolutionPlan]] = []
             skipped: list[str] = []
+            failed: list[dict[str, str]] = []
             for package_id in dict.fromkeys(str(item) for item in package_ids):
-                if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
-                       self._developer_server_entries()):
-                    _client, plan, _downloaders = self._private_resolution(package_id)
-                    root = plan.by_id()[package_id]
-                    if installed.get(package_id, {}).get("version") == str(root.release.version):
-                        skipped.append(package_id)
-                    else:
-                        plans.append(self._plan_data(service, root.package, plan))
-                    continue
-                package = self._package(service, package_id)
-                plan = service.resolve(package.id)
-                root = plan.by_id()[package.id]
-                if installed.get(package.id, {}).get("version") == str(root.release.version):
-                    skipped.append(package.id)
-                    continue
-                plans.append(self._plan_data(service, package, plan))
-                resolved_plans.append((package, plan))
+                try:
+                    if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
+                           self._developer_server_entries()):
+                        _client, plan, _downloaders = self._private_resolution(package_id)
+                        root = plan.by_id()[package_id]
+                        if installed.get(package_id, {}).get("version") == str(root.release.version):
+                            skipped.append(package_id)
+                        else:
+                            plans.append(self._plan_data(service, root.package, plan))
+                        continue
+                    package = self._package(service, package_id)
+                    plan = service.resolve(package.id)
+                    root = plan.by_id()[package.id]
+                    if installed.get(package.id, {}).get("version") == str(root.release.version):
+                        skipped.append(package.id)
+                        continue
+                    plans.append(self._plan_data(service, package, plan))
+                    resolved_plans.append((package, plan))
+                except (ModManagerError, OSError, ValueError) as exc:
+                    self._record_failure(failed, package_id, exc)
             covered = {
                 item.package.id
                 for _package, plan in resolved_plans
@@ -188,10 +208,13 @@ class InstallationController(ApiController):
                     data = self._plan_data(service, recommended, recommended_plan)
                     data["recommended_by"] = [package.id]
                     recommendations[recommended.id] = data
+            if not plans and failed:
+                raise ModManagerError(self._failure_message(failed))
             return self._success(
                 plans=plans,
                 recommendations=list(recommendations.values()),
                 skipped=skipped,
+                failed=failed,
                 melonloader_installed=self.melonloader.detect(game_path).installed,
             )
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
@@ -223,18 +246,24 @@ class InstallationController(ApiController):
             service = self._current_service()
             installed = service.installed(game_path)
             eligible: list[str] = []
+            failed: list[dict[str, str]] = []
             for package_id in dict.fromkeys(str(item) for item in package_ids):
-                if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
-                       self._developer_server_entries()):
-                    _entry, _client, manifest = self._private_package_source(package_id)
-                    if installed.get(package_id, {}).get("version") != manifest.version:
-                        eligible.append(package_id)
-                    continue
-                package = self._package(service, package_id)
-                plan = service.resolve(package.id)
-                root = plan.by_id()[package.id]
-                if installed.get(package.id, {}).get("version") != str(root.release.version):
-                    eligible.append(package.id)
+                try:
+                    if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
+                           self._developer_server_entries()):
+                        _entry, _client, manifest = self._private_package_source(package_id)
+                        if installed.get(package_id, {}).get("version") != manifest.version:
+                            eligible.append(package_id)
+                        continue
+                    package = self._package(service, package_id)
+                    plan = service.resolve(package.id)
+                    root = plan.by_id()[package.id]
+                    if installed.get(package.id, {}).get("version") != str(root.release.version):
+                        eligible.append(package.id)
+                except (ModManagerError, OSError, ValueError) as exc:
+                    self._record_failure(failed, package_id, exc)
+            if not eligible and failed:
+                raise ModManagerError(self._failure_message(failed))
             with self._state_lock:
                 if not self._melonloader_idle.is_set():
                     raise RuntimeError("wait for the MelonLoader installation to finish")
@@ -244,7 +273,7 @@ class InstallationController(ApiController):
                     context=service,
                     force_conflicts=bool(force_conflicts),
                 )
-            return self._success(added=[entry.task_id for entry in added], count=len(added))
+            return self._success(added=[entry.task_id for entry in added], count=len(added), failed=failed)
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"
@@ -269,27 +298,28 @@ class InstallationController(ApiController):
             service = self._current_service()
             installed = service.installed(game_path)
             updates: list[str] = []
+            failed: list[dict[str, str]] = []
             public_ids = {item.id for item in service.registry.packages} if service.registry else set()
             for package_id, info in installed.items():
                 if not info.get("requested"):
                     continue
-                if package_id not in public_ids:
-                    try:
+                try:
+                    if package_id not in public_ids:
                         _entry, _client, manifest = self._private_package_source(package_id)
-                    except (OSError, ValueError):
+                        if info.get("version") != manifest.version:
+                            updates.append(package_id)
                         continue
-                    if info.get("version") != manifest.version:
+                    plan = service.resolve(package_id)
+                    latest = plan.by_id()[package_id].release.version
+                    if info.get("version") != str(latest):
                         updates.append(package_id)
-                    continue
-                plan = service.resolve(package_id)
-                latest = plan.by_id()[package_id].release.version
-                if info.get("version") != str(latest):
-                    updates.append(package_id)
+                except (ModManagerError, OSError, ValueError) as exc:
+                    self._record_failure(failed, package_id, exc)
             with self._state_lock:
                 if not self._melonloader_idle.is_set():
                     raise RuntimeError("wait for the MelonLoader installation to finish")
                 added = self.install_queue.enqueue(updates, game_path, context=service)
-            return self._success(added=[entry.task_id for entry in added], count=len(added))
+            return self._success(added=[entry.task_id for entry in added], count=len(added), failed=failed)
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"

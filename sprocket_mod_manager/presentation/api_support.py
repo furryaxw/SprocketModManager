@@ -14,7 +14,6 @@ class GamePathRequiredError(ValueError):
 
 
 def startup_trace(message: str) -> None:
-    """Write a startup diagnostic at debug level."""
     logging.getLogger("sprocket_mod_manager.startup").debug(message)
 
 

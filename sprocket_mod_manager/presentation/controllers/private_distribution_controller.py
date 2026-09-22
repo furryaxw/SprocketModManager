@@ -217,7 +217,6 @@ class PrivateDistributionController(ApiController):
         return self._success()
 
     def sync_github_gist(self) -> dict[str, Any]:
-        """Merge the local developer-server index with the user's private Gist."""
         token = self._github_token()
         if not token:
             return self._failure(ValueError("GitHub login is required"), code="gist_sync_requires_login")

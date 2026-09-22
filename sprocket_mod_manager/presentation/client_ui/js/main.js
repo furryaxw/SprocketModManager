@@ -9,7 +9,13 @@ function wireEvents() {
     $("#translation-sort").addEventListener("change", renderCatalog);
     $("#refresh-catalog").addEventListener("click", () => loadCatalog(true));
     $("#batch-install").addEventListener("click", () => beginInstall([...state.batch]));
-    $("#update-all").addEventListener("click", updateAll);
+    $$("[data-installed-filter]").forEach((chip) => {
+        chip.addEventListener("click", () => setInstalledFilter(chip.dataset.installedFilter));
+    });
+    $("#update-selected").addEventListener("click", updateSelectedMods);
+    $("#disable-selected").addEventListener("click", () => toggleSelectedMods(false));
+    $("#enable-selected").addEventListener("click", () => toggleSelectedMods(true));
+    $("#remove-selected").addEventListener("click", removeSelectedMods);
     $("#clear-finished").addEventListener("click", async () => {
         await callApi("clear_finished");
         await pollQueue(true);
@@ -26,7 +32,6 @@ function wireEvents() {
     $("#proxy-enabled").addEventListener("change", syncProxyControls);
     $("#github-proxy-enabled").addEventListener("change", syncProxyControls);
     $("#add-developer-server").addEventListener("click", addDeveloperServer);
-    $("#github-logout-button")?.remove();
     $("#github-login-button").addEventListener("click", handleGithubAuth);
     $("#melonloader-action").addEventListener("click", async () => {
         const editedPath = $("#game-path").value.trim();
@@ -92,6 +97,8 @@ async function initialize() {
         renderGithubLogin();
         setLanguage(result.language);
         await callApi("startup_trace", "initial UI state rendered");
+        // 管理器是「装了什么」的工具：启动直接进安装管理页，目录页留给找新模组的时候。
+        await showPage("installed");
         await pollQueue(true);
         await callApi("startup_trace", "initial queue loaded");
         void detectGamePathPlaceholder();
