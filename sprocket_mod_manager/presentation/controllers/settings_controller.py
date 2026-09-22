@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 from .base import ApiController
@@ -21,6 +22,18 @@ from ...utilities.ui_values import normalize_text_scale
 from ...utilities.urls import normalize_github_proxy_url, normalize_proxy_url
 
 LOGGER = logging.getLogger(__name__)
+
+
+def game_directory_for(selection: str) -> str:
+    """文件选择器的结果 -> 游戏目录：取选中文件所在目录；取消选择得到空串。
+
+    选中的如果本来就是目录（个别平台/回退路径会这样），原样返回。
+    """
+    text = str(selection or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    return str(path) if path.is_dir() else str(path.parent)
 
 
 class SettingsController(ApiController):
@@ -99,6 +112,7 @@ class SettingsController(ApiController):
             return self._failure(exc, code="game_path_detection_failed")
 
     def choose_game_path(self) -> dict[str, Any]:
+        """选 `Sprocket.exe`：用户挑的是可执行文件，游戏路径取它所在的目录。"""
         if self._window is None:
             return self._failure(RuntimeError("window is not ready"))
         try:
@@ -106,12 +120,12 @@ class SettingsController(ApiController):
 
             current = effective_game_path(self.config)
             result = self._window.create_file_dialog(
-                webview.FOLDER_DIALOG,
+                webview.FileDialog.OPEN,
                 directory=current or "",
                 allow_multiple=False,
+                file_types=("Sprocket (*.exe)",),
             )
-            selected = result[0] if result else ""
-            return self._success(path=selected)
+            return self._success(path=game_directory_for(result[0] if result else ""))
         except (OSError, RuntimeError, ValueError) as exc:
             return self._failure(exc, code="file_dialog_failed")
 
