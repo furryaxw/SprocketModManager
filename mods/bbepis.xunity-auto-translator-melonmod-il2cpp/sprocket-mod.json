@@ -22,14 +22,8 @@
       "exclude": []
     }
   },
-  "dependencies": [
-    {
-      "id": "furryaxw.xunity-il2cpptmpro-bridge",
-      "version": ">=0.1.0 <1.0.0",
-      "when": "*"
-    }
-  ],
-  "recommendations": [],
+  "dependencies": [],
+  "recommendations": ["furryaxw.xunity-il2cpptmpro-bridge"],
   "featured": false,
   "install": {
     "scan_dlls": true,
