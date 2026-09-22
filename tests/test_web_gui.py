@@ -16,6 +16,7 @@ from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, Re
 from sprocket_mod_manager.domain.registry import Registry
 from sprocket_mod_manager.domain.semver import Version
 from sprocket_mod_manager.application.service import ModManagerService
+from sprocket_mod_manager.presentation.controllers.settings_controller import game_directory_for
 from sprocket_mod_manager.presentation.web_gui import ClientApi
 
 
@@ -633,6 +634,53 @@ class WebGuiTests(unittest.TestCase):
             site_value = site_css.split(marker, 1)[1].split(";", 1)[0]
             client_value = client_css.split(marker, 1)[1].split(";", 1)[0]
             self.assertEqual(client_value, site_value, name)
+
+
+class ChooseGamePathTests(unittest.TestCase):
+    """游戏位置按钮选的是 `Sprocket.exe`，写进配置的是它所在的目录。"""
+
+    class _Window:
+        def __init__(self, selection: str) -> None:
+            self.selection = selection
+            self.dialogs: list[tuple[object, dict]] = []
+
+        def create_file_dialog(self, dialog_type: object, **kwargs: object) -> tuple[str, ...] | None:
+            self.dialogs.append((dialog_type, kwargs))
+            return (self.selection,) if self.selection else None
+
+    def test_a_selected_executable_maps_to_its_directory(self) -> None:
+        self.assertEqual(
+            game_directory_for(str(Path("C:/Games/Sprocket") / "Sprocket.exe")),
+            str(Path("C:/Games/Sprocket")),
+        )
+
+    def test_cancelling_the_dialog_keeps_the_path_empty(self) -> None:
+        self.assertEqual(game_directory_for(""), "")
+
+    def test_a_selected_directory_stays_as_it_is(self) -> None:
+        with TemporaryDirectory() as directory:
+            self.assertEqual(game_directory_for(directory), str(Path(directory)))
+
+    def test_the_dialog_is_a_file_picker_for_the_executable(self) -> None:
+        import webview
+
+        with TemporaryDirectory() as directory:
+            game = Path(directory) / "Sprocket"
+            game.mkdir()
+            window = self._Window(str(game / "Sprocket.exe"))
+            api = ClientApi("test", app_dir=Path(directory) / "app")
+            api.bind_window(window)
+            try:
+                result = api.choose_game_path()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["path"], str(game))
+        dialog_type, kwargs = window.dialogs[0]
+        self.assertEqual(dialog_type, webview.FileDialog.OPEN, "选的是文件，不是文件夹")
+        self.assertNotEqual(dialog_type, webview.FileDialog.FOLDER)
+        self.assertEqual(kwargs.get("file_types"), ("Sprocket (*.exe)",))
 
 
 if __name__ == "__main__":
