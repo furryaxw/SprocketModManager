@@ -4,7 +4,7 @@ const state = {
     ready: false,
     initializing: false,
     version: "-",
-    page: "catalog",
+    page: "installed",
     languageMode: "auto",
     language: "zh",
     packages: [],
@@ -17,6 +17,8 @@ const state = {
     queue: [],
     selectedId: null,
     batch: new Set(),
+    installedFilter: "all",
+    installedSelection: new Set(),
     settings: {
         debug: false, debug_active: false, language: "auto", game_path: "", index_url: "", index_placeholder: "",
         proxy_enabled: false, proxy_url: "", github_proxy_enabled: false,

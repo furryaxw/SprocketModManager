@@ -260,7 +260,6 @@ async function loadDeveloperServersOnce() {
         state.packages = [...state.publicPackages, ...state.privatePackages];
         renderDeveloperServers();
         renderCatalog();
-        notifyAdopted(result.adopted);
     } catch (error) {
         resultError({message: String(error)});
     }

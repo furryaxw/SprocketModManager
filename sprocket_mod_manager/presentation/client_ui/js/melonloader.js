@@ -38,7 +38,7 @@ function renderMelonLoader() {
     const latest = state.melonloader.latest_version || tr("versionUnknown");
     if (!state.melonloader.installed) {
         status.classList.add("missing");
-        status.textContent = tr("missingLabel");
+        status.textContent = tr("notInstalled");
         detail.textContent = tr("melonloaderMissing");
         action.textContent = tr("installMelonLoader");
     } else if (state.melonloader.update_available) {

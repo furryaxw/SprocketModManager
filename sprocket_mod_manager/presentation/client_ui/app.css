@@ -540,6 +540,19 @@ select option {
     background: var(--amber-quiet);
 }
 
+.state-chip.corrupted {
+    color: #f0a08f;
+    border-color: #7a3d31;
+    background: #2b1a16;
+}
+
+/* 被抑制 ≠ 正常：用中和色标出来，不跟"损坏"抢眼。 */
+.state-chip.suppressed {
+    color: #b9b3a4;
+    border-color: #5a564c;
+    background: #23231f;
+}
+
 .detail-panel {
     padding: 23px;
 }
@@ -709,6 +722,59 @@ select option {
 
 .data-row:hover {
     background: var(--surface);
+}
+
+/* 已安装页的每行都带选择框：多出的一列只在这种行上出现，其它列表保持两列。 */
+.data-row.selectable {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    cursor: pointer;
+}
+
+.data-row.selected {
+    background: var(--accent-quiet);
+    box-shadow: inset 3px 0 var(--accent);
+}
+
+.toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* 已安装页的筛选：一枚药丸 = 一个状态口径，计数写在里面。 */
+.filter-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.filter-chip {
+    padding: 5px 12px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.filter-chip:hover {
+    background: var(--surface);
+    color: var(--text);
+}
+
+.filter-chip.active {
+    color: var(--text);
+    border-color: #42312d;
+    background: var(--accent-quiet);
+}
+
+.selection-count {
+    min-width: 5.5rem;
+    color: var(--muted);
 }
 
 .row-title {
@@ -1423,6 +1489,25 @@ select option {
 .recommendation-group {
     display: grid;
     gap: 8px;
+}
+
+/* 被跳过的模组：包 id 一行，失败原因一行（原因可能很长，要能换行）。 */
+.skipped-group {
+    display: grid;
+    gap: 8px;
+    border-color: var(--danger);
+}
+
+.skipped-line {
+    display: grid;
+    gap: 2px;
+    color: var(--muted);
+    font: 0.6875rem/1rem "Cascadia Mono", Consolas, monospace;
+}
+
+.skipped-line span:last-child {
+    color: var(--text-soft);
+    white-space: normal;
 }
 
 .recommendation-line {

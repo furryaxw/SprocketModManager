@@ -1157,7 +1157,7 @@ class PrivateServerTests(unittest.TestCase):
                     result = api.get_developer_servers()
                     package_id = "test-server:private.mod"
                     self.assertEqual(result["adopted"][0]["id"], package_id)
-                    self.assertTrue(result["packages"][0]["installed"]["adopted"])
+                    self.assertNotIn("adopted", result["packages"][0]["installed"])
                     self.assertEqual(api._installed_data()[0]["id"], package_id)
                     self.assertTrue(api.remove(package_id)["ok"])
                     self.assertFalse(target.exists())

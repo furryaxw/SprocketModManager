@@ -290,13 +290,6 @@ function renderDetail() {
     panel.append(topline, heading, actions, readmeSection, facts, dependencySection, recommendationSection);
 }
 
-function notifyAdopted(items) {
-    if (!items?.length) return;
-    const message = tr("adoptedPackages", {count: items.length});
-    toast(message);
-    setStatus(message, "ready");
-}
-
 async function loadCatalog(refresh = false) {
     const button = $("#refresh-catalog");
     button.disabled = true;
@@ -326,7 +319,6 @@ async function loadCatalog(refresh = false) {
         setStatus(tr("ready", {count: state.packages.length}), "ready", result.source || "");
         renderCatalog();
         renderInstalled();
-        notifyAdopted(result.adopted);
     } catch (error) {
         state.catalogLoading = false;
         renderCatalog();
@@ -338,7 +330,7 @@ async function loadCatalog(refresh = false) {
     }
 }
 
-function createPlanBody(plans, recommendations = []) {
+function createPlanBody(plans, recommendations = [], failed = []) {
     const body = document.createElement("div");
     body.className = "modal-plan";
     if (plans.some((plan) => plan.replaces_autotranslator)) {
@@ -361,6 +353,25 @@ function createPlanBody(plans, recommendations = []) {
             const version = document.createElement("span");
             version.textContent = item.version;
             line.append(label, version);
+            group.append(line);
+        }
+        body.append(group);
+    }
+    if (failed.length) {
+        // 解析不了的模组不进计划，但不能悄悄消失：装剩下的之前先把原因摆出来。
+        const group = document.createElement("section");
+        group.className = "plan-group skipped-group";
+        const heading = document.createElement("strong");
+        heading.textContent = tr("skippedMods", {count: failed.length});
+        group.append(heading);
+        for (const item of failed) {
+            const line = document.createElement("div");
+            line.className = "skipped-line";
+            const label = document.createElement("span");
+            label.textContent = item.id;
+            const reason = document.createElement("span");
+            reason.textContent = item.message;
+            line.append(label, reason);
             group.append(line);
         }
         body.append(group);

@@ -1,0 +1,379 @@
+"""在 Node 里真实执行客户端「已安装」页的渲染逻辑。
+
+用最小 DOM 注入运行仓库里未修改的 `installs.js`（见 `fixtures/client_ui/render_installed_harness.js`），
+断言真实 `get_installed` payload（含 `local_mods`）会被渲染成正确的名称、芯片与启用/禁用按钮，
+并且按钮真的调用 `toggle_mod`。
+
+这不是打包 WebView 的人工验收，但比"字符串存在性"断言强得多；没有 node 时自动跳过。
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+HARNESS = Path(__file__).resolve().parent / "fixtures" / "client_ui" / "render_installed_harness.js"
+CLIENT_UI = Path(__file__).resolve().parent.parent / "sprocket_mod_manager" / "presentation" / "client_ui"
+NODE = shutil.which("node")
+
+
+def payload(
+        corrupted: bool = False,
+        missing: bool = False,
+        suppressed: bool = False,
+        packages: list | None = None,
+        selection: list | None = None,
+        action: str = "",
+        filter_key: str = "",
+        click_rows: list | None = None,
+        click_row_buttons: list | None = None,
+) -> dict:
+    """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
+    integrity = "corrupted" if corrupted else "suppressed" if suppressed else "release"
+    installed_record = {
+        "id": "furryaxw.sprocket-laser-rangefinder", "name": "SprocketLaserRangefinder", "version": "0.1.3",
+        "requested": True, "corrupted": corrupted, "suppressed": suppressed, "integrity": integrity,
+        "files": ["Mods/SprocketLaserRangefinder.dll"],
+    }
+    first_mod_dependencies = ["SprocketDepth"] if missing else []
+    document = {
+        "installed": [installed_record],
+        "unrecognized": [],
+        "local_mods": [
+            {
+                "path": "Mods/SprocketLaserRangefinder.dll",
+                "name": "SprocketLaserRangefinder.dll",
+                "display_name": "Sprocket Laser Rangefinder",
+                "version": "0.1.3",
+                "authors": ["furryAxw"],
+                "kind": "Mods",
+                "disabled": False,
+                "registry_id": "furryaxw.sprocket-laser-rangefinder",
+                "registry_match": "declared-id",
+                "registry_display_name": {"en": "Sprocket Laser Rangefinder", "zh": "Sprocket 激光测距仪"},
+                "registry_description": {"en": "Laser rangefinder.", "zh": "激光测距仪。"},
+                "required_dependencies": ["SprocketModAPI"],
+                "missing_dependencies": first_mod_dependencies,
+                "incompatible_assemblies": [],
+                "installed_package_id": "furryaxw.sprocket-laser-rangefinder",
+                "assembly_name": "SprocketLaserRangefinder",
+                "sha256": "",
+                "error": "",
+            },
+            {
+                "path": "Mods/CannonSoundPoolFix.dll.disable",
+                "name": "CannonSoundPoolFix.dll.disable",
+                "display_name": "Cannon Sound Pool Fix",
+                "version": "1.2.0",
+                "authors": ["furryAxw"],
+                "kind": "Mods",
+                "disabled": True,
+                "registry_id": "furryaxw.cannon-sound-pool-fix",
+                "registry_match": "declared-id",
+                "required_dependencies": [],
+                "incompatible_assemblies": [],
+                "installed_package_id": "",
+                "assembly_name": "CannonSoundPoolFix",
+                "sha256": "",
+                "error": "",
+            },
+            {
+                "path": "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll",
+                "name": "UniverseLib.ML.IL2CPP.Interop.dll",
+                "display_name": "UniverseLib",
+                "version": "1.6.2.0",
+                "authors": ["Sinai"],
+                "kind": "UserLibs",
+                "disabled": False,
+                "registry_id": "",
+                "registry_match": "",
+                "required_dependencies": [],
+                "incompatible_assemblies": ["LegacyOverhaul"],
+                "installed_package_id": "",
+                "assembly_name": "UniverseLib.ML.IL2CPP.Interop",
+                "sha256": "",
+                "error": "",
+            },
+        ],
+        "local_summary": {"total": 3, "disabled": 1, "registry_matched": 2, "unmanaged": 2, "unreadable": 0,
+                          "missing_dependencies": 1 if missing else 0},
+        "has_any_mods": True,
+    }
+    document["packages"] = packages or []
+    if selection is not None:
+        document["selection"] = selection
+    if action:
+        document["action"] = action
+    if filter_key:
+        document["filter"] = filter_key
+    if click_rows is not None:
+        document["clickRows"] = click_rows
+    if click_row_buttons is not None:
+        document["clickRowButtons"] = click_row_buttons
+    return document
+
+
+@unittest.skipIf(NODE is None, "node is not available")
+class InstalledRenderHarnessTests(unittest.TestCase):
+    def _render(self, **options) -> dict:
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "payload.json"
+            payload_path.write_text(json.dumps(payload(**options), ensure_ascii=False), encoding="utf-8")
+            completed = subprocess.run(
+                [NODE, str(HARNESS), str(CLIENT_UI), str(payload_path)],
+                capture_output=True,
+                text=True,
+                # 行里会出现中文（i18n 断言），必须显式用 UTF-8 解码，
+                # 否则中文 Windows 的 GBK 默认解码会让读线程崩掉、stdout 变成 None。
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+            self.assertEqual(completed.returncode, 0, (completed.stdout or "") + (completed.stderr or ""))
+            return json.loads(completed.stdout or "{}")
+
+    def test_renders_real_names_chips_and_requires(self) -> None:
+        result = self._render()
+        self.assertEqual(result["count"], "3 detected mods")
+        rows = result["rows"]
+        self.assertEqual(len(rows), 3, "one row per DLL on disk")
+
+        def flatten(node):
+            texts = [node["text"]] if node["text"] else []
+            for child in node["children"]:
+                texts.extend(flatten(child))
+            return texts
+
+        installed_text = " | ".join(flatten(rows[0]))
+        self.assertIn("Sprocket 激光测距仪", installed_text,
+                      "a recognized mod uses the cached registry's localized name (i18n)")
+        self.assertNotIn("Sprocket Laser Rangefinder", installed_text,
+                         "the DLL's English-only name is not used when a localized one exists")
+        self.assertIn("0.1.3", installed_text)
+        self.assertIn("User-installed", installed_text)
+        self.assertIn("SprocketModAPI", installed_text, "required dependencies must be rendered")
+        self.assertIn("Requires", installed_text)
+        self.assertIn("Mods", installed_text)
+
+        disabled_text = " | ".join(flatten(rows[1]))
+        self.assertIn("Cannon Sound Pool Fix", disabled_text)
+        self.assertIn("1.2.0", disabled_text)
+        self.assertIn("Enable", disabled_text, "按钮显示反向动作（启用），状态仍然看得出来")
+        self.assertIn("Mods", disabled_text)
+
+        third_text = " | ".join(flatten(rows[2]))
+        self.assertIn("UniverseLib", third_text)
+        self.assertIn("Local only", third_text, "mods without an install record are marked as local")
+        self.assertIn("Incompatible: LegacyOverhaul", third_text)
+        self.assertIn("UserLibs", third_text)
+
+    def test_kind_chip_precedes_the_action_button(self) -> None:
+        result = self._render()
+        disabled_actions = result["rows"][1]["children"][2]
+        labels = [child["text"] for child in disabled_actions["children"]]
+        self.assertEqual(labels, ["Mods", "Enable"],
+                         "kind chip, then the action button")
+
+    def test_every_row_starts_with_a_selection_checkbox(self) -> None:
+        result = self._render()
+        for row in result["rows"]:
+            self.assertEqual(row["className"], "data-row selectable")
+            checkbox = row["children"][0]
+            self.assertEqual(checkbox["tag"], "input")
+            self.assertIn("package-check", checkbox["className"])
+            self.assertFalse(checkbox["checked"])
+
+    def test_selected_row_is_marked_and_selects_its_key(self) -> None:
+        result = self._render(selection=["Mods/CannonSoundPoolFix.dll.disable"])
+        selected = result["rows"][1]
+        self.assertIn("selected", selected["className"])
+        self.assertTrue(selected["children"][0]["checked"])
+
+    def test_corrupted_row_shows_chip_and_reinstall(self) -> None:
+        """已损坏状态：芯片排在形态之前，并提供「重装/更新」和「抑制提示」。"""
+        result = self._render(corrupted=True)
+        actions = result["rows"][0]["children"][2]
+        labels = [child["text"] for child in actions["children"]]
+        self.assertEqual(labels, ["Corrupted", "Mods", "Disable", "Reinstall", "Mute warning", "Remove"],
+                         "损坏芯片在形态芯片之前，重装/抑制按钮在卸载之前")
+        reinstall = next(child for child in actions["children"] if child["text"] == "Reinstall")
+        self.assertTrue(reinstall["disabled"], "注册表里没有这个包时不能假装能重装")
+        mute = next(child for child in actions["children"] if child["text"] == "Mute warning")
+        self.assertIs(mute["disabled"], False, "抑制是纯本地开关，随时可用")
+
+    def test_suppressed_row_has_no_chip_but_still_offers_the_unmute_button(self) -> None:
+        """被抑制的行不出芯片，但仍靠「取消抑制」按钮区别于正常行。"""
+        result = self._render(suppressed=True)
+        actions = result["rows"][0]["children"][2]
+        labels = [child["text"] for child in actions["children"]]
+        self.assertEqual(labels, ["Mods", "Disable", "Unmute warning", "Remove"])
+
+    def test_newer_release_shows_a_chip_while_an_equal_one_does_not(self) -> None:
+        """新版本提示只对「发布版本比安装记录新」的行出芯片。"""
+        package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
+        newer = [child["text"] for child in self._render(packages=[package])["rows"][0]["children"][2]["children"]]
+        self.assertIn("Version 0.2.0 available", newer, "0.1.3 → 0.2.0 是新版本")
+
+        package["release"]["version"] = "0.1.3"
+        equal = [child["text"] for child in self._render(packages=[package])["rows"][0]["children"][2]["children"]]
+        self.assertNotIn("Version 0.1.3 available", equal, "版本相同不算新版本")
+
+        library = self._render(packages=[{"id": "sinai.universelib", "release": {"version": "2.0.0"}}])
+        third = [child["text"] for child in library["rows"][2]["children"][2]["children"]]
+        self.assertNotIn("Version 2.0.0 available", third, "纯本地库没有安装记录，不该报更新")
+
+    def test_suppress_button_calls_the_api_with_the_path(self) -> None:
+        result = self._render(corrupted=True)
+        self.assertIn("Mute warning", result["clickedButtons"])
+        calls = [
+            entry["args"]
+            for entry in result["apiCalls"]
+            if entry["kind"] == "call" and entry["args"][0] == "set_integrity_suppressed"
+        ]
+        self.assertEqual(calls, [["set_integrity_suppressed", "Mods/SprocketLaserRangefinder.dll", True]])
+        self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
+
+    def test_missing_dependency_is_rendered_from_local_metadata(self) -> None:
+        """依赖缺口来自 DLL 元数据，行里要看得见，标题也要给总数。"""
+        result = self._render(missing=True)
+        row_text = " | ".join(child["text"] for child in result["rows"][0]["children"][1]["children"])
+        self.assertIn("Missing: SprocketDepth", row_text)
+        self.assertIn("Requires: SprocketModAPI", row_text, "已满足的依赖仍然显示")
+        self.assertIn("1 missing deps", result["count"], "标题要给出依赖缺口数量")
+
+    def test_toggle_buttons_call_the_api_with_the_right_target_state(self) -> None:
+        result = self._render()
+        self.assertEqual(result["clickedButtons"], ["Disable", "Enable"],
+            "the enabled row offers Disable and the disabled row offers Enable")
+        toggles = [entry["args"] for entry in result["apiCalls"] if entry["kind"] == "call" and entry["args"][0] == "toggle_mod"]
+        self.assertEqual(
+            toggles,
+            [
+                ["toggle_mod", "Mods/SprocketLaserRangefinder.dll", False],
+                ["toggle_mod", "Mods/CannonSoundPoolFix.dll.disable", True],
+            ],
+            "each button must pass its own path and the inverted target state",
+        )
+        self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
+
+    def test_batch_buttons_stay_disabled_without_a_selection(self) -> None:
+        toolbar = self._render()["toolbar"]
+        self.assertEqual(toolbar["selection"], "")
+        self.assertEqual(
+            toolbar["buttons"],
+            {"update-selected": True, "disable-selected": True, "enable-selected": True, "remove-selected": True},
+            "没选东西时批量按钮不可用",
+        )
+
+    def test_filter_chips_count_the_whole_list_and_mark_the_active_one(self) -> None:
+        package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
+        filters = self._render(packages=[package])["toolbar"]["filters"]
+        self.assertEqual(filters["all"], {"text": "All (3)", "active": True})
+        self.assertEqual(filters["enabled"], {"text": "Enabled (2)", "active": False})
+        self.assertEqual(filters["disabled"], {"text": "Disabled (1)", "active": False})
+        self.assertEqual(filters["outdated"], {"text": "Updates (1)", "active": False})
+
+    def test_filter_hides_rows_that_do_not_match(self) -> None:
+        disabled = self._render(filter_key="disabled")
+        self.assertEqual(len(disabled["rows"]), 1, "只留被禁用的那一行")
+        self.assertIn("Cannon Sound Pool Fix", " | ".join(
+            child["text"] for child in disabled["rows"][0]["children"][1]["children"]
+        ))
+        self.assertTrue(disabled["toolbar"]["filters"]["disabled"]["active"])
+        self.assertEqual(disabled["count"], "3 detected mods", "标题仍是全集数量，口径计数在药丸上")
+
+        outdated = self._render(
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}],
+            filter_key="outdated",
+        )
+        self.assertEqual(len(outdated["rows"]), 1)
+        self.assertIn("Version 0.2.0 available", " | ".join(
+            child["text"] for child in outdated["rows"][0]["children"][2]["children"]
+        ))
+
+    def test_filter_without_matches_says_so_instead_of_pretending_nothing_is_installed(self) -> None:
+        # 没有任何可更新的模组时切到「有更新」：空态要说「没有符合筛选」，不能说「没有检测到模组」。
+        result = self._render(filter_key="outdated")
+        self.assertEqual(len(result["rows"]), 1, "只有空态那一块")
+        self.assertEqual(result["rows"][0]["className"], "empty-list")
+        self.assertEqual(result["rows"][0]["children"][0]["text"], "No mods match this filter")
+        self.assertEqual(result["count"], "3 detected mods", "空态也不该说磁盘上没有模组")
+        self.assertEqual(len(result["toolbar"]["filters"]), 4)
+
+    def test_clicking_a_row_body_toggles_that_rows_selection(self) -> None:
+        result = self._render(click_rows=[1])
+        self.assertIn("selected", result["rows"][1]["className"])
+        self.assertTrue(result["rows"][1]["children"][0]["checked"])
+        self.assertNotIn("selected", result["rows"][0]["className"])
+        self.assertEqual(result["toolbar"]["selection"], "1 selected")
+
+    def test_clicking_a_control_inside_a_row_does_not_select_it_by_accident(self) -> None:
+        result = self._render(click_row_buttons=[0])
+        self.assertNotIn("selected", result["rows"][0]["className"])
+        self.assertEqual(result["toolbar"]["selection"], "")
+
+    def test_batch_buttons_follow_what_the_selection_can_actually_do(self) -> None:
+        package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
+        # 一个可更新、可禁用、可卸载的模组：三个按钮都该亮。
+        one = self._render(packages=[package], selection=["Mods/SprocketLaserRangefinder.dll"])
+        self.assertEqual(one["toolbar"]["selection"], "1 selected")
+        self.assertEqual(
+            one["toolbar"]["buttons"],
+            {"update-selected": False, "disable-selected": False, "enable-selected": True, "remove-selected": False},
+            "已启用的行只能再禁用；启用按钮没有活可干",
+        )
+
+        # `UserLibs` 的库既不能改名也没有归属：批量按钮都不该亮（工具栏只剩禁用的按钮）。
+        library = self._render(selection=["UserLibs/UniverseLib.ML.IL2CPP.Interop.dll"])
+        self.assertEqual(
+            library["toolbar"]["buttons"],
+            {"update-selected": True, "disable-selected": True, "enable-selected": True, "remove-selected": True},
+        )
+
+        # 被禁用的模组反过来只能启用。
+        disabled = self._render(selection=["Mods/CannonSoundPoolFix.dll.disable"])
+        self.assertEqual(disabled["toolbar"]["buttons"]["enable-selected"], False)
+        self.assertEqual(disabled["toolbar"]["buttons"]["disable-selected"], True)
+
+    def test_batch_update_enqueues_only_the_selected_outdated_packages(self) -> None:
+        package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
+        result = self._render(
+            packages=[package],
+            selection=["Mods/SprocketLaserRangefinder.dll", "Mods/CannonSoundPoolFix.dll.disable"],
+            action="update-selected",
+        )
+        queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
+        self.assertEqual(
+            queued,
+            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False]],
+            "只有选中且确实有新版的行才排队",
+        )
+
+    def test_batch_toggle_calls_the_api_per_selected_path(self) -> None:
+        result = self._render(
+            selection=["Mods/SprocketLaserRangefinder.dll", "Mods/CannonSoundPoolFix.dll.disable"],
+            action="disable-selected",
+        )
+        toggles = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "toggle_mod"]
+        self.assertEqual(
+            toggles,
+            [["toggle_mod", "Mods/SprocketLaserRangefinder.dll", False]],
+            "已经是禁用状态的行不重复调用",
+        )
+
+    def test_batch_remove_confirms_once_and_removes_every_selected_package(self) -> None:
+        result = self._render(
+            selection=["Mods/SprocketLaserRangefinder.dll"],
+            action="remove-selected",
+        )
+        removes = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "remove"]
+        self.assertEqual(removes, [["remove", "furryaxw.sprocket-laser-rangefinder"]])
+        self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()
