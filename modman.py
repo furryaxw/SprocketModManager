@@ -23,7 +23,7 @@ from sprocket_mod_manager.infrastructure.state import StateStore
 from sprocket_mod_manager.infrastructure.suppression_store import store_for
 from sprocket_mod_manager.application.integrity import suppression_key, suppression_keys
 
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.5.0"
 LOGGER = logging.getLogger(__name__)
 
 
