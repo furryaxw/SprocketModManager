@@ -16,6 +16,8 @@ function wireEvents() {
     $("#disable-selected").addEventListener("click", () => toggleSelectedMods(false));
     $("#enable-selected").addEventListener("click", () => toggleSelectedMods(true));
     $("#remove-selected").addEventListener("click", removeSelectedMods);
+    $("#toggle-selection").addEventListener("click", toggleInstalledSelection);
+    $("#invert-selection").addEventListener("click", invertInstalledSelection);
     $("#clear-finished").addEventListener("click", async () => {
         await callApi("clear_finished");
         await pollQueue(true);

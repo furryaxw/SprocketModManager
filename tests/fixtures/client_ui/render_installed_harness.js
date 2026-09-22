@@ -74,6 +74,9 @@ const elements = {
     "#installed-filter-disabled": new FakeElement("button"),
     "#installed-filter-outdated": new FakeElement("button"),
     "#installed-selection": new FakeElement("span"),
+    "#installed-selection-bar": new FakeElement("div"),
+    "#toggle-selection": new FakeElement("button"),
+    "#invert-selection": new FakeElement("button"),
     "#update-selected": new FakeElement("button"),
     "#disable-selected": new FakeElement("button"),
     "#enable-selected": new FakeElement("button"),
@@ -167,6 +170,9 @@ const sandbox = {
             incompatibleLabel: "Incompatible",
             localOnly: "Local only",
             selectRow: "Select",
+            selectAll: "Select all",
+            clearSelection: "Clear selection",
+            invertSelection: "Invert selection",
             selectionCount: `${values.count} selected`,
             installedFilterAll: "All",
             installedFilterEnabled: "Enabled",
@@ -268,6 +274,8 @@ const ACTIONS = {
     "disable-selected": "void toggleSelectedMods(false);",
     "enable-selected": "void toggleSelectedMods(true);",
     "remove-selected": "void removeSelectedMods();",
+    "toggle-selection": "toggleInstalledSelection();",
+    "invert-selection": "invertInstalledSelection();",
 };
 if (ACTIONS[payload.action]) vm.runInContext(ACTIONS[payload.action], context);
 
@@ -279,6 +287,12 @@ setImmediate(() => {
         apiCalls,
         toolbar: {
             selection: elements["#installed-selection"].textContent,
+            barHidden: Boolean(elements["#installed-selection-bar"].hidden),
+            toggle: {
+                text: elements["#toggle-selection"].textContent,
+                disabled: Boolean(elements["#toggle-selection"].disabled),
+            },
+            invertDisabled: Boolean(elements["#invert-selection"].disabled),
             filters: Object.fromEntries(
                 ["all", "enabled", "disabled", "outdated"].map((key) => [
                     key,

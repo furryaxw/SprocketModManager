@@ -197,7 +197,7 @@ class MetadataLocalizationTests(unittest.TestCase):
             index = INDEX.generate_index(
                 root / "mods",
                 output,
-                release_loader=lambda _package: [release],
+                release_loader=lambda _package, _known: [release],
             )
 
         self.assertEqual(index["packages"][0]["releases"], [release])
@@ -270,7 +270,7 @@ class MetadataLocalizationTests(unittest.TestCase):
             with (
                 patch.object(
                     INDEX,
-                    "load_fallback_releases",
+                    "load_index_releases",
                     return_value={"example.mod": [release]},
                 ) as fallback,
                 patch("builtins.print") as warning,
