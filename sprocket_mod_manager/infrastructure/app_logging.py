@@ -7,6 +7,7 @@ from pathlib import Path
 
 LATEST_LOG_NAME = "Latest.log"
 HISTORY_LIMIT = 10
+LOGGER = logging.getLogger(__name__)
 
 
 def manager_log_path(app_dir: Path) -> Path:
@@ -26,6 +27,12 @@ def _close_manager_handlers() -> None:
 
 
 def rotate_logs(app_dir: Path, *, history_limit: int = HISTORY_LIMIT) -> Path:
+    """轮转 `Latest.log`（历史放 `logs/`，最多留 `history_limit` 份）。
+
+    **另一个进程正开着这个日志时不轮转、也不清空**：管理器 GUI 会一直持有 `Latest.log`，
+    这时命令行启动如果硬要 rename 就会 `WinError 32` 直接崩掉（命令行整条命令都跑不起来）。
+    这种情况下直接往同一个文件里追加，宁可少一份历史，也不能让命令挂掉。
+    """
     app_dir = app_dir.expanduser()
     app_dir.mkdir(parents=True, exist_ok=True)
     history_dir = manager_history_dir(app_dir)
@@ -33,8 +40,11 @@ def rotate_logs(app_dir: Path, *, history_limit: int = HISTORY_LIMIT) -> Path:
     latest = manager_log_path(app_dir)
     if latest.is_file() and latest.stat().st_size:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        history = latest.replace(history_dir / f"{stamp}.log")
-        history.touch()
+        try:
+            latest.replace(history_dir / f"{stamp}.log")
+        except OSError as exc:
+            LOGGER.warning("log rotation skipped (the log is in use): %s", exc)
+            return latest
     else:
         latest.write_text("", encoding="utf-8")
 
@@ -44,7 +54,10 @@ def rotate_logs(app_dir: Path, *, history_limit: int = HISTORY_LIMIT) -> Path:
         reverse=True,
     )
     for expired in histories[max(0, history_limit):]:
-        expired.unlink()
+        try:
+            expired.unlink()
+        except OSError as exc:
+            LOGGER.warning("could not drop an expired log: %s", exc)
     latest.write_text("", encoding="utf-8")
     return latest
 

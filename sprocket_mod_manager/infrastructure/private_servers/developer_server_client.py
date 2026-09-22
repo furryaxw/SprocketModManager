@@ -30,8 +30,6 @@ from ...utilities.trust_negotiation import (
 
 
 class DeveloperServerError(ValueError):
-    """Structured error returned by a developer server."""
-
     def __init__(self, message: str, *, status: int | None = None, code: str = "") -> None:
         super().__init__(message)
         self.status = status

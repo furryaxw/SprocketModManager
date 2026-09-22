@@ -24,3 +24,7 @@ class InstallError(ModManagerError):
 
 class InstallConflictError(InstallError):
     code = "file_conflict"
+
+
+class ModToggleError(ModManagerError):
+    pass

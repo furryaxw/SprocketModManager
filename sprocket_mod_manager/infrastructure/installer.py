@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from .file_transaction import FileTransaction
+from .manager_paths import backups_dir, manager_state_dir
+from .mod_toggle import actual_path_for, canonical_relative, is_disabled_path
 from .release_checksums import release_asset_sha256
 from .state import StateStore
 from .xunity_backup import archive_xunity_translation_backup, is_xunity_translation_path
@@ -38,6 +40,25 @@ def _safe_game_path(game_dir: Path, relative: str) -> Path:
     except ValueError as exc:
         raise InstallError(f"install target escapes the game directory: {relative}") from exc
     return full
+
+
+def _existing_managed_file(game_dir: Path, canonical: str) -> Path | None:
+    """该逻辑文件在磁盘上的真实路径（先做越界校验，两种变体交给 `mod_toggle.actual_path_for`）。"""
+    return actual_path_for(_safe_game_path(game_dir, canonical))
+
+
+def _missing_parents(game_dir: Path, directory: Path) -> list[str]:
+    """这次会被新建的目录（相对游戏目录，自浅到深）。用于记录"安装时创建了哪些文件夹"。"""
+    try:
+        root = game_dir.resolve()
+        current = directory.resolve()
+    except OSError:
+        return []
+    missing: list[str] = []
+    while current != root and root in current.parents and not current.is_dir():
+        missing.append(current.relative_to(root).as_posix())
+        current = current.parent
+    return list(reversed(missing))
 
 
 def _utc_now() -> str:
@@ -151,10 +172,6 @@ class Installer:
                     )
                 if target.is_file() and sha256_file(target) != existing_entry.get("sha256") and not force_conflicts:
                     raise InstallConflictError(f"managed file was modified outside the manager: {relative}")
-                if existing_entry.get("preexisting") and existing_entry.get("sha256") != sample.sha256:
-                    if not force_conflicts:
-                        raise InstallConflictError(f"preexisting file cannot be replaced automatically: {relative}")
-                    existing_entry["preexisting"] = False
                 existing_entry["sha256"] = sample.sha256
                 existing_entry["owners"] = sorted(
                     set(existing_entry.get("owners", ())) | {item.package_id for item in files}
@@ -163,21 +180,15 @@ class Installer:
                     del next_state["files"][state_key]
                     next_state["files"][relative] = existing_entry
             else:
-                preexisting = target.is_file() and not (
+                # 目标已经存在、但不在记录里：内容不同就是冲突（除非强制覆盖）；内容相同则直接登记为受管文件。
+                unmanaged_existing = target.is_file() and not (
                         replaces_translation_root and is_xunity_translation_path(relative)
                 )
-                if preexisting and sha256_file(target) != sample.sha256:
-                    if not force_conflicts:
-                        raise InstallConflictError(f"unmanaged file already exists at {relative}")
-                    preexisting = False
-                if preexisting:
-                    warnings.append(
-                        f"registered preexisting file without taking delete/replace ownership: {relative}"
-                    )
+                if unmanaged_existing and sha256_file(target) != sample.sha256 and not force_conflicts:
+                    raise InstallConflictError(f"unmanaged file already exists at {relative}")
                 next_state["files"][relative] = {
                     "sha256": sample.sha256,
                     "owners": sorted({item.package_id for item in files}),
-                    "preexisting": preexisting,
                 }
 
         obsolete: list[tuple[str, dict[str, Any]]] = []
@@ -210,7 +221,6 @@ class Installer:
                     }
                     for asset in package.assets
                 ],
-                "installed_at": _utc_now(),
             }
 
         for orphan_id in self._orphan_packages(next_state):
@@ -227,11 +237,11 @@ class Installer:
                 obsolete.append((relative, entry))
             del next_state["files"][relative]
 
-        transaction = FileTransaction(self.app_dir)
+        transaction = FileTransaction(manager_state_dir(game_dir))
         try:
             if replaces_translation_root:
                 translation_root = _safe_game_path(game_dir, "AutoTranslator")
-                archive = archive_xunity_translation_backup(self.app_dir, translation_root)
+                archive = archive_xunity_translation_backup(backups_dir(game_dir), translation_root)
                 if archive is not None and progress:
                     progress(f"Backed up AutoTranslator: {archive.name}")
                 transaction.backup_directory(translation_root, game_dir)
@@ -241,10 +251,8 @@ class Installer:
                     progress("Cleared AutoTranslator")
 
             for relative, entry in obsolete:
-                target = _safe_game_path(game_dir, relative)
-                if entry.get("preexisting"):
-                    continue
-                if not target.is_file():
+                target = _existing_managed_file(game_dir, relative)
+                if target is None:
                     continue
                 if sha256_file(target) != entry.get("sha256"):
                     warnings.append(f"preserved modified obsolete file: {relative}")
@@ -252,12 +260,18 @@ class Installer:
                 transaction.backup_file(target, game_dir)
                 target.unlink()
 
+            created_by_package: dict[str, set[str]] = {}
             for files in incoming.values():
                 sample = files[0]
                 target = _safe_game_path(game_dir, sample.target)
                 if target.is_file() and sha256_file(target) == sample.sha256:
                     continue
                 transaction.backup_file(target, game_dir)
+                for relative in _missing_parents(game_dir, target.parent):
+                    if "/" not in relative:
+                        continue  # `Mods` / `Plugins` / `UserLibs` 这类游戏根目录不记、也不删
+                    for item in files:
+                        created_by_package.setdefault(item.package_id, set()).add(relative)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 temporary = target.with_name(f".{target.name}.smm-{uuid.uuid4().hex}.tmp")
                 shutil.copy2(sample.source, temporary)
@@ -265,6 +279,12 @@ class Installer:
                 if progress:
                     progress(f"Installed {sample.target}")
 
+            for package_id, directories in created_by_package.items():
+                record = next_state["packages"].get(package_id)
+                if isinstance(record, dict) and directories:
+                    record["directories"] = sorted(
+                        set(record.get("directories", ())) | directories
+                    )
             self.state_store.save(next_state)
         except Exception:
             LOGGER.exception("install transaction failed; rolling back root=%s", root_id)
@@ -307,8 +327,6 @@ class Installer:
             next_state["files"][file.target] = {
                 "sha256": file.sha256,
                 "owners": [package.id],
-                "preexisting": False,
-                "adopted": True,
             }
 
         next_state["packages"][package.id] = {
@@ -319,7 +337,6 @@ class Installer:
             "tag": release.tag,
             "release_id": release.id,
             "requested": True,
-            "adopted": True,
             "dependencies": list(dependencies),
             "files": sorted(file.target for file in files),
             "assets": [
@@ -331,7 +348,6 @@ class Installer:
                 }
                 for asset in assets
             ],
-            "installed_at": _utc_now(),
         }
         self.state_store.save(next_state)
         LOGGER.info("existing package adopted package=%s files=%d", package.id, len(files))
@@ -369,24 +385,26 @@ class Installer:
                         changed = True
 
         next_state = copy.deepcopy(state)
+        recorded_directories: set[str] = set()
         for current in removing:
             package = next_state["packages"].pop(current)
+            recorded_directories |= {
+                item for item in package.get("directories", ()) if isinstance(item, str)
+            }
             for relative in package.get("files", ()):
                 entry = next_state["files"].get(relative)
                 if entry:
                     entry["owners"] = [owner for owner in entry.get("owners", ()) if owner != current]
 
         warnings: list[str] = []
-        transaction = FileTransaction(self.app_dir)
+        transaction = FileTransaction(manager_state_dir(game_dir))
         try:
             for relative, entry in list(next_state["files"].items()):
                 if entry.get("owners"):
                     continue
                 del next_state["files"][relative]
-                if entry.get("preexisting"):
-                    continue
-                target = _safe_game_path(game_dir, relative)
-                if not target.is_file():
+                target = _existing_managed_file(game_dir, relative)
+                if target is None:
                     continue
                 if sha256_file(target) != entry.get("sha256"):
                     warnings.append(f"preserved modified file: {relative}")
@@ -400,9 +418,99 @@ class Installer:
             raise
         finally:
             transaction.close()
+        for relative in sorted(recorded_directories, key=lambda item: item.count("/"), reverse=True):
+            candidate = _safe_game_path(game_dir, relative)
+            try:
+                candidate.rmdir()  # 只有空目录会成功：用户往里放过东西就保留
+            except OSError:
+                continue
         self._remove_empty_managed_directories(game_dir)
-        LOGGER.info("packages removed requested=%s count=%d warnings=%d", package_id, len(removing), len(warnings))
+        LOGGER.info("packages removed requested=%s count=%d warnings=%d directories=%d",
+                    package_id, len(removing), len(warnings), len(recorded_directories))
         return sorted(removing), warnings
+
+    def reconcile(self, game_dir: Path) -> list[str]:
+        """把安装记录对齐到磁盘：文件不在了就删记录，包没有文件了就删包。
+
+        这是「纯扫描」模型的底线保证——**磁盘是唯一事实来源**。用户手工删掉（或改名）的 DLL
+        不允许继续以"已安装"的身份留在记录里，否则就会出现本地文件已经没了、管理器还在显示的
+        幽灵条目。改名（禁用/启用）走 `rename_managed_file`，所以对不上号的改名会被这里当作
+        删除处理：模组退回 "Local only"，与扫描结果一致。
+
+        返回被丢弃的键（文件路径 + 包 id），供测试与诊断使用。
+        """
+        root = Path(game_dir).expanduser()
+        if not root.is_dir():
+            return []
+        state = self.state_store.load()
+        next_state = copy.deepcopy(state)
+        dropped: list[str] = []
+        for relative in list(next_state["files"]):
+            try:
+                target = _safe_game_path(root, relative)
+            except InstallError:
+                LOGGER.warning("dropping recorded path that escapes the game directory: %s", relative)
+                del next_state["files"][relative]
+                dropped.append(relative)
+                continue
+            actual = _existing_managed_file(root, relative)
+            if actual is None:
+                del next_state["files"][relative]
+                dropped.append(relative)
+                continue
+            next_state["files"][relative]["disabled"] = is_disabled_path(actual)
+        for package_id, package in list(next_state["packages"].items()):
+            recorded = [item for item in package.get("files", ()) if isinstance(item, str)]
+            kept = [item for item in recorded if item in next_state["files"]]
+            if len(kept) != len(recorded):
+                package["files"] = kept
+            if not kept:
+                del next_state["packages"][package_id]
+                dropped.append(package_id)
+        if dropped:
+            self.state_store.save(next_state)
+            LOGGER.info("install state reconciled with disk dropped=%s", dropped)
+        return dropped
+
+    def verify(self, game_dir: Path) -> dict[str, Any]:
+        """强制重算已安装文件的 SHA-256 并报告差异（**不写状态文件**）。
+
+        「是否还是某个发布版本」不在这一层判断：那需要 Registry 的发布历史，由
+        `ModManagerService.verify_installed` 结合 `application/integrity.py` 得出。
+        这里只回答两个事实：文件还在不在、内容与安装记录是否一致。
+        """
+        root = Path(game_dir).expanduser()
+        if not root.is_dir():
+            return {"checked": 0, "changed": [], "missing": [], "hashes": {}}
+
+        state = self.state_store.load()
+        changed: list[str] = []
+        missing: list[str] = []
+        hashes: dict[str, str] = {}
+        for relative, entry in state["files"].items():
+            actual = _existing_managed_file(root, relative)
+            if actual is None:
+                missing.append(relative)
+                continue
+            try:
+                digest = sha256_file(actual)
+            except OSError as exc:
+                LOGGER.warning("could not hash managed file %s: %s", relative, exc)
+                missing.append(relative)
+                continue
+            hashes[relative] = digest
+            expected = str(entry.get("sha256") or "")
+            if expected and digest != expected:
+                changed.append(relative)
+
+        LOGGER.info("install state verified checked=%d changed=%d missing=%d",
+                    len(state["files"]), len(changed), len(missing))
+        return {
+            "checked": len(state["files"]),
+            "changed": sorted(changed),
+            "missing": sorted(missing),
+            "hashes": hashes,
+        }
 
     @staticmethod
     def _reverse_dependencies(state: dict[str, Any]) -> dict[str, set[str]]:
