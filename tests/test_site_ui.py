@@ -37,11 +37,11 @@ class SiteUiTests(unittest.TestCase):
             brighter, darker = sorted((luminance(background), luminance("#ffffff")), reverse=True)
             self.assertGreaterEqual((brighter + 0.05) / (darker + 0.05), 4.5)
 
-    def test_header_links_to_latest_client_release(self):
+    def test_header_links_to_latest_client_executable(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn(
-            'href="https://github.com/furryaxw/sprocket-mods/releases/latest"',
+            'href="https://github.com/furryaxw/sprocket-mods/releases/latest/download/SprocketModManager.exe"',
             html,
         )
         self.assertIn('data-i18n="downloadClient"', html)
