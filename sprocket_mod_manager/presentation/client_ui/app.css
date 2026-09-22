@@ -735,14 +735,6 @@ select option {
     box-shadow: inset 3px 0 var(--accent);
 }
 
-.toolbar-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-}
-
 /* 已安装页的筛选：一枚药丸 = 一个状态口径，计数写在里面。 */
 .filter-chips {
     display: flex;
@@ -772,9 +764,41 @@ select option {
     background: var(--accent-quiet);
 }
 
+/* 悬浮操作栏：锚点高度为 0，所以它不占列表后面的空行，只浮在内容上方。
+   宽度按内容收缩（`max-content`），列表再长也不用往上够。 */
+.selection-anchor {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    height: 0;
+}
+
+.selection-bar {
+    position: absolute;
+    bottom: 12px;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+    width: max-content;
+    max-width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-high);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.selection-bar[hidden] {
+    display: none;
+}
+
 .selection-count {
     min-width: 5.5rem;
-    color: var(--muted);
+    color: var(--text-soft);
 }
 
 .row-title {

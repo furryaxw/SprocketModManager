@@ -251,6 +251,35 @@ function setRowSelected(key, selected) {
     renderInstalled();
 }
 
+/** 当前筛选下可见的行是否已经被全部选中。 */
+function allVisibleSelected() {
+    const visible = filteredInstalledItems();
+    const selection = installedSelection();
+    return visible.length > 0 && visible.every((item) => selection.has(installedRowKey(item)));
+}
+
+/** 全选 / 取消选择：只作用于当前筛选下可见的行。 */
+function toggleInstalledSelection() {
+    const selection = installedSelection();
+    if (allVisibleSelected()) {
+        selection.clear();
+    } else {
+        for (const item of filteredInstalledItems()) selection.add(installedRowKey(item));
+    }
+    renderInstalled();
+}
+
+/** 反选：只反转当前筛选下可见的行。 */
+function invertInstalledSelection() {
+    const selection = installedSelection();
+    for (const item of filteredInstalledItems()) {
+        const key = installedRowKey(item);
+        if (selection.has(key)) selection.delete(key);
+        else selection.add(key);
+    }
+    renderInstalled();
+}
+
 /**
  * 筛选口径：一枚药丸 = 一个状态，计数是全集里的条数。
  * 筛选只影响显示与可选中范围，计数不会随当前口径缩水。
@@ -323,13 +352,24 @@ function selectOnRowClick(row, key) {
 }
 
 /**
- * 工具栏按钮只在「选中项里真的有活可干」时可用：更新看有没有新版本、禁用/启用看
- * 有没有 `Mods`/`Plugins` 下的 DLL、卸载看有没有安装记录归属。
+ * 底部操作栏只在有选中行时出现；栏内按钮只在「选中项里真的有活可干」时可用：
+ * 更新看有没有新版本、禁用/启用看有没有 `Mods`/`Plugins` 下的 DLL、卸载看有没有安装记录归属。
  */
 function renderInstalledToolbar(items) {
     const selected = selectedInstalledItems();
+    const bar = $("#installed-selection-bar");
+    if (bar) bar.hidden = selected.length === 0;
     const label = $("#installed-selection");
     if (label) label.textContent = selected.length ? tr("selectionCount", {count: selected.length}) : "";
+
+    // 全选这一格自己承担两个动作：都选中了就变成「取消选择」。
+    const toggle = $("#toggle-selection");
+    if (toggle) {
+        toggle.textContent = tr(allVisibleSelected() ? "clearSelection" : "selectAll");
+        toggle.disabled = items.length === 0;
+    }
+    const invert = $("#invert-selection");
+    if (invert) invert.disabled = items.length === 0;
 
     const actionable = {
         "#update-selected": selected.filter((item) => newerReleaseFor(item)).length,

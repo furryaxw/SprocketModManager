@@ -263,11 +263,61 @@ class InstalledRenderHarnessTests(unittest.TestCase):
     def test_batch_buttons_stay_disabled_without_a_selection(self) -> None:
         toolbar = self._render()["toolbar"]
         self.assertEqual(toolbar["selection"], "")
+        self.assertTrue(toolbar["barHidden"], "没选东西时底部操作栏不出现")
+        self.assertEqual(toolbar["toggle"]["text"], "Select all")
+        self.assertFalse(toolbar["toggle"]["disabled"], "列表里有行就能全选")
+        self.assertFalse(toolbar["invertDisabled"])
         self.assertEqual(
             toolbar["buttons"],
             {"update-selected": True, "disable-selected": True, "enable-selected": True, "remove-selected": True},
             "没选东西时批量按钮不可用",
         )
+
+    def test_select_all_is_unavailable_when_the_filter_matches_nothing(self) -> None:
+        toolbar = self._render(filter_key="outdated")["toolbar"]
+        self.assertTrue(toolbar["toggle"]["disabled"])
+        self.assertTrue(toolbar["invertDisabled"])
+
+    def test_selection_bar_appears_while_a_row_is_selected(self) -> None:
+        shown = self._render(selection=["Mods/SprocketLaserRangefinder.dll"])["toolbar"]
+        self.assertFalse(shown["barHidden"])
+        self.assertEqual(shown["selection"], "1 selected")
+        self.assertFalse(shown["toggle"]["disabled"])
+        self.assertFalse(shown["invertDisabled"])
+
+    def test_toggle_selects_every_visible_row_then_clears_the_selection(self) -> None:
+        every_row = [
+            "Mods/SprocketLaserRangefinder.dll",
+            "Mods/CannonSoundPoolFix.dll.disable",
+            "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll",
+        ]
+        all_selected = self._render(selection=every_row)["toolbar"]
+        self.assertEqual(all_selected["toggle"]["text"], "Clear selection",
+                         "整屏都选中时那一格变成「取消选择」")
+
+        selected = self._render(action="toggle-selection")["toolbar"]
+        self.assertEqual(selected["selection"], "3 selected")
+        self.assertEqual(selected["toggle"]["text"], "Clear selection")
+
+        cleared = self._render(selection=every_row, action="toggle-selection")["toolbar"]
+        self.assertTrue(cleared["barHidden"], "取消选择后操作栏收起来")
+        self.assertEqual(cleared["selection"], "")
+
+    def test_invert_flips_the_visible_rows(self) -> None:
+        one_of_three = self._render(
+            selection=["Mods/SprocketLaserRangefinder.dll"],
+            action="invert-selection",
+        )["toolbar"]
+        self.assertEqual(one_of_three["selection"], "2 selected", "三行里选中一行，反选后剩两行")
+
+        every_row = [
+            "Mods/SprocketLaserRangefinder.dll",
+            "Mods/CannonSoundPoolFix.dll.disable",
+            "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll",
+        ]
+        none = self._render(selection=every_row, action="invert-selection")["toolbar"]
+        self.assertEqual(none["selection"], "")
+        self.assertTrue(none["barHidden"])
 
     def test_filter_chips_count_the_whole_list_and_mark_the_active_one(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
@@ -373,6 +423,35 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         removes = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "remove"]
         self.assertEqual(removes, [["remove", "furryaxw.sprocket-laser-rangefinder"]])
         self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
+
+
+class SelectionBarStyleTests(unittest.TestCase):
+    """悬浮操作栏的样式契约：不占位（列表后不留空行）且按内容收窄。"""
+
+    def setUp(self) -> None:
+        self.css = (CLIENT_UI / "app.css").read_text(encoding="utf-8")
+
+    def _rule(self, selector: str) -> str:
+        start = self.css.index(f"{selector} {{")
+        return self.css[start:self.css.index("}", start)]
+
+    def test_the_anchor_occupies_no_space(self) -> None:
+        rule = self._rule(".selection-anchor")
+        self.assertIn("position: sticky", rule)
+        self.assertIn("bottom: 0", rule)
+        self.assertIn("height: 0", rule)
+
+    def test_the_bar_floats_and_shrinks_to_its_content(self) -> None:
+        rule = self._rule(".selection-bar")
+        self.assertIn("position: absolute", rule)
+        self.assertIn("width: max-content", rule)
+        self.assertIn("max-width: 100%", rule)
+
+    def test_the_bar_is_centered_over_the_list(self) -> None:
+        rule = self._rule(".selection-bar")
+        self.assertIn("left: 0", rule)
+        self.assertIn("right: 0", rule)
+        self.assertIn("margin: 0 auto", rule)
 
 
 if __name__ == "__main__":

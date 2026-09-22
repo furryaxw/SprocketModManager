@@ -85,36 +85,41 @@
         <section class="page active" id="page-installed" data-page="installed">
             <div class="list-toolbar">
                 <span id="installed-count">0</span>
-                <div class="toolbar-actions">
-                    <div class="filter-chips" role="group" data-i18n-aria="installedFilter">
-                        <button class="filter-chip active" type="button" id="installed-filter-all"
-                                data-installed-filter="all">全部
-                        </button>
-                        <button class="filter-chip" type="button" id="installed-filter-enabled"
-                                data-installed-filter="enabled">已启用
-                        </button>
-                        <button class="filter-chip" type="button" id="installed-filter-disabled"
-                                data-installed-filter="disabled">已禁用
-                        </button>
-                        <button class="filter-chip" type="button" id="installed-filter-outdated"
-                                data-installed-filter="outdated">有更新
-                        </button>
-                    </div>
-                    <span class="selection-count" id="installed-selection"></span>
-                    <button class="secondary-button" id="update-selected" type="button" data-i18n="update"
-                            disabled>更新
+                <div class="filter-chips" role="group" data-i18n-aria="installedFilter">
+                    <button class="filter-chip active" type="button" id="installed-filter-all"
+                            data-installed-filter="all">全部
                     </button>
-                    <button class="secondary-button" id="disable-selected" type="button" data-i18n="disableMod"
-                            disabled>禁用
+                    <button class="filter-chip" type="button" id="installed-filter-enabled"
+                            data-installed-filter="enabled">已启用
                     </button>
-                    <button class="secondary-button" id="enable-selected" type="button" data-i18n="enableMod"
-                            disabled>启用
+                    <button class="filter-chip" type="button" id="installed-filter-disabled"
+                            data-installed-filter="disabled">已禁用
                     </button>
-                    <button class="danger-button" id="remove-selected" type="button" data-i18n="remove" disabled>卸载
+                    <button class="filter-chip" type="button" id="installed-filter-outdated"
+                            data-installed-filter="outdated">有更新
                     </button>
                 </div>
             </div>
             <div class="data-list" id="installed-list"></div>
+            <div class="selection-anchor">
+                <div class="selection-bar" id="installed-selection-bar" hidden>
+                    <span class="selection-count" id="installed-selection"></span>
+                    <button class="secondary-button" id="update-selected" type="button" data-i18n="update" disabled>更新
+                    </button>
+                    <button class="secondary-button" id="enable-selected" type="button" data-i18n="enableMod" disabled>
+                        启用
+                    </button>
+                    <button class="secondary-button" id="disable-selected" type="button" data-i18n="disableMod" disabled>
+                        禁用
+                    </button>
+                    <button class="danger-button" id="remove-selected" type="button" data-i18n="remove" disabled>卸载
+                    </button>
+                    <button class="secondary-button" id="toggle-selection" type="button" disabled>全选</button>
+                    <button class="secondary-button" id="invert-selection" type="button" data-i18n="invertSelection"
+                            disabled>反选
+                    </button>
+                </div>
+            </div>
         </section>
 
         <section class="page" id="page-catalog" data-page="catalog" hidden>
