@@ -55,7 +55,8 @@ class RegistryError(ValueError):
     pass
 
 
-def _github_json(path: str) -> Any:
+def _github_json(path: str, *, missing_ok: bool = False) -> Any:
+    """GET a GitHub API path; `missing_ok` maps HTTP 404 to None."""
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "sprocket-mod-registry-indexer/1",
@@ -73,6 +74,8 @@ def _github_json(path: str) -> Any:
                 return json.load(response)
         except HTTPError as exc:
             last_error = exc
+            if missing_ok and exc.code == 404:
+                return None
             if exc.code not in {429, 500, 502, 503, 504}:
                 raise RegistryError(
                     f"GitHub API returned HTTP {exc.code} for {path}"
@@ -172,19 +175,132 @@ def normalize_release_records(package: dict[str, Any], records: object) -> list[
     return normalized
 
 
-def fetch_package_releases(package: dict[str, Any]) -> list[dict[str, Any]]:
-    encoded = "/".join(quote(part, safe="") for part in package["repository"].split("/", 1))
+def _encoded_repository(package: dict[str, Any]) -> str:
+    return "/".join(quote(part, safe="") for part in package["repository"].split("/", 1))
+
+
+def _release_version(entry: dict[str, Any]) -> Version | None:
+    """Version of one normalized release; None when unreadable (it is kept, just ordered last)."""
+    try:
+        return Version.parse(str(entry.get("version", "")))
+    except (IndexError, ValueError):
+        return None
+
+
+def _release_key(entry: dict[str, Any]) -> str:
+    release_id = entry.get("id")
+    return f"id:{release_id}" if release_id else f"tag:{entry.get('tag')}"
+
+
+def sort_releases_desc(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def order(entry: dict[str, Any]) -> tuple[int, Version, str]:
+        version = _release_version(entry)
+        return (
+            1 if version is not None else 0,
+            version or Version.parse("0.0.0"),
+            str(entry.get("published_at", "")),
+        )
+
+    return sorted(entries, key=order, reverse=True)
+
+
+def newest_known_release(known: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Highest release among the ones we already hold; the probe is compared against it."""
+    newest: dict[str, Any] | None = None
+    newest_version: Version | None = None
+    for entry in known:
+        version = _release_version(entry)
+        if version is None:
+            continue
+        if newest_version is None or version > newest_version:
+            newest, newest_version = entry, version
+    return newest if newest is not None else (known[0] if known else None)
+
+
+def latest_release_record(package: dict[str, Any]) -> dict[str, Any] | None:
+    """Raw `/releases/latest` record, used to tell whether the newest release changed.
+
+    Only meaningful for packages that skip prereleases: GitHub's latest endpoint never
+    returns one, so for `include_prerelease` packages it cannot stand for the newest
+    release and this returns None (those packages always read the list). A repository
+    without releases answers 404, which counts as "nothing there".
+    """
+    if package["release"].get("include_prerelease"):
+        return None
+    record = _github_json(f"/repos/{_encoded_repository(package)}/releases/latest", missing_ok=True)
+    return record if isinstance(record, dict) else None
+
+
+def is_same_release(probe: dict[str, Any], entry: dict[str, Any]) -> bool:
+    """Whether the probed release is the one we already hold (same release id or tag)."""
+    probe_id = probe.get("id")
+    if isinstance(probe_id, int) and probe_id and probe_id == entry.get("id"):
+        return True
+    tag = str(probe.get("tag_name", ""))
+    return bool(tag) and tag == str(entry.get("tag", ""))
+
+
+def merge_releases(
+        known: list[dict[str, Any]],
+        fetched: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge freshly fetched releases into the ones already known.
+
+    Everything at or above the oldest version the fetch covered comes from the fetch —
+    a release deleted upstream disappears with it. Anything older is kept as it is,
+    so older releases are neither re-fetched nor re-normalized.
+    """
+    if not fetched:
+        return list(known)
+    if not known:
+        return sort_releases_desc(list(fetched))
+
+    fetched_versions = [
+        version for version in (_release_version(entry) for entry in fetched) if version is not None
+    ]
+    oldest_fetched = min(fetched_versions) if fetched_versions else None
+    kept: list[dict[str, Any]] = []
+    for entry in known:
+        version = _release_version(entry)
+        if oldest_fetched is None or version is None or version < oldest_fetched:
+            kept.append(entry)
+
+    merged: dict[str, dict[str, Any]] = {_release_key(entry): entry for entry in kept}
+    for entry in fetched:
+        merged[_release_key(entry)] = entry
+    return sort_releases_desc(list(merged.values()))
+
+
+def fetch_package_releases(
+        package: dict[str, Any],
+        known: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Read a package's releases, folding only the *new* ones into `known`.
+
+    A small `/releases/latest` probe first: while the newest release is still the one we
+    hold, the previous data is returned as it is and no release list is read at all.
+    When it did change, the list is read and only the unseen releases are merged in.
+    """
+    previous = list(known or [])
+    if previous:
+        newest = newest_known_release(previous)
+        probe = latest_release_record(package)
+        if probe is not None and newest is not None and is_same_release(probe, newest):
+            return previous
+
+    encoded = _encoded_repository(package)
     records = _github_json(f"/repos/{encoded}/releases?per_page=100")
     try:
-        return normalize_release_records(package, records)
+        normalized = normalize_release_records(package, records)
     except RegistryError as list_error:
-        latest = _github_json(f"/repos/{encoded}/releases/latest")
+        latest = _github_json(f"/repos/{encoded}/releases/latest", missing_ok=True)
         if not isinstance(latest, dict):
             raise list_error
         try:
-            return normalize_release_records(package, [latest])
+            normalized = normalize_release_records(package, [latest])
         except RegistryError:
             raise list_error
+    return merge_releases(previous, normalized)
 
 
 def validate_target(target: str) -> None:
@@ -422,15 +538,21 @@ def scan_mods(mods_dir: Path) -> list[dict]:
     return [packages[key] for key in sorted(packages)]
 
 
-def load_fallback_releases(index_url: str) -> dict[str, list[dict[str, Any]]]:
-    request = Request(index_url, headers={"User-Agent": "sprocket-mod-registry-indexer/1"})
-    with urlopen(request, timeout=30) as response:
-        index = json.load(response)
-    if not isinstance(index, dict) or not isinstance(index.get("packages"), list):
-        raise RegistryError("fallback index has an invalid package list")
+def load_index_releases(source: str | Path) -> dict[str, list[dict[str, Any]]]:
+    """Releases per package from an existing index: the incremental baseline, and also
+    what a failed fetch falls back to. `source` is a local file or an index URL.
+    """
+    if isinstance(source, Path) or not urlparse(str(source)).scheme:
+        payload = json.loads(Path(source).read_text(encoding="utf-8"))
+    else:
+        request = Request(str(source), headers={"User-Agent": "sprocket-mod-registry-indexer/1"})
+        with urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    if not isinstance(payload, dict) or not isinstance(payload.get("packages"), list):
+        raise RegistryError("index has an invalid package list")
 
     releases_by_id: dict[str, list[dict[str, Any]]] = {}
-    for package in index["packages"]:
+    for package in payload["packages"]:
         if not isinstance(package, dict):
             continue
         package_id = package.get("id")
@@ -444,32 +566,44 @@ def generate_index(
     mods_dir: Path,
     output: Path,
     *,
-    release_loader: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+    release_loader: Callable[[dict[str, Any], list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    baseline_releases: dict[str, list[dict[str, Any]]] | None = None,
     fallback_index_url: str = FALLBACK_INDEX_URL,
+    refresh: bool = False,
 ) -> dict:
     packages = scan_mods(mods_dir)
+    baseline = {} if refresh else dict(baseline_releases or {})
     if release_loader:
         fallback_releases: dict[str, list[dict[str, Any]]] | None = None
         fallback_error: Exception | None = None
+
+        def restore(package_id: str) -> list[dict[str, Any]] | None:
+            """Releases for a package whose fetch failed: the baseline first, then the URL."""
+            nonlocal fallback_releases, fallback_error
+            if baseline.get(package_id) is not None:
+                return baseline[package_id]
+            if fallback_releases is None and fallback_error is None:
+                try:
+                    fallback_releases = load_index_releases(fallback_index_url)
+                except Exception as exc:
+                    fallback_error = exc
+            if fallback_releases is None:
+                return None
+            return fallback_releases.get(package_id)
+
         for package in packages:
             try:
-                package["releases"] = release_loader(package)
+                package["releases"] = release_loader(package, baseline.get(package["id"], []))
                 continue
             except Exception as exc:
                 release_error = exc
 
-            if fallback_releases is None and fallback_error is None:
-                try:
-                    fallback_releases = load_fallback_releases(fallback_index_url)
-                except Exception as exc:
-                    fallback_error = exc
-
-            releases = (fallback_releases or {}).get(package["id"])
+            releases = restore(package["id"])
             if releases is not None:
                 package["releases"] = releases
                 print(
                     f"warning: {package['id']}: release fetch failed ({release_error}); "
-                    "restored releases from fallback index",
+                    "restored releases from the previous index",
                     file=sys.stderr,
                 )
             else:
@@ -504,25 +638,57 @@ def main() -> int:
     parser.add_argument(
         "--fetch-releases",
         action="store_true",
-        help="embed normalized GitHub Release data using one API request per package",
+        help="embed normalized GitHub Release data, reading only the releases that are new",
+    )
+    parser.add_argument(
+        "--previous",
+        default="",
+        help=(
+            "index file or URL holding the releases already known "
+            "(default: the output file when it exists, else --fallback-index-url)"
+        ),
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="ignore the previous index and re-read every package's releases",
     )
     parser.add_argument(
         "--fallback-index-url",
         default=FALLBACK_INDEX_URL,
-        help="index URL used to restore releases when a package fetch fails",
+        help="index URL used when no previous index is available",
     )
     args = parser.parse_args()
+
+    output = Path(args.output)
+    baseline: dict[str, list[dict[str, Any]]] = {}
+    if args.fetch_releases and not args.refresh:
+        source: str | Path = args.previous or (output if output.is_file() else args.fallback_index_url)
+        try:
+            baseline = load_index_releases(source)
+        except (OSError, ValueError) as exc:
+            print(f"warning: cannot read the previous index {source}: {exc}", file=sys.stderr)
+
     try:
         index = generate_index(
             Path(args.mods_dir),
-            Path(args.output),
+            output,
             release_loader=fetch_package_releases if args.fetch_releases else None,
+            baseline_releases=baseline,
             fallback_index_url=args.fallback_index_url,
+            refresh=args.refresh,
         )
     except RegistryError as exc:
         print(f"registry error: {exc}")
         return 1
-    print(f"generated {args.output} with {len(index['packages'])} packages")
+
+    reused = sum(
+        1 for package in index["packages"] if baseline.get(package["id"]) == package.get("releases")
+    )
+    summary = f"generated {args.output} with {len(index['packages'])} packages"
+    if args.fetch_releases and not args.refresh:
+        summary += f" ({reused} reused from the previous index, {len(index['packages']) - reused} refreshed)"
+    print(summary)
     return 0
 
 
