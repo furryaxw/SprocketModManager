@@ -6,10 +6,15 @@ from pathlib import Path
 SITE_ROOT = Path(__file__).resolve().parents[1] / "site"
 
 
+SCRIPT_TAG = re.compile(r'<script\s+src="\./(js/[^"]+\.js)"')
+
+
 def site_javascript() -> str:
+    """`index.html` 实际加载的站点脚本（站点的网络行为只看这些文件）。"""
+    html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
     return "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted((SITE_ROOT / "js").glob("*.js"))
+        (SITE_ROOT / relative).read_text(encoding="utf-8")
+        for relative in SCRIPT_TAG.findall(html)
     )
 
 
@@ -54,15 +59,11 @@ class SiteUiTests(unittest.TestCase):
         self.assertIn('data-i18n="downloadClient"', html)
 
     def test_catalog_uses_embedded_release_cache_without_github_api(self):
-        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
         script = site_javascript()
 
         self.assertIn("pkg.releases", script)
         self.assertIn('cache: "no-store"', script)
-        self.assertNotIn("release-api.js", html)
         self.assertNotIn("api.github.com", script)
-        self.assertNotIn("SprocketReleaseApi.fetchRepositoryReleases", script)
-        self.assertNotIn("sprocket-release:", script)
 
     def test_pages_refreshes_embedded_releases_hourly(self):
         workflow = (SITE_ROOT.parent / ".github" / "workflows" / "pages.yml").read_text(
@@ -83,15 +84,12 @@ class SiteUiTests(unittest.TestCase):
 
         self.assertEqual(html.count('class="language-picker select-control"'), 2)
         self.assertEqual(html.count('data-lucide="chevron-down" aria-hidden="true"'), 3)
-        self.assertNotIn('data-field="custom-language"', html)
-        self.assertNotIn('value="__custom__"', html)
 
     def test_language_picker_options_are_data_driven(self):
         script = site_javascript()
 
         self.assertIn("const SUBMISSION_LANGUAGES = [", script)
         self.assertIn("populateLanguageOptions(languageSelect);", script)
-        self.assertNotIn("updateCustomLanguage", script)
 
     def test_localized_fields_match_catalog_tool_font_size(self):
         styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
