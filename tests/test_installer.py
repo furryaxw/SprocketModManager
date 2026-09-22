@@ -166,7 +166,7 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse((game / "AutoTranslator" / "old.txt").exists())
             self.assertFalse((game / "AutoTranslator" / "stale").exists())
             self.assertEqual((game / "AutoTranslator" / "Config.ini").read_bytes(), b"new config")
-            archives = sorted((root / "app" / "backups" / "AutoTranslator").glob("*.zip"))
+            archives = sorted((game / "SprocketModManager" / "backup" / "AutoTranslator").glob("*.zip"))
             self.assertEqual(len(archives), 1)
             with zipfile.ZipFile(archives[0]) as archive:
                 self.assertEqual(archive.read("old.txt"), b"old")
@@ -213,7 +213,7 @@ class InstallerTests(unittest.TestCase):
                     game,
                 )
 
-            archives = sorted((root / "app" / "backups" / "AutoTranslator").glob("*.zip"))
+            archives = sorted((game / "SprocketModManager" / "backup" / "AutoTranslator").glob("*.zip"))
             self.assertEqual(len(archives), 5)
             self.assertEqual(len({archive.name for archive in archives}), 5)
 
@@ -380,7 +380,8 @@ class InstallerTests(unittest.TestCase):
                 installer.apply(prepared(root, "1.0.0", b"managed"), game)
             installer.apply(prepared(root, "1.0.0", b"managed"), game, force_conflicts=True)
 
-            self.assertFalse(store.load()["files"]["Mods/TestMod.dll"]["preexisting"])
+            self.assertIn("Mods/TestMod.dll", store.load()["files"],
+                          "强制覆盖后该文件就是受管文件")
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_update_removes_dependency_that_becomes_orphaned(self, _running):

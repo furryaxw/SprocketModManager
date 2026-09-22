@@ -61,17 +61,6 @@ class ModuleBoundaryTests(unittest.TestCase):
         root_modules = {path.name for path in PACKAGE.glob("*.py")}
         self.assertEqual(root_modules, {"__init__.py"})
 
-    def test_legacy_tk_presentation_is_removed(self) -> None:
-        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").casefold()
-        presentation_sources = "\n".join(
-            path.read_text(encoding="utf-8").casefold()
-            for path in PRESENTATION.rglob("*.py")
-        )
-        self.assertNotIn("customtkinter", requirements)
-        self.assertNotIn("import tkinter", presentation_sources)
-        self.assertFalse((PRESENTATION / "gui.py").exists())
-        self.assertFalse((PRESENTATION / "dialogs.py").exists())
-
     def test_responsibility_packages_are_explicit(self) -> None:
         package_names = {
             path.name

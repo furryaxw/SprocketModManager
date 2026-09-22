@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 测试夹具：继承 MelonMod + MelonInfo + 全套 Sprocket.Mod.* AssemblyMetadata。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>FixtureMod</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DebugType>none</DebugType>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- 程序集版本 / 文件版本在源码里显式声明，避免依赖 SDK 生成属性。 -->
+    <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <!-- 源码里有中文（用于验证 UTF-8 解码），固定按 UTF-8 编译，免得跟随本机 ANSI 代码页。 -->
+    <CodePage>65001</CodePage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MelonLoaderStub\MelonLoaderStub.csproj" />
+  </ItemGroup>
+
+</Project>

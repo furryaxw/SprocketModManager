@@ -89,7 +89,6 @@ def negotiate_encoding(
     client_allowed: Iterable[object] = DEFAULT_CLIENT_ENCODINGS,
     client_preference: Iterable[object] = ENCODINGS,
 ) -> str:
-    """Negotiate a representation for keys/signatures/public keys."""
     allowed = {str(item).strip().casefold() for item in client_allowed}
     advertised = _ordered(
         server_encodings if server_encodings is not None else DEFAULT_SERVER_ENCODINGS,

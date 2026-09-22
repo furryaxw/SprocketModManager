@@ -16,13 +16,18 @@ def is_xunity_translation_path(relative: str) -> bool:
     return bool(parts) and parts[0].casefold() == "autotranslator"
 
 
-def archive_xunity_translation_backup(app_dir: Path, target: Path) -> Path | None:
+def archive_xunity_translation_backup(backup_root: Path, target: Path) -> Path | None:
+    """把 `AutoTranslator` 目录打包成 zip，存到管理器在**游戏目录**里的备份区。
+
+    `backup_root` 是 `<game>/SprocketModManager/backup`（见 `manager_paths.backups_dir`）：
+    备份的是游戏目录里的文件，所以备份跟着游戏目录走。
+    """
     if not target.exists():
         return None
     if not target.is_dir():
         raise InstallError(f"translation target is not a directory: {target}")
 
-    backup_dir = app_dir / "backups" / "AutoTranslator"
+    backup_dir = backup_root / "AutoTranslator"
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S-%f")
     archive_path = backup_dir / f"AutoTranslator-{timestamp}.zip"

@@ -21,7 +21,6 @@ def parse_checksum_text(
         *,
         allow_bare: bool = False,
 ) -> str | None:
-    """Read a SHA-256 from common sidecar checksum formats."""
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):

@@ -8,10 +8,15 @@ from ..domain.errors import InstallError
 
 
 class FileTransaction:
-    """Owns file-system backups, rollback ordering, and temporary cleanup."""
+    """Owns file-system backups, rollback ordering, and temporary cleanup.
 
-    def __init__(self, app_dir: Path, *, prefix: str = "txn-"):
-        root = app_dir / "transactions"
+    `state_dir` 是**游戏目录下的管理器状态目录**（`<game>/SprocketModManager`），
+    备份落在 `<state_dir>/backup/<uuid>/files|directories/` —— 被覆盖的是游戏目录里的文件，
+    备份就必须跟游戏目录在一起，不能塞进 AppData。
+    """
+
+    def __init__(self, state_dir: Path, *, prefix: str = "txn-"):
+        root = Path(state_dir) / "backup"
         root.mkdir(parents=True, exist_ok=True)
         self.path = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
         self._files: dict[Path, Path | None] = {}
@@ -24,7 +29,7 @@ class FileTransaction:
             self._files[target] = None
             return
         relative = target.resolve().relative_to(base_dir.resolve())
-        backup = self.path / "backup" / relative
+        backup = self.path / "files" / relative
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(target, backup)
         self._files[target] = backup
@@ -38,7 +43,8 @@ class FileTransaction:
         if not target.is_dir():
             raise InstallError(f"transaction target is not a directory: {target}")
         relative = target.resolve().relative_to(base_dir.resolve())
-        backup = self.path / "directory-backup" / relative
+        backup = self.path / "directories" / relative
+        backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(target, backup)
         self._directories[target] = backup
 

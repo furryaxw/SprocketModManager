@@ -146,8 +146,6 @@ def github_gist_sync(
         timeout: int = 10,
         return_conflicts: bool = False,
 ) -> tuple[str, list[dict[str, Any]]] | tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
-    """Read/merge the fixed private server index and write it back to GitHub."""
-
     def recovery_entry(item: dict[str, Any]) -> dict[str, Any]:
         allowed = ("server_id", "url", "name", "public_key_fingerprint", "updated_at", "deleted")
         result: dict[str, Any] = {

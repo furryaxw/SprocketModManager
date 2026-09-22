@@ -1,5 +1,3 @@
-"""Core package for the Sprocket Mod Manager."""
-
 import logging
 
 from .domain.errors import (

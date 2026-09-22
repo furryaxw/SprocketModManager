@@ -16,6 +16,7 @@ import pefile
 from .file_transaction import FileTransaction
 from .github import GITHUB_RELEASE_CACHE_SECONDS, HttpClient
 from .installer import Installer
+from .manager_paths import manager_state_dir
 from ..domain.errors import DownloadError, InstallError
 from ..domain.models import ProgressCallback, ReleaseAsset
 from ..domain.semver import Version
@@ -276,7 +277,7 @@ class MelonLoaderManager:
             raise InstallError("MelonLoader ZIP does not contain the expected loader runtime")
 
     def _apply_files(self, staging: Path, files: list[Path], game_dir: Path) -> None:
-        transaction = FileTransaction(self.app_dir, prefix="melonloader-")
+        transaction = FileTransaction(manager_state_dir(game_dir), prefix="melonloader-")
         try:
             for source in files:
                 relative = source.relative_to(staging)
