@@ -23,6 +23,13 @@ furryaxw.sprocket-laser-rangefinder
 该场景已使用两个真实 Release 通过下载、远端 digest 校验、DLL 分类、隔离目录安装、状态记录、
 主包卸载和孤立依赖清理。
 
+## 本地模组识别
+
+客户端会静态读取已安装 DLL 的 `MelonInfo` 与 `Sprocket.Mod.*` 程序集元数据，
+把它们与 Registry 条目和安装记录对齐。
+
+细节见 [`local-mod-identification.md`](local-mod-identification.md)。
+
 ## MelonLoader 管理
 
 客户端设置页会检测当前 Sprocket 目录中的 MelonLoader 及其版本，并读取
@@ -55,7 +62,7 @@ furryaxw.sprocket-laser-rangefinder
 `MelonLoader\Latest.log`。
 
 GUI 使用 Windows Edge WebView2 的硬件加速渲染，Python 继续负责 Registry、扫描、依赖
-解析与安装。GUI 支持批量选择；单项安装、批量安装和全部更新共用一个顺序下载队列。队列
+解析与安装。GUI 支持批量选择；单项安装和批量安装共用一个顺序下载队列。队列
 运行期间仍可继续浏览并追加任务，正在执行安装事务时客户端会等待事务完成后再退出。模组列表
 显示简介；详情头部集中显示名称、ID、版本和作者，正文会读取登记仓库的默认 README，使用
 GitHub 渲染结果并在本地净化后显示。安装确认页会列出 Registry 声明的推荐模组，默认不勾选，
@@ -119,7 +126,7 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改的文件。普通安装前已存在的文件仍受保护；
   通过 Release 哈希自动接管的文件会成为受管文件，并且仅在内容未变化时允许卸载删除。
 - 本地测试开发者服务器支持私有 ZIP/DLL 的授权下载、整包/文件 SHA-256 校验和事务安装；客户端已通过
-  GitHub Device Flow 换取服务器 session token，服务端负责验证 GitHub 身份。私有 manifest 现在使用
+  GitHub Device Flow 换取服务器 session token，服务端负责验证 GitHub 身份。私有 manifest 使用
   Ed25519 detached canonical-JSON 签名，并在首次使用时确认服务器公钥指纹；当前服务端仍只是协议技术验证，
   不适合作为公网正式分发后台。客户端签名、信任协商、key-status 和轮换规则见
   [私有服务器签名协议](docs/private-server-signatures.md)。
