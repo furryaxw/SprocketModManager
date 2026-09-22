@@ -35,7 +35,7 @@ the Release SHA-256, and safely extract it into the Sprocket root. Replacement i
 rollback-protected and preserves `MelonLoader/Il2CppAssemblies`, logs, configuration,
 and other local files that are not present in the ZIP.
 
-Before a single install, batch install, or update-all operation, the client offers to
+Before a single install or a batch install, the client offers to
 install MelonLoader when it is missing. Choosing to install waits for MelonLoader to
 finish before queueing the mods. Choosing to continue leaves the mod files installable,
 but the game cannot load them until MelonLoader is installed.
@@ -62,7 +62,7 @@ button on Settings continues to upload `MelonLoader\Latest.log` from the game di
 
 The GUI is hardware-accelerated by Windows Edge WebView2, while Python continues to
 handle the Registry, scanning, dependency resolution, and installation. Individual
-installs, batch installs, and update-all share one sequential download queue. Users can
+installs and batch installs share one sequential download queue. Users can
 keep browsing and append work while the queue runs; closing waits for the active
 installation transaction to finish. Catalog rows show each mod's summary; the detail
 header groups its name, ID, version, and authors, while the body reads the registered
