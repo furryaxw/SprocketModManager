@@ -106,7 +106,7 @@ class Installer:
             game_dir,
             force_conflicts,
         )
-        if sprocket_is_running():
+        if sprocket_is_running(game_dir):
             raise InstallError("Sprocket is running; close the game before changing mod files")
         state = self.state_store.load()
         next_state = copy.deepcopy(state)
@@ -356,7 +356,7 @@ class Installer:
     def remove(self, package_id: str, game_dir: Path) -> tuple[list[str], list[str]]:
         game_dir = self.validate_game_dir(game_dir)
         LOGGER.info("removing package=%s game_dir=%s", package_id, game_dir)
-        if sprocket_is_running():
+        if sprocket_is_running(game_dir):
             raise InstallError("Sprocket is running; close the game before changing mod files")
         state = self.state_store.load()
         if package_id not in state["packages"]:
