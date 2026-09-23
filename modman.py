@@ -22,9 +22,27 @@ from sprocket_mod_manager.infrastructure.manager_paths import state_file_path
 from sprocket_mod_manager.infrastructure.state import StateStore
 from sprocket_mod_manager.infrastructure.suppression_store import store_for
 from sprocket_mod_manager.application.integrity import suppression_key, suppression_keys
+from sprocket_mod_manager.infrastructure.self_update import (
+    SELF_UPDATE_FLAG,
+    cleanup_staged,
+    frozen_executable,
+    self_update_mode,
+)
 
 APP_VERSION = "0.5.1"
 LOGGER = logging.getLogger(__name__)
+
+
+def run_self_update_child(argv: list[str]) -> int:
+    """自更新的换壳子进程：等旧进程退出，用自己把它换掉，再启动新的它。"""
+    app_dir = default_app_dir()
+    if "--app-dir" in argv:
+        index = argv.index("--app-dir")
+        if index + 1 < len(argv):
+            app_dir = Path(argv[index + 1]).expanduser()
+    configure_logging(app_dir, debug=False, console=False)
+    LOGGER.info("self-update child starting argv=%s", argv)
+    return self_update_mode(argv)
 
 
 def _prepared_dict(prepared: PreparedPlan) -> dict:
@@ -407,6 +425,9 @@ def _plan_for(service: ModManagerService, plan: ResolutionPlan) -> dict:
 
 def main() -> int:
     argv = sys.argv[1:]
+    # 换壳子进程：参数是裸路径（不是子命令），必须在 argparse 之前拦下。
+    if argv and argv[0] == SELF_UPDATE_FLAG:
+        return run_self_update_child(argv)
     debug_flag = "--debug" in argv
     cli_marker = "--cli" in argv
     cli_args = [argument for argument in argv if argument != "--cli"]
@@ -426,6 +447,9 @@ def main() -> int:
     config_debug = ConfigStore(app_dir).load().get("debug") is True
     debug = debug_flag or config_debug
     configure_logging(app_dir, debug=debug, console=is_cli)
+    executable = frozen_executable()
+    if executable is not None:
+        cleanup_staged(executable)
     LOGGER.info(
         "Sprocket Mod Manager %s starting mode=%s debug=%s debug_flag=%s config_debug=%s app_dir=%s",
         APP_VERSION,

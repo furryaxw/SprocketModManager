@@ -148,10 +148,16 @@ Edge installations.
   See [the private server signature protocol](docs/private-server-signatures.md) for
   client signatures, trust negotiation, key status, and rotation rules.
 
-For manager self-updates, the client currently checks GitHub Releases and provides
-an update link; it does not download or replace its EXE. Any future updater should
-use a fixed-public-key update manifest or verifiable Windows code signing, rather
-than trusting an unsigned checksum beside the EXE in the same Release.
+Manager self-updates: on startup the client checks the GitHub Release tagged `v<version>` with the
+`SprocketModManager.exe` asset. When a newer release exists it offers two paths — **Update now**
+downloads the new EXE next to the running one, verifies the asset SHA-256 GitHub reports, and hands
+over to a swap child process that waits for the old process to exit and replaces it (Windows locks a
+running EXE against overwriting itself); **Later** keeps this session running and asks again on the
+next start. A source run, or a build that is not a single file, cannot replace itself and is sent to
+the release page instead.
+
+That chain trusts GitHub's HTTPS plus the asset digest GitHub computes. Guarding against a stolen
+release account needs a fixed-public-key update manifest or verifiable Windows code signing.
 
 ## Registry
 

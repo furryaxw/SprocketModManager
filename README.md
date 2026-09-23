@@ -131,9 +131,13 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
   不适合作为公网正式分发后台。客户端签名、信任协商、key-status 和轮换规则见
   [私有服务器签名协议](docs/private-server-signatures.md)。
 
-模组管理器自身的更新目前只检查 GitHub Release 并提供更新入口，不会自动下载或覆盖 EXE。
-若未来启用自身自动更新，应使用固定公钥验证的更新清单或可验证的 Windows 代码签名，不能只
-信任与 EXE 同处一个 Release 的未签名校验文件。
+模组管理器自身的更新：启动时查一次 GitHub Release（tag `v<版本>`，资产 `SprocketModManager.exe`）。
+有新版本就弹窗给两条路 —— **立即更新**把新 EXE 下载到同目录、核对 GitHub 给出的资产 SHA-256，
+再交给一个换壳子进程重启（Windows 下运行中的 EXE 不能覆盖自己，由子进程等旧进程退出后替换）；
+**暂缓**则这次会话继续用，下次启动重新问一次。源码运行或没打包成单文件时不给自更新，只把人带到发布页。
+
+这条链路的信任到「GitHub 的 HTTPS + GitHub 自己算的资产摘要」为止。要防到「发布账号被拿走」这一层，
+还需要固定公钥验证的更新清单或可验证的 Windows 代码签名。
 
 ## Registry
 

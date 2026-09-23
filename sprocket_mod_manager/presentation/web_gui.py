@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
+import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable
@@ -27,9 +29,26 @@ from ..infrastructure.game_version import GameVersion, read_game_version
 from ..infrastructure.log_upload import upload_latest_log, upload_log_file
 from ..infrastructure.melonloader import MELONLOADER_REPOSITORY, MelonLoaderManager
 from ..infrastructure.private_servers import PrivateCatalogCache
+from ..infrastructure.self_update import (
+    can_self_update,
+    download_update,
+    frozen_executable,
+    launch_self_update,
+    staged_executable,
+    update_from_release,
+)
 
 LOGGER = logging.getLogger(__name__)
 LOG_UPLOAD_ENDPOINT = "https://paste.furryaxw.top/api/q/"
+
+
+def _flush_logs() -> None:
+    """退出前把日志刷盘：`os._exit` 不会帮我们 flush。"""
+    for handler in logging.getLogger().handlers:
+        try:
+            handler.flush()
+        except (OSError, ValueError):
+            continue
 
 
 class ClientApi:
@@ -326,8 +345,7 @@ class ClientApi:
     def upload_manager_log(self) -> dict[str, Any]:
         try:
             LOGGER.info("uploading manager log")
-            for handler in logging.getLogger().handlers:
-                handler.flush()
+            _flush_logs()
             result = upload_log_file(
                 manager_log_path(self.config_store.app_dir),
                 LOG_UPLOAD_ENDPOINT,
@@ -348,17 +366,71 @@ class ClientApi:
             return self._failure(exc, code="manager_log_upload_failed")
 
     def get_manager_update(self) -> dict[str, Any]:
+        """管理器自己的版本：最新发布是什么、有没有新、这台机器能不能就地换掉自己。"""
         try:
             release = self._current_service().github.latest_repository_release(MANAGER_REPOSITORY)
             current = Version.parse(self.version)
+            update = update_from_release(release, self.version)
             return self._success(
                 current=self.version,
                 latest=str(release.version),
                 newer=release.version > current,
                 page_url=release.page_url,
+                notes=str(release.notes or ""),
+                can_self_update=can_self_update(),
+                size=int(update.size) if update else 0,
             )
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="update_check_failed")
+
+    def apply_manager_update(self) -> dict[str, Any]:
+        """下载新版并交给换壳子进程，随后关窗口退出，让新版本替换掉正在运行的自己。"""
+        try:
+            current = frozen_executable()
+            if current is None:
+                return self._failure(
+                    RuntimeError("self-update needs the packaged single-file build"),
+                    code="self_update_unavailable",
+                )
+            service = self._current_service()
+            update = update_from_release(
+                service.github.latest_repository_release(MANAGER_REPOSITORY), self.version
+            )
+            if update is None:
+                return self._failure(
+                    RuntimeError("no newer release to install"), code="update_not_available"
+                )
+            staged = staged_executable(current)
+            download_update(service.http, update, staged)
+            launch_self_update(current, staged, app_dir=self.config_store.app_dir)
+            self._exit_for_self_update()
+            return self._success(version=update.version, staged=str(staged))
+        except (ModManagerError, OSError, ValueError) as exc:
+            return self._failure(exc, code="update_apply_failed")
+
+    def _exit_for_self_update(self, delay: float = 1.0) -> None:
+        """先让「已开始更新」回到界面，再关窗口退出：自身文件要等进程结束才解锁。"""
+        with self._state_lock:
+            if self._destroy_scheduled:
+                return
+            self._destroy_scheduled = True
+        self._close_pending = True
+
+        def finish() -> None:
+            time.sleep(delay)
+            self._environment_monitor.stop()
+            self.install_queue.close(timeout=5)
+            window = self._window
+            if window is not None:
+                try:
+                    window.destroy()
+                except Exception:  # noqa: BLE001 - 关不掉也要退出，锁必须放开
+                    LOGGER.exception("could not close the window before self-update")
+            time.sleep(0.5)
+            _flush_logs()
+            os._exit(0)
+
+        threading.Thread(target=finish, name="sprocket-self-update", daemon=True).start()
 
     def open_url(self, url: str) -> dict[str, Any]:
         try:

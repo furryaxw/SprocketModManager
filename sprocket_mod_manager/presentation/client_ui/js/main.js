@@ -51,8 +51,12 @@ function wireEvents() {
         scheduleSettingsSave();
     });
     $("#manager-update").addEventListener("click", () => {
-        if (state.update?.newer) void openUrl(state.update.page_url);
-        else void checkManagerUpdate(false);
+        if (!state.update?.newer) {
+            void checkManagerUpdate(false);
+            return;
+        }
+        if (state.update.can_self_update) void applyManagerUpdate(state.update);
+        else void openUrl(state.update.page_url);
     });
     $("#open-repository").addEventListener("click", () => openUrl(state.links.repository));
     $("#open-registry").addEventListener("click", () => openUrl(state.links.registry));

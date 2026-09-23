@@ -18,12 +18,42 @@ class RepositoryRelease:
     tag: str
     version: Version
     page_url: str
+    notes: str = ""
+    assets: tuple[ReleaseAsset, ...] = ()
 
 
 @dataclass(frozen=True)
 class RepositoryReadme:
     html: str
     page_url: str
+
+
+def _release_assets(record: dict[str, Any], repository: str) -> tuple[ReleaseAsset, ...]:
+    """只收挂在这个仓库自己的 `releases/download/` 下的资产，其余（外链）一律丢掉。"""
+    assets: list[ReleaseAsset] = []
+    expected_prefix = f"/{repository}/releases/download/".casefold()
+    for raw_asset in record.get("assets") or []:
+        if not isinstance(raw_asset, dict):
+            continue
+        url = str(raw_asset.get("browser_download_url", ""))
+        parsed = urlparse(url)
+        if (
+                parsed.scheme != "https"
+                or (parsed.hostname or "").casefold() != "github.com"
+                or not parsed.path.casefold().startswith(expected_prefix)
+        ):
+            continue
+        assets.append(
+            ReleaseAsset(
+                id=int(raw_asset.get("id", 0)),
+                name=str(raw_asset.get("name", "")),
+                size=int(raw_asset.get("size", 0)),
+                download_url=url,
+                digest=raw_asset.get("digest") or None,
+                updated_at=str(raw_asset.get("updated_at", "")),
+            )
+        )
+    return tuple(assets)
 
 
 class GitHubClient:
@@ -89,26 +119,6 @@ class GitHubClient:
                 continue
             if version.prerelease and not include_prerelease:
                 continue
-            assets: list[ReleaseAsset] = []
-            for raw_asset in record.get("assets") or []:
-                if not isinstance(raw_asset, dict):
-                    continue
-                url = str(raw_asset.get("browser_download_url", ""))
-                parsed = urlparse(url)
-                expected_prefix = f"/{package.repository}/releases/download/".casefold()
-                if parsed.scheme != "https" or parsed.hostname != "github.com" or not parsed.path.casefold().startswith(
-                        expected_prefix):
-                    continue
-                assets.append(
-                    ReleaseAsset(
-                        id=int(raw_asset.get("id", 0)),
-                        name=str(raw_asset.get("name", "")),
-                        size=int(raw_asset.get("size", 0)),
-                        download_url=url,
-                        digest=raw_asset.get("digest") or None,
-                        updated_at=str(raw_asset.get("updated_at", "")),
-                    )
-                )
             releases.append(
                 ReleaseInfo(
                     id=int(record.get("id", 0)),
@@ -116,7 +126,7 @@ class GitHubClient:
                     version=version,
                     prerelease=bool(record.get("prerelease")),
                     published_at=str(record.get("published_at", "")),
-                    assets=tuple(assets),
+                    assets=_release_assets(record, package.repository),
                     page_url=str(record.get("html_url", "")),
                 )
             )
@@ -153,7 +163,13 @@ class GitHubClient:
                 or not parsed.path.casefold().startswith(expected_path)
         ):
             raise DownloadError(f"invalid GitHub release page URL: {page_url or '-'}")
-        return RepositoryRelease(tag=tag, version=version, page_url=page_url)
+        return RepositoryRelease(
+            tag=tag,
+            version=version,
+            page_url=page_url,
+            notes=str(record.get("body") or ""),
+            assets=_release_assets(record, repository),
+        )
 
     def repository_readme(
             self,

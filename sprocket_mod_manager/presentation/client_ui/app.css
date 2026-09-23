@@ -1565,6 +1565,25 @@ select option {
     gap: 12px;
 }
 
+/* 更新弹窗：发布说明是纯文本（release body 原文），原样排、高了就自己滚。 */
+.update-body p {
+    margin: 0 0 10px;
+}
+
+.update-notes {
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: #111516;
+    color: var(--text-soft);
+    font: 0.75rem/1.2rem "Cascadia Mono", Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 /* 弹窗里的附带提醒（例如兼容表说这个加载器跑不了本机游戏版本）。 */
 .modal-note {
     margin: 10px 0 0;
