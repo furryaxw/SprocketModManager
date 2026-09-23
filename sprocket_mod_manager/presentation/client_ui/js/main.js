@@ -46,6 +46,7 @@ function wireEvents() {
         openUrl(state.melonloader?.page_url || state.links.melonloader);
     });
     $("#upload-latest-log").addEventListener("click", uploadLatestLog);
+    $("#kill-sprocket").addEventListener("click", () => void killRunningSprocket());
     $("#text-scale").addEventListener("input", (event) => {
         applyTextScale(event.target.value);
         scheduleSettingsSave();

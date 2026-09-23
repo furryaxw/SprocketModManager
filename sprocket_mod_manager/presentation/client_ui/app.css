@@ -1491,6 +1491,45 @@ select option {
     max-width: 42vw;
 }
 
+.statusbar .game-state {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+}
+
+.game-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--muted);
+}
+
+.game-state.running {
+    color: var(--text-soft);
+}
+
+.game-state.running .game-dot {
+    background: var(--success);
+    box-shadow: 0 0 0.375rem var(--success);
+}
+
+.kill-button {
+    min-height: 0;
+    padding: 0.125rem 0.5rem;
+    border: 1px solid #7a3e3a;
+    border-radius: 3px;
+    color: #ffd8d5;
+    background: #3b2220;
+    font: inherit;
+    cursor: pointer;
+}
+
+.kill-button:hover {
+    border-color: var(--danger);
+    background: #542a27;
+}
+
 .modal-layer {
     position: fixed;
     inset: 0;
