@@ -203,6 +203,10 @@ const sandbox = {
         return table[key] !== undefined ? table[key] : key;
     },
     packageLabel: (pkg) => (pkg && pkg.name) || "",
+    focusPackage: async (packageId) => {
+        apiCalls.push({kind: "focus", id: packageId});
+        return true;
+    },
     queueActive: () => false,
     toast: () => {},
     setStatus: () => {},
@@ -239,13 +243,20 @@ vm.runInContext(source, context, { filename: "installs.js" });
 for (const key of payload.selection || []) sandbox.state.installedSelection.add(String(key));
 vm.runInContext("renderInstalled();", context);
 
-// 行本身可点：用假事件点行体（`target` 为空）与行内控件（`closest` 命中）各走一遍。
-function clickRow(index, target) {
+// 行上三种事件各走一遍：单击（不做事）、双击（跳转）、右键（多选）。
+// `target` 为空表示点在行体上；`closest` 命中表示点在行内控件上，行不该接管。
+function dispatchRow(index, type, event) {
     const row = elements["#installed-list"].children[index];
-    for (const handler of (row?.listeners?.click || [])) handler({target});
+    for (const handler of (row?.listeners?.[type] || [])) handler(event);
 }
-for (const index of payload.clickRows || []) clickRow(index, null);
-for (const index of payload.clickRowButtons || []) clickRow(index, {closest: () => ({tagName: "BUTTON"})});
+for (const index of payload.clickRows || []) dispatchRow(index, "click", {target: null});
+for (const index of payload.dblclickRows || []) dispatchRow(index, "dblclick", {target: null});
+for (const index of payload.contextRows || []) {
+    dispatchRow(index, "contextmenu", {target: null, preventDefault: () => {}});
+}
+for (const index of payload.dblclickRowButtons || []) {
+    dispatchRow(index, "dblclick", {target: {closest: () => ({tagName: "BUTTON"})}});
+}
 
 function serialize(element) {
     if (!element || element.tagName === "#text") return null;

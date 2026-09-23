@@ -937,6 +937,11 @@ select option {
     border-top: 1px solid var(--line);
 }
 
+/* 操作提示贴着左侧的数量，筛选药丸仍然靠右。 */
+.list-hint {
+    margin-right: auto;
+}
+
 .data-row {
     min-height: 70px;
     display: grid;

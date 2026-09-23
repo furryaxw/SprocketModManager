@@ -285,6 +285,9 @@ class ClientApi:
     def toggle_mod(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.toggle_mod(*args, **kwargs)
 
+    def open_mod_location(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._catalog_controller.open_mod_location(*args, **kwargs)
+
     def get_package_readme(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.get_package_readme(*args, **kwargs)
 

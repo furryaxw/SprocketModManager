@@ -316,6 +316,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Headless client rendering pre-check")
     parser.add_argument("--out", default="artifacts/gui-installed-page.png", help="screenshot output path")
     parser.add_argument("--page", default="installed", help="page to show before the screenshot")
+    parser.add_argument(
+        "--focus",
+        default="",
+        help="package id to jump to through focusPackage() before the screenshot",
+    )
     parser.add_argument("--window-size", default="1400,1000")
     args = parser.parse_args(argv)
 
@@ -334,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
             "catalog": json.dumps(CATALOG_PACKAGES, ensure_ascii=False),
         }
         stub = stub.replace('window.showPage("installed")', f'window.showPage("{args.page}")')
+        if args.focus:
+            # 跳转是异步的（`focusPackage` 自己 await 切页）：等目录加载完再跳，然后才截图。
+            # 用普通定时器而不是 `pywebviewready`：无头预检里那个事件根本不会派发。
+            stub += (
+                f"\nwindow.setTimeout(() => window.focusPackage({json.dumps(args.focus)}), 1500);\n"
+            )
         (client / "stub-api.js").write_text(stub, encoding="utf-8")
 
         index = client / "index.html"

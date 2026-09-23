@@ -31,7 +31,9 @@ def payload(
         action: str = "",
         filter_key: str = "",
         click_rows: list | None = None,
-        click_row_buttons: list | None = None,
+        dblclick_rows: list | None = None,
+        context_rows: list | None = None,
+        dblclick_row_buttons: list | None = None,
         environment: dict | None = None,
 ) -> dict:
     """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
@@ -116,8 +118,12 @@ def payload(
         document["filter"] = filter_key
     if click_rows is not None:
         document["clickRows"] = click_rows
-    if click_row_buttons is not None:
-        document["clickRowButtons"] = click_row_buttons
+    if dblclick_rows is not None:
+        document["dblclickRows"] = dblclick_rows
+    if context_rows is not None:
+        document["contextRows"] = context_rows
+    if dblclick_row_buttons is not None:
+        document["dblclickRowButtons"] = dblclick_row_buttons
     return document
 
 
@@ -130,6 +136,19 @@ def _find(node, predicate):
         if found is not None:
             return found
     return None
+
+
+def open_location_calls(result: dict) -> list:
+    """该次渲染里真实发出的 `open_mod_location` 参数（`focus` 之类的事件不带 `args`）。"""
+    return [
+        entry["args"]
+        for entry in result["apiCalls"]
+        if entry.get("kind") == "call" and entry["args"][0] == "open_mod_location"
+    ]
+
+
+def focus_calls(result: dict) -> list:
+    return [entry["id"] for entry in result["apiCalls"] if entry.get("kind") == "focus"]
 
 
 @unittest.skipIf(NODE is None, "node is not available")
@@ -369,17 +388,51 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["count"], "3 detected mods", "空态也不该说磁盘上没有模组")
         self.assertEqual(len(result["toolbar"]["filters"]), 4)
 
-    def test_clicking_a_row_body_toggles_that_rows_selection(self) -> None:
-        result = self._render(click_rows=[1])
+    def test_double_clicking_a_catalog_row_opens_it_in_the_catalog(self) -> None:
+        """双击那一行的去处是模组目录页：切过去并选中这个包。"""
+        result = self._render(
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
+            dblclick_rows=[0],
+        )
+        self.assertEqual(focus_calls(result), ["furryaxw.sprocket-laser-rangefinder"])
+        self.assertEqual(open_location_calls(result), [], "目录里有这个包就不该去开资源管理器")
+
+    def test_double_clicking_a_local_only_row_falls_back_to_the_file_location(self) -> None:
+        """目录里查无此包（`UserLibs` 里的库）时，双击退到在资源管理器里定位文件。"""
+        result = self._render(dblclick_rows=[2])
+        self.assertEqual(
+            open_location_calls(result),
+            [["open_mod_location", "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll"]],
+        )
+        self.assertEqual(focus_calls(result), [])
+
+    def test_a_single_click_on_a_row_does_nothing(self) -> None:
+        """单击不做事：跳页会丢当前视野，只有双击才走。"""
+        result = self._render(
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
+            click_rows=[0, 1],
+        )
+        self.assertEqual(focus_calls(result), [])
+        self.assertEqual(open_location_calls(result), [])
+        self.assertEqual(result["toolbar"]["selection"], "")
+
+    def test_right_clicking_a_row_toggles_that_rows_selection(self) -> None:
+        result = self._render(context_rows=[1])
         self.assertIn("selected", result["rows"][1]["className"])
         self.assertTrue(result["rows"][1]["children"][0]["checked"])
         self.assertNotIn("selected", result["rows"][0]["className"])
         self.assertEqual(result["toolbar"]["selection"], "1 selected")
 
-    def test_clicking_a_control_inside_a_row_does_not_select_it_by_accident(self) -> None:
-        result = self._render(click_row_buttons=[0])
+    def test_double_clicking_a_control_inside_a_row_leaves_the_row_alone(self) -> None:
+        """行内控件有自己的动作：既不选中这一行，也不跳转。"""
+        result = self._render(
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
+            dblclick_row_buttons=[0],
+        )
         self.assertNotIn("selected", result["rows"][0]["className"])
         self.assertEqual(result["toolbar"]["selection"], "")
+        self.assertEqual(focus_calls(result), [])
+        self.assertEqual(open_location_calls(result), [])
 
     def test_batch_buttons_follow_what_the_selection_can_actually_do(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
