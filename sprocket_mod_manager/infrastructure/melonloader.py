@@ -179,7 +179,7 @@ class MelonLoaderManager:
             raise InstallError("a MelonLoader installation is already running")
         try:
             game_dir = Installer.validate_game_dir(game_dir)
-            if sprocket_is_running():
+            if sprocket_is_running(game_dir):
                 raise InstallError("Sprocket is running; close the game before installing MelonLoader")
             release = self.latest_release(refresh=refresh)
             working_root = self.app_dir / "melonloader"

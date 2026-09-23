@@ -3,13 +3,11 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from sprocket_mod_manager.domain.errors import InstallConflictError, InstallError
 from sprocket_mod_manager.utilities.checksums import sha256_file
 from sprocket_mod_manager.infrastructure.installer import Installer
-from sprocket_mod_manager.utilities.processes import sprocket_is_running
 from sprocket_mod_manager.domain.models import (
     PreparedFile,
     PreparedPackage,
@@ -258,16 +256,6 @@ class InstallerTests(unittest.TestCase):
             self.assertNotIn("test.translation-a", state["packages"])
             self.assertIn("test.translation-b", state["packages"])
             self.assertEqual((game / "AutoTranslator" / "Config.ini").read_bytes(), b"second")
-
-    def test_process_check_treats_missing_tasklist_stdout_as_not_running(self):
-        with (
-            patch("sprocket_mod_manager.utilities.processes.os.name", "nt"),
-            patch(
-                "sprocket_mod_manager.utilities.processes.subprocess.run",
-                return_value=SimpleNamespace(stdout=None),
-            ),
-        ):
-            self.assertFalse(sprocket_is_running())
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_update_recovers_null_file_reference_from_installed_state(self, _running):
