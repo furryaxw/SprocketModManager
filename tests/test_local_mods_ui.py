@@ -44,6 +44,19 @@ class LocalModsClientUiTests(unittest.TestCase):
         self.assertIn('toast(tr(enabled ? "modEnabledRestart" : "modDisabledRestart", {name: result.toggled}))', self.installs)
         self.assertIn('setStatus("", "ready")', self.installs, "状态栏只更新健康状态，话已经由 toast 说过")
 
+    def test_installed_rows_open_the_catalog_on_double_click_and_select_on_right_click(self) -> None:
+        """双击跳到模组目录里这个包的位置，右键做多选；行内控件不被这两种点击接管。"""
+        catalog = (CLIENT_UI / "js" / "catalog.js").read_text(encoding="utf-8")
+        html = (CLIENT_UI / "index.html").read_text(encoding="utf-8")
+        self.assertIn("function wireInstalledRow(row, item, key)", self.installs)
+        self.assertIn('row.addEventListener("dblclick"', self.installs)
+        self.assertIn("await focusPackage(id)", self.installs)
+        self.assertIn('row.addEventListener("contextmenu"', self.installs)
+        self.assertIn('callApi("open_mod_location", path)', self.installs, "目录里查无此包时的兜底")
+        self.assertIn("async function focusPackage(packageId)", catalog)
+        self.assertIn("state.selectedId = packageId", catalog)
+        self.assertIn('data-i18n="installedRowHint"', html)
+
     def test_previous_unrecognized_shape_still_renders(self) -> None:
         self.assertIn("state.unrecognized = result.unrecognized || []", self.installs)
         self.assertIn("if (item.unrecognized)", self.installs)
@@ -82,6 +95,7 @@ class LocalModsClientUiTests(unittest.TestCase):
             "modDisabledRestart",
             "modEnabledRestart",
             "restartRequired",
+            "installedFilterIncompatible",
         ):
             self.assertGreaterEqual(
                 self.javascript.count(f"{key}:"),

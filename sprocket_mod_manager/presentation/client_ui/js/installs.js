@@ -381,7 +381,22 @@ const INSTALLED_FILTERS = {
     enabled: {label: "installedFilterEnabled", match: (item) => !installedRowDisabled(item)},
     disabled: {label: "installedFilterDisabled", match: (item) => installedRowDisabled(item)},
     outdated: {label: "installedFilterOutdated", match: (item) => Boolean(installableUpdate(item))},
+    incompatible: {label: "installedFilterIncompatible", match: (item) => installedRowIncompatible(item)},
 };
+
+/**
+ * 这一行跟本机环境对不上：装着的那个版本跑不了，或者能看到的更新跑不了。
+ *
+ * 与行上那两枚不兼容标记一一对应（版本芯片、更新那枚感叹号）——筛选出来的行都说得清为什么。
+ */
+function installedRowIncompatible(item) {
+    const record = item.fromScan
+        ? (state.installed || []).find((entry) => entry.id && entry.id === item.installed_package_id)
+        : item;
+    if (!record?.id) return false;
+    if (installedVersionVerdict(record) === VERDICT_INCOMPATIBLE) return true;
+    return newerRelease(item)?.verdict === VERDICT_INCOMPATIBLE;
+}
 
 function installedFilterKey() {
     return INSTALLED_FILTERS[state.installedFilter] ? state.installedFilter : "all";
