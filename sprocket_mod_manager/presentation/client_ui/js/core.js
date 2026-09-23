@@ -3,6 +3,7 @@
 const state = {
     ready: false,
     initializing: false,
+    wired: false,
     version: "-",
     page: "installed",
     languageMode: "auto",
@@ -25,6 +26,10 @@ const state = {
         github_proxy_url: "", github_user_id: "", text_scale: 100,
     },
     links: {repository: "", registry: ""},
+    environment: null,
+    environmentRevision: null,
+    // 「显示不兼容」是内存态：页面来回切不丢，重启回到默认（隐藏）。
+    showIncompatible: false,
     melonloader: null,
     melonloaderLoading: false,
     readmes: new Map(),
@@ -33,6 +38,7 @@ const state = {
     queueSignature: "",
     queueStates: new Map(),
     modalAction: null,
+    lastToast: null,
     catalogLoading: true,
 };
 
@@ -96,6 +102,7 @@ function setLanguage(language) {
     renderMelonLoader();
     renderDeveloperServers();
     renderGithubLogin();
+    renderEnvironment();
     updatePageHeader();
 }
 
@@ -129,8 +136,18 @@ function applyTranslations() {
     $("#language-select").value = state.languageMode;
 }
 
+/**
+ * 调后端。
+ *
+ * WebView2 有时候先注入 `pywebview.api` 这个空壳、再把方法挂上（启动时就是这样），
+ * 所以方法暂时不存在要**等一会儿**，别把它当成「接口没了」直接抛。
+ */
 async function callApi(method, ...args) {
-    if (!window.pywebview?.api?.[method]) throw new Error(`API unavailable: ${method}`);
+    const deadline = Date.now() + 2000;
+    while (!window.pywebview?.api?.[method]) {
+        if (Date.now() >= deadline) throw new Error(`API unavailable: ${method}`);
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
     reportClientLog("debug", `API call: ${method}`);
     try {
         const result = await window.pywebview.api[method](...args);
@@ -144,18 +161,47 @@ async function callApi(method, ...args) {
     }
 }
 
+/** 启动期的诊断打点：只写日志，绝不因为它让启动失败。 */
+function traceStartup(message) {
+    void Promise.resolve()
+        .then(() => window.pywebview?.api?.startup_trace?.(String(message)))
+        .catch(() => {});
+}
+
 function reportClientLog(level, message) {
     if (!window.pywebview?.api?.client_log) return;
     void window.pywebview.api.client_log(level, String(message)).catch(() => {
     });
 }
 
-function setStatus(message, tone = "normal", source = "") {
-    $("#status-text").textContent = message;
-    $("#status-source").textContent = source;
+/**
+ * 状态栏报的是**当前**状态，不是上次那句话留下的痕迹。
+ *
+ * 只看持久的事实：环境是否正常、已安装文件是否有损坏、是否正在忙。一次操作失败属于瞬时事件，
+ * 由 toast 说（下载页那一行也会红着），不进状态栏 —— 否则要么闪一下、要么红到下次成功。
+ */
+function statusbarState() {
+    if (environmentProblem()) return "error";
+    if ((state.installed || []).some((item) => item.corrupted && !item.suppressed)) return "error";
+    if (state.catalogLoading || state.melonloaderLoading || queueActive()) return "busy";
+    return "ready";
+}
+
+function renderStatusbar() {
+    const text = $("#status-text");
+    if (!text) return;
+    const kind = statusbarState();
+    text.textContent = tr(kind === "error" ? "statusError" : kind === "busy" ? "statusBusy" : "statusReady");
     const mark = $(".status-mark");
-    mark.classList.toggle("ready", tone === "ready");
-    mark.classList.toggle("error", tone === "error");
+    if (!mark) return;
+    mark.classList.toggle("ready", kind === "ready");
+    mark.classList.toggle("error", kind === "error");
+}
+
+/** `setStatus` 那句话改走 toast（状态栏不再堆细节），然后把状态栏按当前状况重算。 */
+function setStatus(message, tone = "normal", source = "") {
+    if (message && tone !== "normal") toast(source ? `${message} · ${source}` : message, tone === "error" ? "error" : "normal");
+    renderStatusbar();
 }
 
 function setRegistryState(kind, text) {
@@ -166,6 +212,10 @@ function setRegistryState(kind, text) {
 }
 
 function toast(message, tone = "normal") {
+    // 同一句话三秒内只弹一次：状态栏那条链路（例如刷新目录）会连着报两句一样的话。
+    const now = Date.now();
+    if (state.lastToast?.message === message && now - state.lastToast.at < 3000) return;
+    state.lastToast = {message, at: now};
     const element = document.createElement("div");
     element.className = `toast ${tone}`;
     element.textContent = message;
@@ -173,10 +223,16 @@ function toast(message, tone = "normal") {
     window.setTimeout(() => element.remove(), 4300);
 }
 
+/**
+ * 报错：优先按后端给的 `code` 查 i18n（后端文案是给日志/排查看的，不一定跟着界面语言），
+ * 查不到才退回后端原文 —— 至少已知的那批错误在两种语言下都说得清楚。
+ */
 function resultError(result, fallbackKey = "operationFailed") {
-    const message = result?.message || tr(fallbackKey);
+    const codeKey = `error_${result?.code || ""}`;
+    const known = TEXT[state.language]?.[codeKey] ?? TEXT.en[codeKey];
+    const message = known ? tr(codeKey, {message: result?.message || ""}) : (result?.message || tr(fallbackKey));
     reportClientLog("error", `${result?.code || "operation_failed"}: ${message}`);
-    toast(message, "error");
+    // 只走 setStatus：它把话弹成 toast，并把状态栏改成出错（成功后自动复位）。
     setStatus(message, "error");
     return message;
 }

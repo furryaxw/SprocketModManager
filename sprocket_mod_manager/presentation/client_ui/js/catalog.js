@@ -1,10 +1,173 @@
 "use strict";
 
+/** 这批包各自要装哪个版本：界面自动挑的那个，交给后端按版本解析。 */
+function installVersions(packageIds) {
+    const versions = {};
+    for (const id of packageIds) {
+        const pkg = (state.packages || []).find((item) => item.id === id);
+        const version = pkg ? preferredVersion(pkg) : "";
+        if (version) versions[id] = version;
+    }
+    return versions;
+}
+
+/** 被兼容性藏起来的包：默认不显示，开关打开后照常出现（「显示不兼容」是内存态）。 */
+function hiddenByCompatibility() {
+    return state.packages.filter(
+        (pkg) => !pkg.private && (pkg.category === "translation") === (state.page === "translations") && packageHidden(pkg),
+    );
+}
+
+function renderCatalogNotice(hidden) {
+    const notice = $("#catalog-notice");
+    if (!notice) return;
+    const sprocket = state.environment?.sprocket;
+    const unusable = ["legacy", "unreadable"].includes(sprocket?.state);
+    if (!hidden.length) {
+        notice.hidden = true;
+        notice.replaceChildren();
+        return;
+    }
+    notice.hidden = false;
+    notice.replaceChildren();
+    const message = document.createElement("span");
+    message.textContent = unusable
+        ? tr("catalogUnusableGame", {count: hidden.length, version: sprocket?.raw || "-"})
+        : tr("catalogHidden", {count: hidden.length});
+    const toggle = document.createElement("button");
+    toggle.className = "link-button";
+    toggle.type = "button";
+    toggle.textContent = state.showIncompatible ? tr("hideIncompatible") : tr("showIncompatible");
+    toggle.addEventListener("click", () => {
+        state.showIncompatible = !state.showIncompatible;
+        renderCatalog();
+    });
+    notice.append(message, toggle);
+}
+
+/**
+ * 目录 / 翻译页的多选。
+ *
+ * 行上右键＝快速勾选（左键留给详情面板），勾选情况显示在列表底部的浮动栏里，
+ * 动作是「安装 / 卸载 / 全选 / 反选 / 取消选择」。
+ */
+function catalogSelection() {
+    return state.batch;
+}
+
+function catalogSelectionScope(translations) {
+    const page = $(translations ? "#page-translations" : "#page-catalog");
+    return page?.querySelector?.("[data-selection-scope]") || null;
+}
+
+function catalogSelectionButton(scope, action) {
+    return scope?.querySelector?.(`[data-selection-action="${action}"]`) || null;
+}
+
+/** 当前可见的包（与渲染用同一套筛选，隐藏的不算）。 */
+function visiblePackages(view = packageBrowserView()) {
+    return filteredPackages(view).filter(
+        (pkg) => state.showIncompatible || !packageHidden(pkg) || pkg.private,
+    );
+}
+
+function togglePackageSelection(packageId) {
+    const selection = catalogSelection();
+    if (selection.has(packageId)) selection.delete(packageId);
+    else selection.add(packageId);
+    renderCatalog();
+}
+
+/** 刷新底部浮动栏：数量、显隐、以及每个动作当前有没有活可干。 */
+function updateCatalogSelection() {
+    const view = packageBrowserView();
+    const packages = visiblePackages(view);
+    const visibleIds = new Set(packages.map((pkg) => pkg.id));
+    for (const id of [...catalogSelection()]) {
+        // 切页/换筛选后，看不到的选中项不该继续算数。
+        if (!visibleIds.has(id)) catalogSelection().delete(id);
+    }
+    const selected = packages.filter((pkg) => catalogSelection().has(pkg.id));
+    const scope = catalogSelectionScope(view.translations);
+    if (!scope) return;
+    scope.hidden = selected.length === 0;
+    const count = scope.querySelector?.("[data-selection-count]");
+    if (count) count.textContent = selected.length ? tr("selectionCount", {count: selected.length}) : "";
+    const busy = queueActive();
+    const states = {
+        install: selected.filter((pkg) => packageEligible(pkg)).length,
+        remove: selected.filter((pkg) => Boolean(pkg.installed)).length,
+        all: packages.length,
+        invert: packages.length,
+        clear: selected.length,
+    };
+    for (const [action, available] of Object.entries(states)) {
+        const button = catalogSelectionButton(scope, action);
+        if (button) button.disabled = busy || available === 0;
+    }
+}
+
+/** 浮动栏上的动作；`install` / `remove` 会走各自那条链路，其余只改选择。 */
+async function handleCatalogSelection(action) {
+    const packages = visiblePackages();
+    const selection = catalogSelection();
+    switch (action) {
+        case "install":
+            await beginInstall([...selection]);
+            return;
+        case "remove":
+            await removeSelectedPackages();
+            return;
+        case "all":
+            packages.forEach((pkg) => selection.add(pkg.id));
+            break;
+        case "invert":
+            packages.forEach((pkg) => {
+                if (selection.has(pkg.id)) selection.delete(pkg.id);
+                else selection.add(pkg.id);
+            });
+            break;
+        case "clear":
+            selection.clear();
+            break;
+        default:
+            return;
+    }
+    renderCatalog();
+}
+
+/** 批量卸载：只处理选中的、且确实在安装记录里的那些（逐个调用，不假装整批原子）。 */
+async function removeSelectedPackages() {
+    const installed = (state.installed || []).filter((item) => catalogSelection().has(item.id));
+    if (!installed.length || queueActive()) return;
+    const confirmed = await showModal({
+        kicker: tr("removePackage"),
+        title: tr("confirmBatchRemove"),
+        body: tr("removeSelectedMessage", {count: installed.length}),
+        confirmText: tr("remove"),
+        destructive: true,
+    });
+    if (!confirmed) return;
+    const failed = [];
+    for (const item of installed) {
+        const result = await callApi("remove", item.id);
+        if (!result.ok) failed.push(item.id);
+    }
+    catalogSelection().clear();
+    const message = tr("batchRemoved", {count: installed.length - failed.length});
+    const summary = failed.length ? `${message} | ${tr("batchPartial", {done: installed.length - failed.length, failed: failed.length})}` : message;
+    toast(summary, failed.length ? "error" : "normal");
+    setStatus(summary, failed.length ? "error" : "ready");
+    await loadCatalog(false);
+}
+
 function renderCatalog() {
     const view = packageBrowserView();
     const {container} = view;
     if (!container) return;
-    const packages = filteredPackages(view);
+    const hidden = hiddenByCompatibility();
+    renderCatalogNotice(hidden);
+    const packages = visiblePackages(view);
     view.count.textContent = String(packages.length);
     container.replaceChildren();
     if (state.catalogLoading && !state.packages.length) {
@@ -22,7 +185,9 @@ function renderCatalog() {
         const empty = document.createElement("div");
         empty.className = "empty-list";
         const title = document.createElement("strong");
-        title.textContent = tr("noResults");
+        title.textContent = hidden.length && !state.showIncompatible
+            ? tr("catalogAllHidden")
+            : tr("noResults");
         empty.append(title);
         container.append(empty);
     }
@@ -50,14 +215,19 @@ function renderCatalog() {
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.className = "package-check";
+        // 勾选只表示「这一行被选中」：能不能装、能不能卸由浮动栏按各自的账本自己判。
         checkbox.checked = state.batch.has(pkg.id);
-        checkbox.disabled = !packageEligible(pkg);
-        checkbox.setAttribute("aria-label", `${tr("batchInstall")}: ${packageLabel(pkg)}`);
+        checkbox.setAttribute("aria-label", `${tr("selectRow")}: ${packageLabel(pkg)}`);
         checkbox.addEventListener("click", (event) => event.stopPropagation());
         checkbox.addEventListener("change", () => {
-            if (checkbox.checked) state.batch.add(pkg.id);
-            else state.batch.delete(pkg.id);
-            updateBatchButton();
+            if (checkbox.checked) catalogSelection().add(pkg.id);
+            else catalogSelection().delete(pkg.id);
+            updateCatalogSelection();
+        });
+        // 左键留给详情面板，所以快速勾选用右键。
+        row.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            togglePackageSelection(pkg.id);
         });
 
         const copy = document.createElement("div");
@@ -82,7 +252,11 @@ function renderCatalog() {
         const version = document.createElement("div");
         version.className = "package-version";
         const number = document.createElement("b");
-        number.textContent = pkg.release?.version || "-";
+        // 显示「点安装会装哪个」，不是「最新是哪个」；两者不一致时带 `↓`。
+        number.textContent = installTargetVersion(pkg);
+        // `not_applicable`（翻译包）没有颜色类，别把空字符串塞进 classList。
+        const targetClass = verdictClass(targetVerdict(pkg));
+        if (targetClass) number.classList.add(targetClass);
         const chip = document.createElement("span");
         const currentState = packageState(pkg);
         chip.className = `state-chip ${currentState.className}`;
@@ -92,17 +266,8 @@ function renderCatalog() {
         row.append(checkbox, copy, version);
         container.append(row);
     }
-    updateBatchButton();
+    updateCatalogSelection();
     renderDetail();
-}
-
-function updateBatchButton() {
-    for (const id of [...state.batch]) {
-        const pkg = state.packages.find((item) => item.id === id);
-        if (!pkg || !packageEligible(pkg)) state.batch.delete(id);
-    }
-    $("#batch-count").textContent = String(state.batch.size);
-    $("#batch-install").disabled = state.batch.size === 0;
 }
 
 function selectPackage(packageId) {
@@ -151,6 +316,8 @@ function renderDetail() {
     const currentState = packageState(pkg);
     chip.className = `state-chip ${currentState.className}`;
     chip.textContent = currentState.label;
+    const verdict = packageVerdict(pkg);
+    // 状态 chip（已安装 / 可更新）留在标题行最右边；兼容判定跟着版本号走。
     topline.append(record, chip);
 
     const heading = document.createElement("div");
@@ -161,12 +328,32 @@ function renderDetail() {
     id.className = "detail-id";
     id.textContent = pkg.id;
     const version = document.createElement("b");
-    version.className = "detail-version";
-    version.textContent = pkg.release?.version || "-";
+    version.className = `detail-version ${verdictClass(targetVerdict(pkg))}`.trim();
+    version.textContent = installTargetVersion(pkg);
+    const versionGroup = document.createElement("div");
+    versionGroup.className = "detail-version-group";
+    const verdictText = verdictLabel(verdict);
+    if (verdictText) {
+        // 翻译包不参与环境判定，「不适用」光秃秃一个 chip 只会让人误会，所以不挂。
+        const verdictChip = document.createElement("span");
+        verdictChip.className = `state-chip ${verdictClass(verdict)}`.trim();
+        verdictChip.textContent = verdictText;
+        versionGroup.append(verdictChip);
+    }
+    versionGroup.append(version);
+    const newest = String(pkg.release?.version || "");
+    const target = preferredVersion(pkg);
+    if (newest && target && newest !== target) {
+        // 最新那版当前装不了：划掉它，别让人以为划掉的是「会装的版本」。
+        const superseded = document.createElement("s");
+        superseded.className = "detail-version-superseded";
+        superseded.textContent = versionWithSource(pkg, newest);
+        versionGroup.append(superseded);
+    }
     const authors = document.createElement("span");
     authors.className = "detail-authors";
     authors.textContent = (pkg.authors || []).join(", ") || "-";
-    heading.append(title, version, id, authors);
+    heading.append(title, versionGroup, id, authors);
 
     const facts = document.createElement("dl");
     facts.className = "detail-facts";
@@ -215,17 +402,27 @@ function renderDetail() {
     } else {
         for (const packageId of pkg.recommendations) {
             const recommended = state.packages.find((candidate) => candidate.id === packageId);
+            const label = recommended ? packageLabel(recommended) : packageId;
             const line = document.createElement("div");
             line.className = "dependency-line";
             const name = document.createElement("span");
-            name.textContent = recommended ? packageLabel(recommended) : packageId;
-            const id = document.createElement("span");
-            id.textContent = packageId;
-            line.append(name, id);
+            name.textContent = label;
+            line.append(name);
+            // 认不出这个包时标签就等于 id，别再写第二遍。
+            if (label !== packageId) {
+                const id = document.createElement("span");
+                id.textContent = packageId;
+                line.append(id);
+            }
             recommendations.append(line);
         }
     }
     recommendationSection.append(recommendationTitle, recommendations);
+
+    // 依赖与推荐并排；每一条自己占一行。
+    const sections = document.createElement("div");
+    sections.className = "detail-sections";
+    sections.append(dependencySection, recommendationSection);
 
     const readmeSection = document.createElement("section");
     readmeSection.className = "detail-readme";
@@ -287,7 +484,11 @@ function renderDetail() {
     install.addEventListener("click", () => beginInstall([pkg.id]));
     actions.append(repo, remove, install);
 
-    panel.append(topline, heading, actions, readmeSection, facts, dependencySection, recommendationSection);
+    panel.append(
+        topline, heading, actions, readmeSection, facts, sections,
+    );
+    // 兼容性细节紧跟在依赖/推荐那一排下面，用的是同一套 detail-facts 版式。
+    panel.append(compatibilitySection(pkg, verdict));
 }
 
 async function loadCatalog(refresh = false) {
@@ -330,7 +531,108 @@ async function loadCatalog(refresh = false) {
     }
 }
 
-function createPlanBody(plans, recommendations = [], failed = []) {
+/** 计划里「某个包有哪些版本可挑」：索引里带来的全部可安装版本（新到旧）。 */
+function planVersionOptions(packageId) {
+    const pkg = (state.packages || []).find((item) => item.id === packageId);
+    return packageReleases(pkg).map((release) => ({
+        version: release.version,
+        verdict: release.verdict || "",
+        compatibility: release.compatibility || null,
+    }));
+}
+
+/** 根包那一行的版本选择器：列出全部版本（三色写在选项文字里），改选即重新解析这个包。 */
+function planVersionControl(planId, planState, onVersionChange) {
+    const options = planVersionOptions(planId);
+    if (!options.length) return null;
+    const current = String(planState.versions[planId] || "");
+    const pkg = (state.packages || []).find((item) => item.id === planId);
+
+    const control = document.createElement("div");
+    control.className = "plan-version-control";
+    const select = document.createElement("select");
+    select.className = `plan-version ${verdictClass(options.find((item) => item.version === current)?.verdict)}`.trim();
+    select.setAttribute("aria-label", tr("planVersion"));
+    for (const option of options) {
+        const element = document.createElement("option");
+        element.value = option.version;
+        const label = verdictLabel(option.verdict);
+        const text = versionWithSource(pkg, option.version);
+        element.textContent = label ? `${text} · ${label}` : text;
+        element.selected = option.version === current;
+        select.append(element);
+    }
+    select.addEventListener("change", () => {
+        select.disabled = true;
+        void onVersionChange(planId, select.value);
+    });
+    control.append(select);
+    return control;
+}
+
+/** 详情页那块：把当前这个版本的兼容性按 detail-facts 的版式摆全。 */
+function compatibilitySection(pkg, verdict) {
+    const section = document.createElement("section");
+    section.className = "compatibility-section";
+    const title = document.createElement("strong");
+    title.textContent = tr("compatibilityTitle").toUpperCase();
+    section.append(title);
+
+    const release = packageReleases(pkg).find((item) => item.version === pkg.release?.version);
+    const facts = document.createElement("dl");
+    facts.className = "detail-facts compatibility-facts";
+    const addFact = (label, value, tone = "") => {
+        const group = document.createElement("div");
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const description = document.createElement("dd");
+        description.textContent = value;
+        if (tone) description.classList.add(tone);
+        group.append(term, description);
+        facts.append(group);
+    };
+
+    if (pkg.category === "translation") {
+        addFact(tr("compatibilityTitle"), tr("compatibilityTranslation"));
+    } else {
+        // 逐轴结果由后端算好（`axes`），这里只显示：声明、本机值、这一轴过没过。
+        for (const axis of release?.axes || []) {
+            const label = axis.id === SPROCKET_AXIS_ID ? "Sprocket" : "MelonLoader";
+            const declared = axis.declared || tr("compatibilityNotDeclared");
+            const local = axis.local ? tr("compatibilityLocal", {version: axis.local}) : tr("compatibilityLocalUnknown");
+            const tone = axis.satisfied === true ? "pass" : axis.satisfied === false ? "fail" : "";
+            addFact(label, `${declared} · ${local}`, tone);
+        }
+    }
+
+    const newest = String(pkg.release?.version || "");
+    const target = preferredVersion(pkg);
+    if (target && newest && target !== newest) {
+        addFact(tr("installTargetLabel"), tr("installTargetSuperseded", {target, newest}));
+    }
+    const source = releaseCompatibility(pkg, pkg.release?.version);
+    if (source?.source === "inherited") {
+        addFact(tr("compatibilityVersionLabel"), tr("compatibilityStarNote"));
+    }
+    // 兼容是「默认状态」，不再专门写一行；只有未知/不兼容才把它摆出来。
+    if (verdict === VERDICT_UNKNOWN || verdict === VERDICT_INCOMPATIBLE) {
+        addFact(tr("compatibilityVerdictLabel"), verdictLabel(verdict),
+            verdict === VERDICT_INCOMPATIBLE ? "fail" : "");
+    }
+    if (state.environment?.environment?.state === "conflict") {
+        addFact(tr("compatibilityEnvironmentLabel"), tr("environmentConflict", {
+            loader: state.environment.melonloader?.used_version || tr("versionUnknown"),
+            sprocket: state.environment.sprocket?.version || "-",
+        }), "fail");
+    }
+    section.append(facts);
+    return section;
+}
+
+function createPlanBody(planState, onVersionChange = async () => {}) {
+    const plans = planState.plans || [];
+    const recommendations = planState.recommendations || [];
+    const failed = planState.failed || [];
     const body = document.createElement("div");
     body.className = "modal-plan";
     if (plans.some((plan) => plan.replaces_autotranslator)) {
@@ -350,9 +652,22 @@ function createPlanBody(plans, recommendations = [], failed = []) {
             line.className = "plan-line";
             const label = document.createElement("span");
             label.textContent = localized(item.display_name, item.name || item.id);
+            // 计划里的依赖也会被标色：求解器按环境筛过一遍，界面再把判定摆出来。
+            const verdict = releaseVerdict(item.id, item.version);
+            if (verdictClass(verdict)) line.classList.add(verdictClass(verdict));
+            line.append(label);
+            if (item.id === plan.id) {
+                // 根包可以改版本；依赖的版本由求解器定，不给挑。
+                const control = planVersionControl(plan.id, planState, onVersionChange);
+                if (control) {
+                    line.append(control);
+                    group.append(line);
+                    continue;
+                }
+            }
             const version = document.createElement("span");
             version.textContent = item.version;
-            line.append(label, version);
+            line.append(version);
             group.append(line);
         }
         body.append(group);
@@ -387,8 +702,14 @@ function createPlanBody(plans, recommendations = [], failed = []) {
             label.className = "recommendation-line";
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
-            checkbox.checked = false;
+            checkbox.className = "package-check";
+            // 勾选状态放在 planState 里：改版本会重画这一块，别把用户勾掉的又勾回来。
+            checkbox.checked = planState.recommendedSelection.has(plan.id);
             checkbox.dataset.packageId = plan.id;
+            checkbox.addEventListener("change", () => {
+                if (checkbox.checked) planState.recommendedSelection.add(plan.id);
+                else planState.recommendedSelection.delete(plan.id);
+            });
             const copy = document.createElement("span");
             const name = document.createElement("strong");
             name.textContent = localized(plan.display_name, plan.name || plan.id);
@@ -535,14 +856,29 @@ async function ensureMelonLoader(installedHint = null) {
     }
     if (installed) return {proceed: true, allowWithout: false};
 
+    // 兼容表说这段加载器跑不了本机游戏版本时，先写清这一点再问（安装了也白装）。
+    const conflict = state.environment?.environment?.state === "conflict";
+    const body = document.createElement("div");
+    const prompt = document.createElement("p");
+    prompt.textContent = tr("melonloaderRequiredMessage");
+    body.append(prompt);
+    if (conflict) {
+        const note = document.createElement("p");
+        note.className = "modal-note";
+        note.textContent = tr("melonloaderRequiredIncompatible", {
+            version: state.environment?.melonloader?.used_version || tr("versionUnknown"),
+            sprocket: state.environment?.sprocket?.version || state.environment?.sprocket?.raw || "-",
+        });
+        body.append(note);
+    }
     const installNow = await showModal({
         kicker: tr("modRuntime"),
         title: tr("melonloaderRequiredTitle"),
-        body: tr("melonloaderRequiredMessage"),
+        body,
         confirmText: tr("installNow"),
         cancelText: tr("continueWithout"),
     });
     if (!installNow) return {proceed: true, allowWithout: true};
-    const installedNow = await installMelonLoader();
+    const installedNow = await installMelonLoader(true);
     return {proceed: installedNow, allowWithout: false};
 }

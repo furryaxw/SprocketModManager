@@ -151,6 +151,10 @@ class ReleaseInfo:
     published_at: str
     assets: tuple[ReleaseAsset, ...]
     page_url: str = ""
+    # 索引里这条 release 的兼容声明：对 `environment.sprocket` / `environment.melonloader`
+    # 两个虚拟包的区间，以及它是自己写的还是从更早的 release 继承来的。
+    dependencies: tuple[dict[str, str], ...] = ()
+    compatibility: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], *, repository: str = "") -> "ReleaseInfo":
@@ -166,6 +170,10 @@ class ReleaseInfo:
                     or not parsed.path.casefold().startswith(expected_prefix)
             ):
                 raise ValueError(f"invalid embedded release page URL: {page_url}")
+        raw_compatibility = data.get("compatibility")
+        compatibility = (
+            dict(raw_compatibility) if isinstance(raw_compatibility, dict) else None
+        )
         return cls(
             id=int(data.get("id", 0)),
             tag=str(data["tag"]),
@@ -177,6 +185,15 @@ class ReleaseInfo:
                 for item in data.get("assets", ())
             ),
             page_url=page_url,
+            dependencies=tuple(
+                {
+                    "id": str(item["id"]),
+                    "version": str(item["version"]),
+                }
+                for item in data.get("dependencies", ())
+                if isinstance(item, dict) and "id" in item and "version" in item
+            ),
+            compatibility=compatibility,
         )
 
 

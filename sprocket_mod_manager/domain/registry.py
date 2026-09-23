@@ -6,11 +6,13 @@ from typing import Any
 
 from .errors import RegistryError
 from .models import RegistryPackage
+from .compatibility import environment_table
 
 
 class Registry:
-    def __init__(self, packages: list[RegistryPackage]):
+    def __init__(self, packages: list[RegistryPackage], environment: dict[str, Any] | None = None):
         self.packages = tuple(packages)
+        self.environment = environment_table(environment)
         self._by_id = {package.id: package for package in packages}
         if len(self._by_id) != len(packages):
             raise RegistryError("registry contains duplicate package ids")
@@ -30,7 +32,7 @@ class Registry:
                 packages.append(RegistryPackage.from_dict(raw))
             except (KeyError, TypeError, ValueError) as exc:
                 raise RegistryError(f"invalid registry package: {exc}") from exc
-        registry = cls(packages)
+        registry = cls(packages, data.get("environment"))
         for package in registry.packages:
             for dependency in package.dependencies:
                 if dependency.get("id") not in registry._by_id:

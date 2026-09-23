@@ -9,12 +9,14 @@ from .integrity import annotate, published_hashes
 from .integrity import BROKEN_STATUSES
 from .preparer import PlanPreparer
 from .solver import DependencySolver
+from ..domain.compatibility import Environment
 from ..domain.errors import ModManagerError, RegistryError
 from ..infrastructure.mod_toggle import canonical_relative
 from ..domain.models import PreparedPlan, ProgressCallback, ResolutionPlan
 from ..domain.registry import Registry
 from ..infrastructure.defaults import default_app_dir
 from ..infrastructure.dll_metadata import cached_sha256, configure_metadata_backend
+from ..infrastructure.environment_cache import write_environment_table
 from ..infrastructure.github import GitHubClient
 from ..infrastructure.http_client import HttpClient
 from ..infrastructure.installer import Installer
@@ -40,6 +42,9 @@ class ModManagerService:
         # 一起放在游戏目录里，AppData 里不留任何游戏相关的东西。
         self._metadata_game_dir: Path | None = None
         self.registry: Registry | None = None
+        # 求解时用的环境（界面每拿到一次 service 就刷新它）：给了就淘汰跑不了这个环境的版本；
+        # None 表示不按环境过滤（CLI 之类没有环境概念的调用方）。
+        self.environment: Environment | None = None
         # 上一次标注里失效的抑制条目（由调用方写回游戏目录的 suppression.json）。
         self._stale_suppressions: list[str] = []
 
@@ -61,6 +66,8 @@ class ModManagerService:
         LOGGER.info("loading registry source=%s refresh=%s", source, refresh)
         registry = self._registry_loader.load(source, refresh=refresh)
         self.registry = registry
+        # 环境表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。
+        write_environment_table(self.app_dir, registry.environment)
         LOGGER.info("registry loaded packages=%d", len(registry.packages))
         return registry
 
@@ -69,11 +76,27 @@ class ModManagerService:
             raise RegistryError("registry is not loaded")
         return self.registry
 
-    def resolve(self, identifier: str, version_range: str = "*") -> ResolutionPlan:
-        LOGGER.debug("resolving package identifier=%s range=%s", identifier, version_range)
+    def resolve(
+            self,
+            identifier: str,
+            version_range: str = "*",
+            *,
+            pinned: bool = False,
+    ) -> ResolutionPlan:
+        """解一个包的依赖。
+
+        `pinned` 表示这个版本范围是调用方（界面）点名定下的：那个根包不再按环境淘汰
+        （用户有权装一个不兼容的版本），但它的依赖仍然按环境筛。
+        """
+        LOGGER.debug("resolving package identifier=%s range=%s pinned=%s", identifier, version_range, pinned)
         registry = self._require_registry()
         package = registry.resolve_identifier(identifier)
-        plan = DependencySolver(registry, self.github).resolve(package.id, version_range)
+        plan = DependencySolver(
+            registry,
+            self.github,
+            environment=self.environment,
+            pinned=frozenset({package.id}) if pinned else frozenset(),
+        ).resolve(package.id, version_range)
         LOGGER.info("resolved package=%s packages=%d", package.id, len(plan.packages))
         return plan
 
@@ -94,7 +117,8 @@ class ModManagerService:
             force_conflicts: bool = False,
     ) -> tuple[ResolutionPlan, list[str]]:
         LOGGER.info("install requested identifier=%s game_dir=%s", identifier, game_dir)
-        plan = self.resolve(identifier, version_range)
+        # 入队时就把版本钉死了，所以这里按点名处理：队列不再因为环境变化改主意。
+        plan = self.resolve(identifier, version_range, pinned=True)
         prepared = self.prepare(plan, progress)
         try:
             warnings = self._installer_for(game_dir).apply(

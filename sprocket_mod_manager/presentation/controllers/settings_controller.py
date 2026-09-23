@@ -134,6 +134,7 @@ class SettingsController(ApiController):
             language = str(values.get("language", "auto"))
             if language not in {"auto", "zh", "en"}:
                 raise ValueError("unsupported interface language")
+            previous_game_path = str(self.config.get("game_path", "") or "")
             self.config = {
                 "debug": values.get("debug") is True,
                 "language": language,
@@ -151,6 +152,9 @@ class SettingsController(ApiController):
                 "github_gist_id": str(self.config.get("github_gist_id", "") or ""),
             }
             self.config_store.save(self.config)
+            if previous_game_path != self.config["game_path"]:
+                # 换了游戏目录：环境读数与目录判定的缓存都要作废，不然左下角还显示上一个游戏的版本。
+                self._environment_monitor.invalidate()
             set_logging_level(self._debug_override or self.config["debug"])
             LOGGER.info(
                 "debug configuration saved configured=%s override=%s active=%s",

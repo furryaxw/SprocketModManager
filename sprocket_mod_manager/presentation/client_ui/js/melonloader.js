@@ -57,6 +57,126 @@ function renderMelonLoader() {
     action.disabled = queueActive();
 }
 
+async function refreshEnvironment(includeLatest = false) {
+    try {
+        const result = await callApi("get_environment", includeLatest);
+        state.environment = result.ok ? result : null;
+    } catch (_error) {
+        // 环境信息读不到就不显示版本，别让左下角冒红：本机情况在列表里有更准确的呈现。
+        state.environment = null;
+    }
+    if (state.environment) state.environmentRevision = state.environment.revision;
+    renderEnvironment();
+}
+
+/** 环境里真正影响判定的那几项：只有它们变了才值得重新拉目录。 */
+function environmentKey(environment) {
+    if (!environment) return "";
+    return [
+        environment.sprocket?.version || environment.sprocket?.state || "",
+        environment.melonloader?.used_version || "",
+        environment.environment?.state || "",
+    ].join("|");
+}
+
+/**
+ * 每秒问一次环境。
+ *
+ * `revision` 变了说明游戏目录里动过东西（游戏更新、加载器装/卸、Mods 里增删文件）：
+ * 版本或判定口径变了就重拉目录（每个 release 的判定是后端按环境算的），只是文件变了就刷新列表。
+ */
+async function pollEnvironment() {
+    if (!state.ready) return;
+    let result;
+    try {
+        result = await callApi("get_environment", false);
+    } catch (_error) {
+        return;
+    }
+    if (!result.ok) return;
+    const previousKey = environmentKey(state.environment);
+    const changed = state.environmentRevision !== result.revision;
+    state.environmentRevision = result.revision;
+    state.environment = result;
+    renderStatusbar();
+    if (!changed) return;
+    renderEnvironment();
+    if (environmentKey(result) !== previousKey) await loadCatalog(false);
+    else await refreshInstalled();
+}
+
+/**
+ * 左下角：两行版本 + 「为什么对不上」那一行。
+ *
+ * 状态栏（statusbar）那边只报健康状态，细节都在这里 —— 这区不弹 toast。
+ */
+function renderEnvironment() {
+    const sprocket = $("#environment-sprocket");
+    const loader = $("#environment-melonloader-text");
+    const install = $("#environment-install-melonloader");
+    const note = $("#environment-note");
+    if (!sprocket || !loader || !install || !note) return;
+
+    const environment = state.environment;
+    const sprocketInfo = environment?.sprocket || {};
+    const loaderInfo = environment?.melonloader;
+    const problem = environmentProblem();
+
+    sprocket.classList.toggle("error",
+        sprocketInfo.state === "legacy" || sprocketInfo.state === "unreadable" || Boolean(problem));
+    const sprocketText = sprocketInfo.state === "legacy"
+        ? (sprocketInfo.raw || "-")
+        : sprocketInfo.state === "ok" ? (sprocketInfo.version || "-") : "-";
+    sprocket.textContent = `Sprocket ${sprocketText}`;
+
+    loader.hidden = Boolean(environment) && !loaderInfo?.installed;
+    loader.textContent = !environment
+        ? "MelonLoader ..."
+        : loaderInfo?.installed ? `MelonLoader ${loaderInfo.version || tr("versionUnknown")}` : "";
+    install.hidden = !environment || Boolean(loaderInfo?.installed)
+        || sprocketInfo.state === "unconfigured";
+    install.disabled = queueActive() || state.melonloaderLoading;
+
+    note.hidden = !problem;
+    note.className = "environment-line environment-note error";
+    note.textContent = problem;
+    // 环境是状态栏要看的活状态之一，顺手重算一次。
+    renderStatusbar();
+}
+
+/**
+ * 环境哪里不对：返回一句给 toast 的说明，没问题就返回空串。
+ *
+ * 三类：环境自身矛盾（加载器跟不上游戏）、游戏版本太老/读不出来、游戏路径还没配好。
+ */
+function environmentProblem() {
+    const environment = state.environment;
+    if (!environment) return "";
+    const sprocket = environment.sprocket || {};
+    if (sprocket.state === "legacy" || sprocket.state === "unreadable") {
+        return tr("environmentUnusable", {raw: sprocket.raw || "-"});
+    }
+    if (environment.environment?.state === "conflict") {
+        return tr("environmentConflict", {
+            loader: environment.melonloader?.used_version || tr("versionUnknown"),
+            sprocket: sprocket.version || "-",
+        });
+    }
+    return "";
+}
+
+/** 环境变坏时才弹一次（每次轮询都弹会刷屏）—— 见 `renderEnvironment` 里的比较。 */
+
+/**
+ * 左下角和设置页共用同一个动作：先把可能改过的游戏路径落盘，再决定是查状态还是直接装。
+ */
+async function handleMelonLoaderAction() {
+    const editedPath = $("#game-path").value.trim();
+    if (editedPath !== (state.settings.game_path || "") && !(await saveSettings())) return;
+    if (!state.melonloader || state.melonloader.error) await refreshMelonLoaderStatus(true);
+    else await installMelonLoader();
+}
+
 async function refreshMelonLoaderStatus(refresh = false) {
     state.melonloaderLoading = true;
     renderMelonLoader();
@@ -80,10 +200,36 @@ async function refreshMelonLoaderStatus(refresh = false) {
     }
 }
 
-async function installMelonLoader() {
+/**
+ * 装 MelonLoader 之前先查环境表：这段加载器版本还不支持本机游戏版本时，先说清楚再问一次。
+ *
+ * 表只从注册表来（`state.environment.environment.state` 是后端按表算好的），没装加载器时
+ * 用它算的是**最新版**能不能跑 —— 正好是「装上去有没有用」的答案。
+ */
+async function confirmIncompatibleLoader() {
+    if (!state.environment) return true;
+    if (state.environment.melonloader?.installed) return true;
+    if (!state.environment.melonloader?.latest_version) await refreshEnvironment(true);
+    const environment = state.environment;
+    if (environment?.environment?.state !== "conflict") return true;
+    return showModal({
+        kicker: tr("modRuntime"),
+        title: tr("melonloaderIncompatibleTitle"),
+        body: tr("melonloaderIncompatibleMessage", {
+            version: environment.melonloader?.used_version || tr("versionUnknown"),
+            sprocket: environment.sprocket?.version || environment.sprocket?.raw || "-",
+        }),
+        confirmText: tr("installAnyway"),
+        cancelText: tr("cancel"),
+    });
+}
+
+async function installMelonLoader(skipCompatibilityCheck = false) {
+    if (!skipCompatibilityCheck && !(await confirmIncompatibleLoader())) return false;
     state.melonloaderLoading = true;
     renderMelonLoader();
     setStatus(tr("melonloaderInstalling"));
+    let installed = false;
     try {
         const result = await callApi("install_melonloader", true);
         if (!result.ok) {
@@ -96,7 +242,15 @@ async function installMelonLoader() {
             count: result.files_installed,
         });
         toast(message);
-        setStatus(message, "ready");
+        setStatus("", "ready");
+        if (result.compatibility?.state === "conflict") {
+            // 装是装上了，但按表它跑不了这个游戏版本：说清楚，别让人以为装完就能用。
+            toast(tr("melonloaderStillIncompatible", {
+                version: result.melonloader.installed_version || tr("versionUnknown"),
+                sprocket: result.compatibility.sprocket || "-",
+            }), "error");
+        }
+        installed = true;
         return true;
     } catch (error) {
         resultError({message: String(error)});
@@ -104,6 +258,8 @@ async function installMelonLoader() {
     } finally {
         state.melonloaderLoading = false;
         renderMelonLoader();
+        // 装完左下角那行也要跟着变（放在 finally 里，避免按钮停留在"检查中"的禁用态）
+        if (installed) void refreshEnvironment(true);
     }
 }
 

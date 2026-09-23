@@ -12,8 +12,9 @@ from ...application.catalog import load_catalog
 from ...application.integrity import suppression_key, suppression_key_of, suppression_keys
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
+from ...domain.compatibility import Environment, release_verdict
 from ...domain.errors import ModManagerError, ModToggleError
-from ...domain.models import ReleaseInfo
+from ...domain.models import RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
 from ...infrastructure.dll_metadata import flush_metadata_cache
 from ...infrastructure.suppression_store import store_for
@@ -38,6 +39,7 @@ class CatalogController(ApiController):
             self.config = self.config_store.load()
             service = self._service_factory(self.config_store.app_dir)
             self._configure_service_network(service)
+            service.environment = self.current_environment()
             service, latest = load_catalog(
                 service,
                 _source_from_config(self.config),
@@ -72,6 +74,7 @@ class CatalogController(ApiController):
         registry = service.registry
         if registry is None:
             return []
+        environment = self._environment()
         records = self._installed(service) if installed is None else installed
         packages: list[dict[str, Any]] = []
         for package in registry.packages:
@@ -81,6 +84,11 @@ class CatalogController(ApiController):
                 if release is not None
                 else ()
             )
+            release_data = _release_data(release)
+            if release_data is not None:
+                release_data["verdict"] = release_verdict(
+                    environment, category=package.category, dependencies=release.dependencies
+                )
             packages.append(
                 {
                     "id": package.id,
@@ -96,12 +104,47 @@ class CatalogController(ApiController):
                     "dependencies": [dict(item) for item in package.dependencies],
                     "recommendations": list(package.recommendations),
                     "featured": package.featured,
-                    "release": _release_data(release),
+                    "release": release_data,
+                    "releases": self._release_verdicts(service, package, environment),
                     "install_assets": [asset.name for asset in selected_assets],
                     "installed": self._installed_entry(records.get(package.id)),
                 }
             )
         return packages
+
+    @staticmethod
+    def _release_verdicts(
+            service: ModManagerService,
+            package: RegistryPackage,
+            environment: Environment,
+    ) -> list[dict[str, Any]]:
+        """该包每个可安装版本的三色判定（新到旧）：界面拿它决定隐藏、颜色和默认选中。"""
+        if package.releases is not None:
+            releases = package.releases
+        else:
+            try:
+                releases = service.github.releases(package)
+            except (ModManagerError, OSError, ValueError):
+                return []
+        return [
+            {
+                "tag": release.tag,
+                "version": str(release.version),
+                "verdict": release_verdict(
+                    environment, category=package.category, dependencies=release.dependencies
+                ),
+                "compatibility": dict(release.compatibility) if release.compatibility else None,
+                # 声明的原始区间与逐轴结果：详情页照着摆，不再自己解析一遍。
+                "dependencies": [dict(item) for item in release.dependencies],
+                "axes": environment.axes(release.dependencies),
+            }
+            for release in releases
+            if service.github.install_assets(package, release)
+        ]
+
+    def _environment(self) -> Environment:
+        """判定用的环境：与左下角显示的是同一份（同一个监听缓存）。"""
+        return self.current_environment()
 
     @staticmethod
     def _installed_entry(info: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -162,7 +205,10 @@ class CatalogController(ApiController):
 
     def _current_service(self) -> ModManagerService:
         with self._state_lock:
-            return self.service
+            service = self.service
+        # 求解也要按环境筛：每次交出去之前刷新一次（读数来自监听缓存，不额外读盘）。
+        service.environment = self.current_environment()
+        return service
 
     def _installed_data(
             self,

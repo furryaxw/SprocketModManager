@@ -42,6 +42,29 @@ class BatchInstallTests(unittest.TestCase):
         service.registry = Registry(packages)
         return ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
 
+    def test_planning_a_version_that_is_already_installed_can_be_asked_for_anyway(self) -> None:
+        """解析出来＝装着的那版时默认「跳过」；界面要开版本选择器时会再要一次计划。
+
+        没有这一手，「已经装了当前能装的那版、但索引里还有个不兼容的新版」就没地方去强行装。
+        """
+        item = package("test.mod", "TestMod.dll", b"content", versions=("1.0.0",))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api = self._api(root, [item])
+            (root / "game" / "Mods" / "TestMod.dll").write_bytes(b"content")
+            try:
+                api.adopt_existing()
+                skipped = api.plan_install(["test.mod"], {"test.mod": "1.0.0"})
+                reopened = api.plan_install(["test.mod"], {"test.mod": "1.0.0"}, True)
+            finally:
+                api.install_queue.close()
+
+        self.assertEqual(skipped["plans"], [], "装着的这一版没必要再装一遍")
+        self.assertEqual(skipped["skipped"], ["test.mod"])
+        self.assertTrue(reopened["ok"], reopened)
+        self.assertEqual(reopened["plans"][0]["packages"][0]["version"], "1.0.0")
+        self.assertEqual(reopened["skipped"], [], "要了就给，不再跳过")
+
     def test_plan_skips_the_broken_mod_and_keeps_the_rest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api = self._api(Path(directory), [
@@ -134,7 +157,7 @@ class BatchInstallUiTests(unittest.TestCase):
 
     def test_plan_body_lists_the_skipped_mods_with_their_reason(self) -> None:
         catalog = (self.client_ui / "js" / "catalog.js").read_text(encoding="utf-8")
-        self.assertIn("function createPlanBody(plans, recommendations = [], failed = [])", catalog)
+        self.assertIn("function createPlanBody(planState, onVersionChange = async () => {})", catalog)
         self.assertIn('tr("skippedMods", {count: failed.length})', catalog)
         self.assertIn('group.className = "plan-group skipped-group"', catalog)
         self.assertIn("reason.textContent = item.message", catalog)
@@ -142,7 +165,7 @@ class BatchInstallUiTests(unittest.TestCase):
     def test_install_flows_pass_failed_through_and_report_it(self) -> None:
         installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
         self.assertIn(
-            "createPlanBody(result.plans, result.recommendations || [], result.failed || [])",
+            "createPlanBody(planState, selectPlanVersion)",
             installs,
         )
         self.assertEqual(

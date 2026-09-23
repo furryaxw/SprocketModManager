@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,7 @@ def payload(
         filter_key: str = "",
         click_rows: list | None = None,
         click_row_buttons: list | None = None,
+        environment: dict | None = None,
 ) -> dict:
     """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
     integrity = "corrupted" if corrupted else "suppressed" if suppressed else "release"
@@ -104,6 +106,8 @@ def payload(
         "has_any_mods": True,
     }
     document["packages"] = packages or []
+    if environment is not None:
+        document["environment"] = environment
     if selection is not None:
         document["selection"] = selection
     if action:
@@ -115,6 +119,17 @@ def payload(
     if click_row_buttons is not None:
         document["clickRowButtons"] = click_row_buttons
     return document
+
+
+def _find(node, predicate):
+    """在序列化后的行 DOM 里找第一个满足条件的节点。"""
+    if predicate(node):
+        return node
+    for child in node["children"]:
+        found = _find(child, predicate)
+        if found is not None:
+            return found
+    return None
 
 
 @unittest.skipIf(NODE is None, "node is not available")
@@ -389,6 +404,30 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(disabled["toolbar"]["buttons"]["enable-selected"], False)
         self.assertEqual(disabled["toolbar"]["buttons"]["disable-selected"], True)
 
+    def test_an_incompatible_update_is_an_exclamation_with_the_reason_in_its_tooltip(self) -> None:
+        """行里只留一枚感叹号；「哪一轴拦下来的」整句走 tooltip，不占列表宽度。"""
+        package = {
+            "id": "furryaxw.sprocket-laser-rangefinder",
+            "release": {"version": "0.2.0", "verdict": "incompatible"},
+        }
+        result = self._render(
+            packages=[package],
+            environment={
+                "sprocket": {"version": "0.2.53.2"},
+                "melonloader": {"used_version": "0.7.3"},
+            },
+        )
+
+        marker = _find(result["rows"][0], lambda node: "update-alert" in node["className"])
+        self.assertIsNotNone(marker, "被环境拦下来的新版本要挂一枚标记")
+        self.assertEqual(marker["text"], "!", "行里只放感叹号，不摊开整句")
+        reason = (
+            "Update to 0.2.0 is available, but it does not support your "
+            "Sprocket 0.2.53.2 and MelonLoader 0.7.3"
+        )
+        self.assertEqual(marker["title"], reason)
+        self.assertEqual(marker["ariaLabel"], reason, "tooltip 之外还要有可读标签")
+
     def test_batch_update_enqueues_only_the_selected_outdated_packages(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
         result = self._render(
@@ -399,8 +438,57 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
         self.assertEqual(
             queued,
-            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False]],
-            "只有选中且确实有新版的行才排队",
+            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False, False,
+              {"furryaxw.sprocket-laser-rangefinder": "0.2.0"}]],
+            "只有选中且确实有新版的行才排队，并且装的就是行上写的那一版",
+        )
+
+    def test_a_blocked_update_does_not_count_as_an_update(self) -> None:
+        """被兼容性拦下来的新版本不算「有更新」：按钮不点亮，「有更新」筛选也不数它。"""
+        package = {
+            "id": "furryaxw.sprocket-laser-rangefinder",
+            "release": {"version": "0.2.0", "verdict": "incompatible"},
+        }
+        result = self._render(
+            packages=[package],
+            selection=["Mods/SprocketLaserRangefinder.dll"],
+            action="update-selected",
+        )
+
+        self.assertTrue(result["toolbar"]["buttons"]["update-selected"], "拦下来就不该点亮「更新」")
+        self.assertEqual(result["toolbar"]["filters"]["outdated"]["text"], "Updates (0)")
+        queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
+        self.assertEqual(queued, [], "红版不入队")
+        self.assertEqual(
+            [entry["kind"] for entry in result["apiCalls"] if entry["kind"] == "error"], [],
+            "没有更新是正常情况，不该报错",
+        )
+
+    def test_a_runnable_update_under_an_incompatible_newest_still_offers_it(self) -> None:
+        """最新那版跑不了、中间有能跑的：按钮点亮、装的是能跑的那版，另外留枚感叹号说明为什么不是最新。"""
+        package = {
+            "id": "furryaxw.sprocket-laser-rangefinder",
+            "release": {"version": "0.3.0", "verdict": "incompatible"},
+            "releases": [
+                {"version": "0.3.0", "verdict": "incompatible"},
+                {"version": "0.2.0", "verdict": "compatible"},
+            ],
+        }
+        result = self._render(
+            packages=[package],
+            selection=["Mods/SprocketLaserRangefinder.dll"],
+            action="update-selected",
+        )
+
+        self.assertFalse(result["toolbar"]["buttons"]["update-selected"], "有能装的那版就该点亮")
+        row = result["rows"][0]
+        self.assertIsNotNone(_find(row, lambda node: node["text"] == "Version 0.2.0 available"))
+        self.assertIsNotNone(_find(row, lambda node: "update-alert" in node["className"]))
+        queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
+        self.assertEqual(
+            queued,
+            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False, False,
+              {"furryaxw.sprocket-laser-rangefinder": "0.2.0"}]],
         )
 
     def test_batch_toggle_calls_the_api_per_selected_path(self) -> None:
@@ -426,20 +514,32 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
 
 class SelectionBarStyleTests(unittest.TestCase):
-    """悬浮操作栏的样式契约：不占位（列表后不留空行）且按内容收窄。"""
+    """悬浮操作栏的样式契约：不占位（列表后不留空行）、按内容收窄、贴在页面底边。"""
 
     def setUp(self) -> None:
         self.css = (CLIENT_UI / "app.css").read_text(encoding="utf-8")
 
     def _rule(self, selector: str) -> str:
-        start = self.css.index(f"{selector} {{")
+        # 行首匹配：`.selection-bar {` 也是 `.catalog-selection-anchor .selection-bar {` 的子串。
+        match = re.compile(rf"^{re.escape(selector)} \{{", re.MULTILINE).search(self.css)
+        self.assertIsNotNone(match, f"CSS 里没有 {selector} 规则")
+        start = match.start()
         return self.css[start:self.css.index("}", start)]
 
     def test_the_anchor_occupies_no_space(self) -> None:
         rule = self._rule(".selection-anchor")
-        self.assertIn("position: sticky", rule)
-        self.assertIn("bottom: 0", rule)
+        self.assertIn("position: relative", rule)
         self.assertIn("height: 0", rule)
+
+    def test_the_list_scrolls_instead_of_the_page(self) -> None:
+        """栏贴的是页面底边：整页滚动时列表一短 `sticky` 就不生效，栏会跟着内容停在中间。"""
+        page = self._rule("#page-installed.active")
+        self.assertIn("overflow: hidden", page)
+        self.assertIn("flex-direction: column", page)
+        listing = self._rule("#installed-list")
+        self.assertIn("overflow: auto", listing)
+        self.assertIn("flex: 1", listing)
+        self.assertIn("min-height: 0", listing)
 
     def test_the_bar_floats_and_shrinks_to_its_content(self) -> None:
         rule = self._rule(".selection-bar")
