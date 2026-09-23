@@ -268,6 +268,12 @@ async function openUrl(url) {
     if (!result.ok) resultError(result);
 }
 
+/**
+ * 管理器自己的版本检查。
+ *
+ * 打包成单文件时可以直接换掉自己：确认后下载新版、交给换壳子进程重启（后端关掉这个窗口）。
+ * 选「稍后」＝这次会话先不管，下次启动照样问（不落任何持久化）。
+ */
 async function checkManagerUpdate(startup) {
     const button = $("#manager-update");
     button.disabled = true;
@@ -284,22 +290,24 @@ async function checkManagerUpdate(startup) {
         }
         state.update = result;
         $("#latest-version").textContent = result.latest;
-        if (result.newer) {
-            button.disabled = false;
-            button.textContent = tr("getUpdate");
-            if (startup && $("#modal-layer").hidden) {
-                const confirmed = await showModal({
-                    kicker: tr("updateAvailableKicker"),
-                    title: tr("updateFound"),
-                    body: tr("updateMessage", {latest: result.latest, current: result.current}),
-                    confirmText: tr("getUpdate"),
-                    cancelText: tr("later"),
-                });
-                if (confirmed) await openUrl(result.page_url);
-            }
-        } else {
+        if (!result.newer) {
             button.textContent = tr("upToDate");
             button.disabled = true;
+            return;
+        }
+        button.disabled = false;
+        button.textContent = result.can_self_update ? tr("updateNow") : tr("getUpdate");
+        if (startup && $("#modal-layer").hidden) {
+            const confirmed = await showModal({
+                kicker: tr("updateAvailableKicker"),
+                title: tr("updateFound"),
+                body: managerUpdateBody(result),
+                confirmText: result.can_self_update ? tr("updateNow") : tr("getUpdate"),
+                cancelText: tr("later"),
+            });
+            if (!confirmed) return;
+            if (result.can_self_update) await applyManagerUpdate(result);
+            else await openUrl(result.page_url);
         }
     } catch (error) {
         $("#latest-version").textContent = tr("updateUnavailable");
@@ -307,4 +315,53 @@ async function checkManagerUpdate(startup) {
         button.disabled = false;
         if (!startup) resultError({message: String(error)});
     }
+}
+
+/** 更新弹窗那块内容：版本对比 + 发布说明（源码运行时再说明一句为什么不能自助更新）。 */
+function managerUpdateBody(update) {
+    const body = document.createElement("div");
+    body.className = "update-body";
+    const versions = document.createElement("p");
+    versions.textContent = tr("updateMessage", {latest: update.latest, current: update.current});
+    body.append(versions);
+    const notes = String(update.notes || "").trim();
+    if (notes) {
+        const block = document.createElement("pre");
+        block.className = "update-notes";
+        block.textContent = notes;
+        body.append(block);
+    }
+    if (!update.can_self_update) {
+        const hint = document.createElement("p");
+        hint.className = "modal-note";
+        hint.textContent = tr("updateSelfUpdateUnavailable");
+        body.append(hint);
+    }
+    return body;
+}
+
+/** 立即更新：下载新版 → 换壳重启。成功的表现是这个窗口被后端关掉。 */
+async function applyManagerUpdate(update) {
+    void showModal({
+        kicker: tr("updateAvailableKicker"),
+        title: tr("updateDownloading"),
+        body: tr("updateDownloadingMessage", {version: update.latest}),
+        confirmText: tr("close"),
+        cancelText: null,
+        closeOnBackdrop: false,
+    });
+    const modalStatus = $("#modal-status");
+    if (modalStatus) {
+        modalStatus.hidden = false;
+        modalStatus.textContent = tr("updateDownloading");
+    }
+    const applied = await callApi("apply_manager_update");
+    if (!applied.ok) {
+        closeModal(false);
+        resultError(applied);
+        return;
+    }
+    const message = tr("updateRestarting", {version: applied.version});
+    if (modalStatus) modalStatus.textContent = message;
+    setStatus(message);
 }
