@@ -77,6 +77,7 @@ const elements = {
     "#installed-filter-enabled": new FakeElement("button"),
     "#installed-filter-disabled": new FakeElement("button"),
     "#installed-filter-outdated": new FakeElement("button"),
+    "#installed-filter-incompatible": new FakeElement("button"),
     "#installed-selection": new FakeElement("span"),
     "#installed-selection-bar": new FakeElement("div"),
     "#toggle-selection": new FakeElement("button"),
@@ -183,6 +184,7 @@ const sandbox = {
             installedFilterEnabled: "Enabled",
             installedFilterDisabled: "Disabled",
             installedFilterOutdated: "Updates",
+            installedFilterIncompatible: "Incompatible",
             noFilteredMods: "No mods match this filter",
             selectionNotApplicable: "The selection does not support this action",
             newVersionAvailable: `Version ${values.version} available`,
@@ -321,7 +323,7 @@ setImmediate(() => {
             },
             invertDisabled: Boolean(elements["#invert-selection"].disabled),
             filters: Object.fromEntries(
-                ["all", "enabled", "disabled", "outdated"].map((key) => [
+                ["all", "enabled", "disabled", "outdated", "incompatible"].map((key) => [
                     key,
                     {
                         text: elements[`#installed-filter-${key}`].textContent,

@@ -360,6 +360,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(filters["enabled"], {"text": "Enabled (2)", "active": False})
         self.assertEqual(filters["disabled"], {"text": "Disabled (1)", "active": False})
         self.assertEqual(filters["outdated"], {"text": "Updates (1)", "active": False})
+        self.assertEqual(filters["incompatible"], {"text": "Incompatible (0)", "active": False})
 
     def test_filter_hides_rows_that_do_not_match(self) -> None:
         disabled = self._render(filter_key="disabled")
@@ -386,7 +387,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["className"], "empty-list")
         self.assertEqual(result["rows"][0]["children"][0]["text"], "No mods match this filter")
         self.assertEqual(result["count"], "3 detected mods", "空态也不该说磁盘上没有模组")
-        self.assertEqual(len(result["toolbar"]["filters"]), 4)
+        self.assertEqual(len(result["toolbar"]["filters"]), 5)
 
     def test_double_clicking_a_catalog_row_opens_it_in_the_catalog(self) -> None:
         """双击那一行的去处是模组目录页：切过去并选中这个包。"""
@@ -433,6 +434,36 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["toolbar"]["selection"], "")
         self.assertEqual(focus_calls(result), [])
         self.assertEqual(open_location_calls(result), [])
+
+    def test_incompatible_filter_counts_both_kinds_of_incompatibility(self) -> None:
+        """「不兼容」= 装着的这版跑不了，或者更新里那版跑不了（行上两枚标记的两种来源）。"""
+        installed_blocked = {
+            "id": "furryaxw.sprocket-laser-rangefinder",
+            "release": {"version": "0.1.3", "verdict": "incompatible"},
+            "releases": [{"version": "0.1.3", "verdict": "incompatible"}],
+        }
+        blocked = self._render(packages=[installed_blocked])
+        self.assertEqual(blocked["toolbar"]["filters"]["incompatible"]["text"], "Incompatible (1)")
+
+        update_blocked = {
+            "id": "furryaxw.sprocket-laser-rangefinder",
+            "release": {"version": "0.2.0", "verdict": "incompatible"},
+            "releases": [{"version": "0.2.0", "verdict": "incompatible"}],
+        }
+        newer = self._render(packages=[update_blocked])
+        self.assertEqual(newer["toolbar"]["filters"]["incompatible"]["text"], "Incompatible (1)")
+
+        hidden = self._render(filter_key="incompatible")
+        self.assertEqual([row["className"] for row in hidden["rows"]], ["empty-list"])
+        self.assertEqual(hidden["toolbar"]["filters"]["incompatible"]["active"], True)
+
+        shown = self._render(packages=[installed_blocked], filter_key="incompatible")
+        self.assertEqual(len(shown["rows"]), 1, "不兼容的那一行留下")
+        actions = shown["rows"][0]["children"][2]
+        self.assertIsNotNone(
+            _find(actions, lambda node: "incompatible" in node["className"]),
+            "留下的那一行挂着不兼容标记",
+        )
 
     def test_batch_buttons_follow_what_the_selection_can_actually_do(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
