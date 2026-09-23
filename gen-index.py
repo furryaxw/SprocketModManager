@@ -50,9 +50,29 @@ GITHUB_API_VERSION = "2022-11-28"
 FALLBACK_INDEX_URL = "https://sprocketmods.furryaxw.top/index.json"
 INSTALLABLE_SUFFIXES = {".dll", ".zip"}
 
+# 环境用虚拟包表达：模组 release 对它们的依赖就是「兼容哪个游戏 / 哪个加载器」。
+# 这两个 id 不在注册表里（没有目录、没有 release），解析时由客户端用本机环境注入。
+# id 必须满足注册表的 id 规则（全小写、至少一段分隔符）：`MelonLoader` 这种大小写只出现在显示名里。
+SPROCKET_GAME_PACKAGE = "environment.sprocket"
+MELONLOADER_RUNTIME_PACKAGE = "environment.melonloader"
+VIRTUAL_PACKAGES = (SPROCKET_GAME_PACKAGE, MELONLOADER_RUNTIME_PACKAGE)
+# 轴 -> (版本段数, 虚拟包 id)
+COMPAT_AXES: dict[str, tuple[int, str]] = {
+    "sprocket": (4, SPROCKET_GAME_PACKAGE),
+    "melonloader": (3, MELONLOADER_RUNTIME_PACKAGE),
+}
+COMPAT_BLOCK_RE = re.compile(r"<!--\s*sp-compat\s*(?P<body>.*?)-->", re.DOTALL | re.IGNORECASE)
+# 环境表：加载器版本区间 -> 该加载器能跑的游戏版本区间。构建时规范化后一并写进索引，客户端解析索引即可拿到，不必额外请求。
+ENVIRONMENT_FILE_NAME = "environment.json"
+ENVIRONMENT_FILE = Path(__file__).resolve().parent / ENVIRONMENT_FILE_NAME
+
 
 class RegistryError(ValueError):
     pass
+
+
+class CompatibilityError(ValueError):
+    """某个 release 的 `sp-compat` 块按写下的样子没法用。"""
 
 
 def _github_json(path: str, *, missing_ok: bool = False) -> Any:
@@ -85,6 +105,251 @@ def _github_json(path: str, *, missing_ok: bool = False) -> Any:
         if attempt < 2:
             time.sleep(attempt + 1)
     raise RegistryError(f"GitHub API request failed for {path}: {last_error}") from last_error
+
+
+def _compat_version(text: str, parts: int, strict: bool) -> tuple[int, ...]:
+    """解析一段版本；`strict` 时要求写满段数。
+
+    4 段及以上（游戏）必须写全：`0.2.53` 有歧义（少一段？还是整段通配？），拒绝比猜好。
+    段数较少的轴（加载器 3 段）允许省略，`0.8` 按 `0.8.0` 补齐。
+    """
+    segments = text.strip().split(".")
+    if not 1 <= len(segments) <= parts or not all(segment.isdigit() for segment in segments):
+        raise CompatibilityError(f"{text!r} 不是合法版本（最多 {parts} 段数字）")
+    if strict and len(segments) != parts:
+        raise CompatibilityError(f"{text!r} 少了段数：要写满 {parts} 段，整段通配写成 x.y.z.x")
+    return tuple(int(segment) for segment in segments) + (0,) * (parts - len(segments))
+
+
+def _compat_shift(version: tuple[int, ...], delta: int) -> tuple[int, ...]:
+    return (*version[:-1], version[-1] + delta)
+
+
+def _compat_upper_for_caret(version: tuple[int, ...]) -> tuple[int, ...]:
+    if version[0] > 0:
+        return (version[0] + 1, *([0] * (len(version) - 1)))
+    if version[1] > 0:
+        return (0, version[1] + 1, *([0] * (len(version) - 2)))
+    return (0, 0, version[2] + 1, *([0] * (len(version) - 3)))
+
+
+def _compat_upper_for_tilde(version: tuple[int, ...]) -> tuple[int, ...]:
+    return (version[0], version[1] + 1, *([0] * (len(version) - 2)))
+
+
+def _compat_token_range(
+        token: str,
+        parts: int,
+        strict: bool,
+) -> tuple[tuple[int, ...] | None, tuple[int, ...] | None]:
+    """单个 token -> (下界, 上界)；`^`/`~` 会展开成上下界，其余 token 只给一侧。"""
+    match = re.fullmatch(r"(>=|<=|>|<|=|\^|~)?(.+)", token)
+    if match is None:  # pragma: no cover - 正则保证不会发生
+        raise CompatibilityError(f"无法解析的版本区间 token：{token!r}")
+    operator = match.group(1) or "="
+    target = match.group(2).strip()
+
+    wildcard = re.fullmatch(r"(\d+(?:\.\d+)*)\.(?:x|X|\*)", target)
+    if wildcard is not None:
+        if operator != "=":
+            raise CompatibilityError(f"通配不能带比较符：{token!r}")
+        segments = wildcard.group(1).split(".")
+        if len(segments) != parts - 1 or not all(segment.isdigit() for segment in segments):
+            raise CompatibilityError(f"{token!r} 不是 {parts} 段版本的通配写法")
+        numeric = tuple(int(segment) for segment in segments)
+        successor = numeric[:-1] + (numeric[-1] + 1, 0)
+        return numeric + (0,), _compat_shift(successor, -1)
+
+    # 比较符两侧允许省略段数（`<0.2.54` 明确就是「0.2.54.0 之前」）；
+    # 写成精确值/用 ^ ~ 时才要求写满，因为 `0.2.53` 到底是哪一段有歧义。
+    exact = operator in {"=", "^", "~"}
+    version = _compat_version(target, parts, strict and exact)
+    if operator == ">=":
+        return version, None
+    if operator == ">":
+        return _compat_shift(version, 1), None
+    if operator == "<=":
+        return None, version
+    if operator == "<":
+        return None, _compat_shift(version, -1)
+    if operator == "^":
+        return version, _compat_shift(_compat_upper_for_caret(version), -1)
+    if operator == "~":
+        return version, _compat_shift(_compat_upper_for_tilde(version), -1)
+    return version, version
+
+
+def _compat_item_range(
+        item: str,
+        parts: int,
+        strict: bool,
+) -> tuple[tuple[int, ...] | None, tuple[int, ...] | None]:
+    """一个作者写的区间项 -> 闭区间上下界。
+
+    空格＝并且，但一个项里**最多一个下界 + 一个上界**（够覆盖所有正常写法；复杂布尔式不在这里猜）。
+    末段为负数表示「恰好在它的后继之前」，这是 `<0.2.54.0` 或通配的上边界在合并过程中的表示方式
+    （纯元组比较依然成立，输出时再还原成 `<...`）。
+    """
+    text = item.strip()
+    if not text:
+        raise CompatibilityError("版本区间项不能为空")
+    if text in {"*", "x", "X"}:
+        return None, None
+
+    hyphen = re.fullmatch(r"(\S+)\s+-\s+(\S+)", text)
+    if hyphen:
+        lower = _compat_version(hyphen.group(1), parts, strict)
+        upper = _compat_version(hyphen.group(2), parts, strict)
+        return lower, upper
+
+    lower: tuple[int, ...] | None = None
+    upper: tuple[int, ...] | None = None
+    for token in text.split():
+        token_lower, token_upper = _compat_token_range(token, parts, strict)
+        if token_lower is not None:
+            if lower is not None:
+                raise CompatibilityError(f"一个区间项里只能有一个下界：{text!r}")
+            lower = token_lower
+        if token_upper is not None:
+            if upper is not None:
+                raise CompatibilityError(f"一个区间项里只能有一个上界：{text!r}")
+            upper = token_upper
+    return lower, upper
+
+
+def _compat_bound_text(version: tuple[int, ...], *, lower: bool) -> str:
+    if version[-1] < 0:
+        exclusive = _compat_shift(version, 1)
+        return (">" if lower else "<") + ".".join(str(part) for part in exclusive)
+    return (">=" if lower else "<=") + ".".join(str(part) for part in version)
+
+
+def canonical_compat_range(items: list[str], parts: int) -> str:
+    """把作者写的一组区间项规范成一条 `>=a <=b`（多段用 `||` 连接）。"""
+    # 4 段及以上必须写全段数（少一段有歧义）；段数少的轴允许省略（0.8 按 0.8.0 补齐）
+    strict = parts >= 4
+    ranges = [_compat_item_range(item, parts, strict) for item in items]
+    for lower, upper in ranges:
+        if lower is not None and upper is not None and upper < lower:
+            raise CompatibilityError(
+                f"区间上界低于下界：{'.'.join(map(str, lower))} > {'.'.join(map(str, upper))}"
+            )
+
+    ordered = sorted(
+        ranges,
+        key=lambda bounds: (bounds[0] is not None, bounds[0] if bounds[0] is not None else ()),
+    )
+    merged: list[list[tuple[int, ...] | None]] = []
+    for lower, upper in ordered:
+        if merged:
+            last_upper = merged[-1][1]
+            overlaps = last_upper is None or (lower is not None and lower <= _compat_shift(last_upper, 1))
+            if overlaps:
+                merged[-1][1] = None if (last_upper is None or upper is None) else max(last_upper, upper)
+                continue
+        merged.append([lower, upper])
+
+    if len(merged) == 1 and merged[0][0] is None and merged[0][1] is None:
+        return "*"
+
+    clauses: list[str] = []
+    for lower, upper in merged:
+        if lower is None:
+            clauses.append(_compat_bound_text(upper, lower=False))  # type: ignore[arg-type]
+        elif upper is None:
+            clauses.append(_compat_bound_text(lower, lower=True))
+        else:
+            clauses.append(
+                f"{_compat_bound_text(lower, lower=True)} {_compat_bound_text(upper, lower=False)}"
+            )
+    return " || ".join(clauses)
+
+
+def parse_compat_block(body: object) -> tuple[dict[str, str], list[str]]:
+    """发布说明里的 `sp-compat` 块 -> {轴: 规范化区间}，外加（非致命的）写法告警。
+
+    没有块＝这个 release 没有声明（返回空，不报错）。块在但内容没法用 -> CompatibilityError，
+    调用方把该 release 记成「未声明」，其他 release 不受影响。
+    """
+    match = COMPAT_BLOCK_RE.search(str(body or ""))
+    if match is None:
+        return {}, []
+    try:
+        payload = json.loads(match.group("body"))
+    except json.JSONDecodeError as exc:
+        raise CompatibilityError(f"sp-compat 块不是合法 JSON：{exc}") from exc
+    if not isinstance(payload, dict):
+        raise CompatibilityError("sp-compat 块必须是一个 JSON 对象")
+
+    warnings: list[str] = []
+    unknown = sorted(set(payload) - set(COMPAT_AXES))
+    if unknown:
+        warnings.append("已忽略未知的轴：" + ", ".join(unknown))
+
+    declared: dict[str, str] = {}
+    for axis, (parts, _package_id) in COMPAT_AXES.items():
+        raw = payload.get(axis)
+        if raw is None:
+            continue
+        items = [raw] if isinstance(raw, str) else raw
+        if not isinstance(items, list) or not items or not all(isinstance(item, str) for item in items):
+            raise CompatibilityError(f"{axis} 必须是版本区间字符串或它们的非空列表")
+        declared[axis] = canonical_compat_range(list(items), parts)
+    return declared, warnings
+
+
+def apply_release_compatibility(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把兼容声明落成对环境虚拟包的依赖，并处理继承。
+
+    从旧到新走一遍：自己有可用声明就用自己那份；没有就沿用比它旧、最近一个有可用声明的
+    release（`compatibility.from_tag` 始终指向**最初声明**的那个 tag，继承链不会越接越长）；
+    写坏的声明不继承，只留告警。
+    """
+    ordered = sorted(releases, key=lambda entry: _release_version(entry) or Version.parse("0.0.0"))
+    carried_dependencies: list[dict[str, str]] | None = None
+    carried_origin = ""
+
+    for entry in ordered:
+        declared = entry.pop("compat_declared", None) or {}
+        warnings = list(entry.pop("compat_warnings", None) or [])
+        invalid = bool(entry.pop("compat_invalid", False))
+        tag = str(entry.get("tag", ""))
+        compatibility: dict[str, Any] = {}
+
+        if declared:
+            dependencies = [
+                {"id": COMPAT_AXES[axis][1], "version": declared[axis]}
+                for axis in COMPAT_AXES
+                if axis in declared
+            ]
+            entry["dependencies"] = dependencies
+            compatibility = {"source": "declared"}
+            carried_dependencies = dependencies
+            carried_origin = tag
+        elif entry.get("dependencies"):
+            # 增量基线里已经解析过的条目：原样保留，并且仍然可以作为继承来源
+            carried_dependencies = [dict(item) for item in entry["dependencies"]]
+            compatibility = dict(entry.get("compatibility") or {})
+            carried_origin = str(compatibility.get("from_tag") or tag)
+        elif carried_dependencies is not None and not invalid:
+            entry["dependencies"] = [dict(item) for item in carried_dependencies]
+            compatibility = {"source": "inherited", "from_tag": carried_origin}
+
+        if warnings:
+            compatibility["warnings"] = warnings
+        if compatibility:
+            entry["compatibility"] = compatibility
+
+    return releases
+
+
+def _package_compatibility_warnings(releases: list[dict[str, Any]]) -> list[str]:
+    collected: list[str] = []
+    for entry in releases:
+        tag = str(entry.get("tag", "")) or "?"
+        for message in (entry.get("compatibility") or {}).get("warnings", []) or []:
+            collected.append(f"{tag}: {message}")
+    return collected
 
 
 def normalize_release_records(package: dict[str, Any], records: object) -> list[dict[str, Any]]:
@@ -153,6 +418,11 @@ def normalize_release_records(package: dict[str, Any], records: object) -> list[
             )
         if not assets:
             continue
+        try:
+            declared, compat_warnings = parse_compat_block(record.get("body"))
+            compat_invalid = False
+        except CompatibilityError as exc:
+            declared, compat_warnings, compat_invalid = {}, [str(exc)], True
         releases.append(
             (
                 version,
@@ -164,6 +434,10 @@ def normalize_release_records(package: dict[str, Any], records: object) -> list[
                     "published_at": str(record.get("published_at", "")),
                     "page_url": page_url,
                     "assets": assets,
+                    # 下面三个是内部字段，`apply_release_compatibility` 用完会摘掉
+                    "compat_declared": declared,
+                    "compat_warnings": compat_warnings,
+                    "compat_invalid": compat_invalid,
                 },
             )
         )
@@ -300,7 +574,7 @@ def fetch_package_releases(
             normalized = normalize_release_records(package, [latest])
         except RegistryError:
             raise list_error
-    return merge_releases(previous, normalized)
+    return apply_release_compatibility(merge_releases(previous, normalized))
 
 
 def validate_target(target: str) -> None:
@@ -521,6 +795,9 @@ def scan_mods(mods_dir: Path) -> list[dict]:
 
     for package in packages.values():
         for dependency in package.get("dependencies", []):
+            if dependency["id"] in VIRTUAL_PACKAGES:
+                # 环境虚拟包：模组声明「兼容哪个游戏 / 哪个加载器」时用它，注册表里没有对应目录。
+                continue
             if dependency["id"] not in packages:
                 raise RegistryError(
                     f"{package['id']}: dependency is not registered: {dependency['id']}"
@@ -562,6 +839,62 @@ def load_index_releases(source: str | Path) -> dict[str, list[dict[str, Any]]]:
     return releases_by_id
 
 
+def load_environment_table(path: Path) -> tuple[dict[str, Any], list[str]]:
+    """读加载器-游戏兼容表：每条记「某段加载器版本能跑哪段游戏版本」。
+
+    返回值是 (表, 告警)。文件不存在就是没有这张表（客户端退回内置兜底）；某一条写坏只跳过
+    那一条并留告警，不影响其他条目，也不影响索引生成。
+    """
+    warnings: list[str] = []
+    empty: dict[str, Any] = {"schema_version": 1, "entries": []}
+    if not path.is_file():
+        return empty, warnings
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return empty, [f"{path.name}: 无法读取（{exc}）"]
+
+    if not isinstance(raw, dict):
+        return empty, [f"{path.name}: 顶层必须是对象"]
+    unknown = sorted(set(raw) - {"schema_version", "entries"})
+    if unknown:
+        warnings.append(f"{path.name}: 忽略了未知键 {', '.join(unknown)}")
+    entries = raw.get("entries")
+    if not isinstance(entries, list) or not entries:
+        warnings.append(f"{path.name}: entries 必须是非空列表")
+        return empty, warnings
+
+    normalized: list[dict[str, str]] = []
+    for position, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            warnings.append(f"{path.name} 第 {position} 条：必须是对象")
+            continue
+        missing = sorted({"melonloader", "sprocket"} - set(entry))
+        if missing:
+            warnings.append(f"{path.name} 第 {position} 条：缺少 {', '.join(missing)}")
+            continue
+        try:
+            normalized.append(
+                {
+                    "melonloader": canonical_compat_range(
+                        [str(entry["melonloader"])], COMPAT_AXES["melonloader"][0]
+                    ),
+                    "sprocket": canonical_compat_range(
+                        [str(entry["sprocket"])], COMPAT_AXES["sprocket"][0]
+                    ),
+                }
+            )
+        except CompatibilityError as exc:
+            warnings.append(f"{path.name} 第 {position} 条：{exc}")
+
+    if not normalized:
+        return empty, warnings
+    schema_version = raw.get("schema_version")
+    if not isinstance(schema_version, int):
+        schema_version = 1
+    return {"schema_version": schema_version, "entries": normalized}, warnings
+
+
 def generate_index(
     mods_dir: Path,
     output: Path,
@@ -569,6 +902,7 @@ def generate_index(
     release_loader: Callable[[dict[str, Any], list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
     baseline_releases: dict[str, list[dict[str, Any]]] | None = None,
     fallback_index_url: str = FALLBACK_INDEX_URL,
+    environment_file: Path | None = None,
     refresh: bool = False,
 ) -> dict:
     packages = scan_mods(mods_dir)
@@ -618,9 +952,24 @@ def generate_index(
                     f"no release data available ({fallback_reason})",
                     file=sys.stderr,
                 )
+    if release_loader:
+        for package in packages:
+            warnings = _package_compatibility_warnings(package.get("releases") or [])
+            if warnings:
+                package["compatibility_warnings"] = warnings
+
+    environment, environment_warnings = load_environment_table(
+        environment_file if environment_file is not None else ENVIRONMENT_FILE
+    )
+    for warning in environment_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
     index = {
         "schema_version": 1,
         "game": "sprocket",
+        "virtual_packages": list(VIRTUAL_PACKAGES),
+        "environment": environment,
+        "environment_warnings": environment_warnings,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
             "+00:00", "Z"
         ),
@@ -654,6 +1003,11 @@ def main() -> int:
         help="ignore the previous index and re-read every package's releases",
     )
     parser.add_argument(
+        "--environment",
+        default="",
+        help=f"loader/game compatibility table (default: {ENVIRONMENT_FILE_NAME} in the repository root)",
+    )
+    parser.add_argument(
         "--fallback-index-url",
         default=FALLBACK_INDEX_URL,
         help="index URL used when no previous index is available",
@@ -676,6 +1030,7 @@ def main() -> int:
             release_loader=fetch_package_releases if args.fetch_releases else None,
             baseline_releases=baseline,
             fallback_index_url=args.fallback_index_url,
+            environment_file=Path(args.environment) if args.environment else None,
             refresh=args.refresh,
         )
     except RegistryError as exc:
