@@ -1,6 +1,9 @@
 "use strict";
 
 function wireEvents() {
+    // 只接一次：初始化如果中途失败会被再调一次，接两遍就等于点一下触发两次。
+    if (state.wired) return;
+    state.wired = true;
     $$(".nav-item").forEach((item) => item.addEventListener("click", () => showPage(item.dataset.pageTarget)));
     $("#catalog-search").addEventListener("input", renderCatalog);
     $("#category-select").addEventListener("change", renderCatalog);
@@ -8,7 +11,9 @@ function wireEvents() {
     $("#translation-search").addEventListener("input", renderCatalog);
     $("#translation-sort").addEventListener("change", renderCatalog);
     $("#refresh-catalog").addEventListener("click", () => loadCatalog(true));
-    $("#batch-install").addEventListener("click", () => beginInstall([...state.batch]));
+    $$("[data-selection-action]").forEach((button) => {
+        button.addEventListener("click", () => void handleCatalogSelection(button.dataset.selectionAction));
+    });
     $$("[data-installed-filter]").forEach((chip) => {
         chip.addEventListener("click", () => setInstalledFilter(chip.dataset.installedFilter));
     });
@@ -35,12 +40,8 @@ function wireEvents() {
     $("#github-proxy-enabled").addEventListener("change", syncProxyControls);
     $("#add-developer-server").addEventListener("click", addDeveloperServer);
     $("#github-login-button").addEventListener("click", handleGithubAuth);
-    $("#melonloader-action").addEventListener("click", async () => {
-        const editedPath = $("#game-path").value.trim();
-        if (editedPath !== (state.settings.game_path || "") && !(await saveSettings())) return;
-        if (!state.melonloader || state.melonloader.error) await refreshMelonLoaderStatus(true);
-        else await installMelonLoader();
-    });
+    $("#melonloader-action").addEventListener("click", handleMelonLoaderAction);
+    $("#environment-install-melonloader").addEventListener("click", handleMelonLoaderAction);
     $("#open-melonloader-release").addEventListener("click", () => {
         openUrl(state.melonloader?.page_url || state.links.melonloader);
     });
@@ -73,9 +74,9 @@ async function initialize() {
     state.initializing = true;
     wireEvents();
     try {
-        await callApi("startup_trace", "initialize entered");
+        traceStartup("initialize entered");
         const result = await callApi("bootstrap");
-        await callApi("startup_trace", "bootstrap resolved");
+        traceStartup("bootstrap resolved");
         if (!result.ok) throw new Error(result.message || "bootstrap failed");
         state.ready = true;
         reportClientLog("info", `client initialized version=${result.version}`);
@@ -98,11 +99,12 @@ async function initialize() {
         applyTextScale(result.settings.text_scale);
         renderGithubLogin();
         setLanguage(result.language);
-        await callApi("startup_trace", "initial UI state rendered");
+        void refreshEnvironment(true);
+        traceStartup("initial UI state rendered");
         // 管理器是「装了什么」的工具：启动直接进安装管理页，目录页留给找新模组的时候。
         await showPage("installed");
         await pollQueue(true);
-        await callApi("startup_trace", "initial queue loaded");
+        traceStartup("initial queue loaded");
         void detectGamePathPlaceholder();
         void loadCatalog(false);
         window.setTimeout(() => {
@@ -111,11 +113,14 @@ async function initialize() {
         window.setInterval(() => {
             void pollQueue(false);
         }, 400);
+        window.setInterval(() => {
+            void pollEnvironment();
+        }, 1000);
     } catch (error) {
         reportClientLog("error", `client initialization failed: ${String(error)}`);
         state.ready = false;
         setRegistryState("error", tr("connectionFailed"));
-        resultError({message: String(error)});
+        resultError({code: "client_startup_failed", message: String(error)});
     } finally {
         state.initializing = false;
     }

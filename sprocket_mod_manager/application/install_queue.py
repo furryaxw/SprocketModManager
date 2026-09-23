@@ -28,6 +28,8 @@ class InstallQueueEntry:
     context: object | None = None
     force_conflicts: bool = False
     error_code: str = ""
+    # 入队时就定好装哪个版本：队列跑起来时环境可能已经变了，不能那时再挑一次。
+    version_range: str = "*"
 
 
 QueueRunner = Callable[[InstallQueueEntry, Callable[[str], None]], None]
@@ -52,7 +54,9 @@ class InstallQueue:
             *,
             context: object | None = None,
             force_conflicts: bool = False,
+            version_ranges: dict[str, str] | None = None,
     ) -> tuple[InstallQueueEntry, ...]:
+        ranges = dict(version_ranges or {})
         added: list[InstallQueueEntry] = []
         with self._condition:
             if self._closed:
@@ -71,6 +75,7 @@ class InstallQueue:
                     game_path,
                     context=context,
                     force_conflicts=force_conflicts,
+                    version_range=str(ranges.get(package_id) or "*"),
                 )
                 self._entries.append(entry)
                 active_ids.add(package_id)

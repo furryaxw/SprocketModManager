@@ -12,6 +12,7 @@ from .api_constants import MANAGER_REPOSITORY
 from .controllers import CatalogController, InstallationController, PrivateDistributionController, SettingsController
 from ..application.install_queue import InstallQueue
 from ..application.service import ModManagerService
+from ..domain.compatibility import Environment
 from ..domain.errors import ModManagerError
 from ..domain.models import ReleaseInfo
 from ..domain.semver import Version
@@ -20,6 +21,9 @@ from ..infrastructure.config import ConfigStore, detect_language, effective_game
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.desktop import open_directory
 from ..infrastructure.app_logging import manager_log_path
+from ..infrastructure.environment_cache import read_environment_table
+from ..infrastructure.environment_monitor import EnvironmentMonitor, game_environment_fingerprint
+from ..infrastructure.game_version import GameVersion, read_game_version
 from ..infrastructure.log_upload import upload_latest_log, upload_log_file
 from ..infrastructure.melonloader import MELONLOADER_REPOSITORY, MelonLoaderManager
 from ..infrastructure.private_servers import PrivateCatalogCache
@@ -78,7 +82,80 @@ class ClientApi:
         if http is None:
             http = ModManagerService(self.config_store.app_dir).http
         self.melonloader = MelonLoaderManager(self.config_store.app_dir, http)
+        self._environment_monitor = EnvironmentMonitor(
+            self._read_environment,
+            lambda: game_environment_fingerprint(self._game_path_or_none()),
+        )
+        # 环境表（加载器↔游戏）：内存里留一份，省掉每秒问一次时读盘。
+        self._environment_table_cache: dict[str, Any] | None = None
+        self._environment_table_read = False
         LOGGER.info("Client API initialized version=%s", self.version)
+
+    def environment_snapshot(self) -> dict[str, Any]:
+        """环境读数 + `revision`；第一次有人问的时候才起轮询线程。"""
+        self._environment_monitor.start()
+        return self._environment_monitor.snapshot()
+
+    def _game_path_or_none(self) -> Path | None:
+        value = effective_game_path(self.config)
+        if not value:
+            return None
+        path = Path(value).expanduser()
+        return path if (path / "Sprocket.exe").is_file() else None
+
+    def environment_table(self) -> tuple[dict[str, Any] | None, str]:
+        """加载器↔游戏表：索引里那份优先，其次用上次同步缓存下来的那份，都没有就是「没有表」。
+
+        本地不放内置副本：表是平台事实，会变；写死一份只会和注册表各说各话。
+        """
+        registry = self.service.registry if self.service is not None else None
+        environment = getattr(registry, "environment", None)
+        if environment and environment.get("entries"):
+            self._environment_table_cache = environment
+            return environment, "registry"
+        if not self._environment_table_read:
+            self._environment_table_cache = read_environment_table(self.config_store.app_dir)
+            self._environment_table_read = True
+        if self._environment_table_cache is None:
+            return None, "missing"
+        return self._environment_table_cache, "cache"
+
+    def current_environment(self) -> Environment:
+        """判定用的环境：版本来自监听缓存，表来自索引（没有就用同步缓存下来的那份）。"""
+        snapshot = self.environment_snapshot()
+        sprocket = dict(snapshot.get("sprocket") or {})
+        melonloader = dict(snapshot.get("melonloader") or {})
+        table, _source = self.environment_table()
+        return Environment(
+            sprocket=str(sprocket.get("version") or "") or None,
+            sprocket_state=str(sprocket.get("state") or "unconfigured"),
+            melonloader=melonloader.get("version") or snapshot.get("latest_loader"),
+            table=table,
+        )
+
+    def environment_payload(self) -> dict[str, Any]:
+        _table, table_source = self.environment_table()
+        return self.current_environment().as_dict(table_source=table_source)
+
+    def _read_environment(self) -> dict[str, Any]:
+        """本机环境：Sprocket 版本（读游戏目录）+ MelonLoader 版本（本机检测）。
+
+        只读本地文件、不联网 —— 监听线程每隔一秒就可能走一遍这里。
+        """
+        game_path = self._game_path_or_none()
+        if game_path is None:
+            return {
+                "sprocket": GameVersion.unconfigured().as_dict(),
+                "melonloader": {"installed": False, "version": None},
+            }
+        installation = self.melonloader.detect(game_path)
+        return {
+            "sprocket": read_game_version(game_path).as_dict(),
+            "melonloader": {
+                "installed": bool(installation.installed),
+                "version": str(installation.version) if installation.version else None,
+            },
+        }
 
     def __getattr__(self, name: str) -> Any:
         for controller in self.__dict__.get("_controllers", ()):
@@ -194,6 +271,9 @@ class ClientApi:
 
     def open_readme_link(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.open_readme_link(*args, **kwargs)
+
+    def get_environment(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.get_environment(*args, **kwargs)
 
     def get_melonloader_status(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.get_melonloader_status(*args, **kwargs)
@@ -341,6 +421,7 @@ class ClientApi:
 
     def on_closed(self) -> None:
         LOGGER.info("window closed; draining background work")
+        self._environment_monitor.stop()
         self.install_queue.close(timeout=5)
         self._melonloader_idle.wait(5)
         if self._mutation_lock.acquire(timeout=5):

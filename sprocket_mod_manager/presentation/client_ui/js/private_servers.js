@@ -272,11 +272,17 @@ async function addDeveloperServer() {
     let result = await callApi("add_developer_server", url);
     if (result.ok && result.requires_confirmation) {
         const identity = result.signing_identity || {};
+        const transport = result.manual_transport ? ` (${result.manual_transport})` : "";
         const body = document.createElement("div");
-        body.textContent = `服务器 ${result.server?.name || ""} 请求信任签名公钥。\n\n指纹：${identity.fingerprint || "-"}\n方式：${result.trust_method || "manual"}${result.manual_transport ? ` (${result.manual_transport})` : ""}`;
+        body.textContent = tr("serverTrustMessage", {
+            name: result.server?.name || "",
+            fingerprint: identity.fingerprint || "-",
+            method: result.trust_method || "manual",
+            transport,
+        });
         const confirmed = await showModal({
-            kicker: "SERVER IDENTITY",
-            title: "确认服务器签名身份",
+            kicker: tr("serverTrustKicker"),
+            title: tr("serverTrustTitle"),
             body,
             confirmText: tr("confirm"),
             cancelText: tr("cancel"),

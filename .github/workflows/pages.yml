@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+    inputs:
+      refresh:
+        description: "重新读取每个 release 的说明（不看上一版索引）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,7 +53,11 @@ jobs:
           mkdir -p site/mods site/schemas
           cp -R mods/. site/mods/
           cp -R schemas/. site/schemas/
-          python gen-index.py --mods-dir mods --output site/index.json --fetch-releases
+          if [ "${{ inputs.refresh }}" = "true" ]; then
+            python gen-index.py --mods-dir mods --output site/index.json --fetch-releases --refresh
+          else
+            python gen-index.py --mods-dir mods --output site/index.json --fetch-releases
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

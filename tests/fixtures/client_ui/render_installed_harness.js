@@ -28,6 +28,8 @@ class FakeElement {
         this.type = "";
         this.hidden = false;
         this.listeners = {};
+        this.attributes = {};
+        this.title = "";
         this._text = "";
     }
 
@@ -51,7 +53,9 @@ class FakeElement {
         (this.listeners[type] = this.listeners[type] || []).push(handler);
     }
 
-    setAttribute() {}
+    setAttribute(name, value) {
+        this.attributes[name] = String(value);
+    }
 
     querySelector() {
         return null;
@@ -114,6 +118,7 @@ const sandbox = {
         batch: new Map(),
         installedFilter: payload.filter || "all",
         installedSelection: new Set(),
+        environment: payload.environment || null,
     },
     localized: (values, fallback = "") => {
         if (!values || typeof values !== "object") return fallback;
@@ -189,6 +194,11 @@ const sandbox = {
             batchPartial: `${values.done} succeeded, ${values.failed} failed`,
             confirmBatchRemove: "Confirm removal",
             removeSelectedMessage: `Remove the ${values.count} selected mod(s)?`,
+            incompatibleUpdateHead: `Update to ${values.version} is available, but it does not support your `,
+            incompatibleUpdateUnknown: `Update to ${values.version} is available, but this environment cannot run it`,
+            environmentAxisSprocket: `Sprocket ${values.version}`,
+            environmentAxisMelonLoader: `MelonLoader ${values.version}`,
+            environmentAxisAnd: " and ",
         };
         return table[key] !== undefined ? table[key] : key;
     },
@@ -219,7 +229,11 @@ sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 
 const context = vm.createContext(sandbox);
-const source = fs.readFileSync(path.join(clientUiDir, "js", "installs.js"), "utf8");
+// `compatibility.js` 与 `installs.js` 合成一个脚本再执行：页面上它们是分开的两个
+// `<script>`，但顶层的 `const`（三色常量）不跨脚本共享，合成后才与页面里的可见性一致。
+const source = ["compatibility.js", "installs.js"]
+    .map((name) => fs.readFileSync(path.join(clientUiDir, "js", name), "utf8"))
+    .join("\n");
 vm.runInContext(source, context, { filename: "installs.js" });
 
 for (const key of payload.selection || []) sandbox.state.installedSelection.add(String(key));
@@ -239,6 +253,8 @@ function serialize(element) {
         tag: element.tagName,
         className: element.className,
         text: element.textContent,
+        title: element.title || "",
+        ariaLabel: element.attributes["aria-label"] || "",
         disabled: Boolean(element.disabled),
         checked: Boolean(element.checked),
         clickable: Object.keys(element.listeners).length > 0,

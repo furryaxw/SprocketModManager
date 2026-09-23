@@ -41,8 +41,8 @@ class LocalModsClientUiTests(unittest.TestCase):
         self.assertIn('callApi("toggle_mod", path, Boolean(enabled))', self.installs)
         self.assertIn("function toggleLocalMod(path, enabled)", self.installs)
         self.assertIn('toggle.addEventListener("click", () => toggleLocalMod(local.path, local.disabled))', self.installs)
-        self.assertIn('tr(enabled ? "modEnabledRestart" : "modDisabledRestart", {name: result.toggled})', self.installs)
-        self.assertIn('setStatus(tr("restartRequired"), "ready")', self.installs)
+        self.assertIn('toast(tr(enabled ? "modEnabledRestart" : "modDisabledRestart", {name: result.toggled}))', self.installs)
+        self.assertIn('setStatus("", "ready")', self.installs, "状态栏只更新健康状态，话已经由 toast 说过")
 
     def test_previous_unrecognized_shape_still_renders(self) -> None:
         self.assertIn("state.unrecognized = result.unrecognized || []", self.installs)

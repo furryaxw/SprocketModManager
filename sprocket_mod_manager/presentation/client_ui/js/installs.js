@@ -1,40 +1,96 @@
 "use strict";
 
-async function beginInstall(packageIds) {
+/**
+ * 解析并展示安装计划；用户在计划里改版本时重新解析那一个包。
+ *
+ * 版本选择器只给根包（用户点的那些）；依赖的版本由求解器按环境定，不给挑。
+ */
+async function beginInstall(packageIds, presetVersions = null) {
     if (!packageIds.length) return;
+    const versions = {...installVersions(packageIds), ...(presetVersions || {})};
     setStatus(tr("resolving"));
-    const result = await callApi("plan_install", packageIds);
+    const result = await callApi("plan_install", packageIds, versions);
     if (!result.ok) {
         if (result.code === "game_path_required") {
             showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
         } else resultError(result);
         return;
     }
+    const skipped = result.skipped || [];
+    // 界面挑的那版就等于装着的那版时，后端把计划「跳过」了；索引里还有别的版本可挑的话，
+    // 这里得再要一份计划 —— 版本选择器是强行装新版唯一的路，不能被这一步挡掉。
+    if (!result.plans.length && skipped.some((packageId) => planVersionOptions(packageId).length > 1)) {
+        const reopened = await callApi("plan_install", skipped, versions, true);
+        if (reopened.ok) {
+            result.plans = reopened.plans || [];
+            result.failed = reopened.failed || [];
+        }
+    }
     if (!result.plans.length) {
         toast(tr("nothingToInstall"));
-        setStatus(tr("nothingToInstall"), "ready");
+        setStatus("", "ready");
         state.batch.clear();
         renderCatalog();
         return;
     }
-    const planBody = createPlanBody(result.plans, result.recommendations || [], result.failed || []);
+
+    const planState = {
+        plans: result.plans,
+        recommendations: result.recommendations || [],
+        failed: result.failed || [],
+        versions,
+        recommendedSelection: new Set(),
+    };
+    const planBody = document.createElement("div");
+    const renderPlan = () => {
+        planBody.replaceChildren(...createPlanBody(planState, selectPlanVersion).children);
+    };
+    const selectPlanVersion = async (packageId, version) => {
+        planState.versions[packageId] = version;
+        const replanned = await callApi("plan_install", [packageId], {[packageId]: version});
+        const message = replanned.ok
+            ? (replanned.failed?.[0]?.message || tr("nothingToInstall"))
+            : (replanned.message || tr("operationFailed"));
+        if (replanned.ok && replanned.plans.length) {
+            planState.plans = planState.plans.map((plan) =>
+                plan.id === packageId ? replanned.plans[0] : plan,
+            );
+            planState.failed = planState.failed.filter((item) => item.id !== packageId);
+        } else {
+            // 这个版本装不了（例如依赖跟不上）：把它从计划里拿掉，并在「跳过」区写清原因。
+            planState.plans = planState.plans.filter((plan) => plan.id !== packageId);
+            planState.failed = [
+                ...planState.failed.filter((item) => item.id !== packageId),
+                {id: packageId, message},
+            ];
+        }
+        renderPlan();
+    };
+    renderPlan();
+
     const confirmed = await showModal({
         kicker: tr("installPlan"),
-        title: result.plans.length === 1 ? tr("confirmInstall") : tr("confirmBatchInstall"),
+        title: planState.plans.length === 1 ? tr("confirmInstall") : tr("confirmBatchInstall"),
         body: planBody,
         confirmText: tr("confirm"),
     });
     if (!confirmed) return;
+    if (!planState.plans.length) {
+        toast(tr("nothingToInstall"));
+        setStatus("", "ready");
+        return;
+    }
     const loaderDecision = await ensureMelonLoader(Boolean(result.melonloader_installed));
     if (!loaderDecision.proceed) return;
     const queued = await callApi(
         "enqueue_install",
         [
-            ...result.plans.map((plan) => plan.id),
-            ...$$('input[type="checkbox"][data-package-id]:checked', planBody)
-                .map((input) => input.dataset.packageId),
+            ...planState.plans.map((plan) => plan.id),
+            ...planState.recommendedSelection,
         ],
         loaderDecision.allowWithout,
+        false,
+        planState.versions,
     );
     if (!queued.ok) {
         resultError(queued);
@@ -46,7 +102,7 @@ async function beginInstall(packageIds) {
         ? `${tr("queued", {count: queued.count})} | ${tr("skippedMods", {count: queued.failed.length})}`
         : tr("queued", {count: queued.count});
     toast(message);
-    setStatus(message, "ready");
+    setStatus("", "ready");
     await pollQueue(true);
     await showPage("downloads");
 }
@@ -139,7 +195,7 @@ async function toggleLocalMod(path, enabled) {
         return;
     }
     toast(tr(enabled ? "modEnabledRestart" : "modDisabledRestart", {name: result.toggled}));
-    setStatus(tr("restartRequired"), "ready");
+    setStatus("", "ready");
     await refreshInstalled();
 }
 
@@ -211,20 +267,51 @@ function installedRowPackageId(item) {
     return item.unrecognized ? "" : String(item.id || "");
 }
 
-/** 比安装记录更新的 Registry 发布版本号，没有就返回空串。
+/** 比安装记录更新的 Registry 发布版本，没有就返回 null。**环境拦下来的也算** —— 它只负责行上那枚感叹号。
  *
  * 比的是**安装记录里的版本**（与 Registry 同源的 `x.y.z[-pre]`），不是 DLL 自报版本：
  * 程序集版本可能是 `1.6.2.0` 这种 4 段式，拿它比会把所有库都误判成有新版本。
  */
-function newerReleaseFor(item) {
+function newerRelease(item) {
     const id = installedRowPackageId(item);
-    if (!id) return "";
+    if (!id) return null;
     const pkg = (state.packages || []).find((candidate) => candidate.id === id);
     const record = (state.installed || []).find((entry) => entry.id === id);
     const latest = String(pkg?.release?.version || "");
     const installedVersion = String(record?.version || "");
-    if (!latest || !installedVersion) return "";
-    return compareVersions(latest, installedVersion) > 0 ? latest : "";
+    if (!latest || !installedVersion) return null;
+    if (compareVersions(latest, installedVersion) <= 0) return null;
+    return packageReleases(pkg).find((release) => release.version === latest)
+        || {version: latest, verdict: packageVerdict(pkg)};
+}
+
+/**
+ * 可安装的更新：比装着的版本新、并且本机环境跑得了的**最高**那一版。
+ *
+ * 判定为「不兼容」的版本不算更新 —— 装上去也跑不起来，所以它不点亮「更新」按钮，
+ * 只在行上留一枚感叹号说明为什么没有更新可装。判定未知（没声明）的照常算更新。
+ */
+function installableUpdate(item) {
+    const id = installedRowPackageId(item);
+    if (!id) return null;
+    const pkg = (state.packages || []).find((candidate) => candidate.id === id);
+    const record = (state.installed || []).find((entry) => entry.id === id);
+    const installedVersion = String(record?.version || "");
+    if (!pkg || !installedVersion) return null;
+    const releases = packageReleases(pkg);
+    return (releases.length ? releases : [pkg.release])
+        .filter((release) => release?.version && release.verdict !== VERDICT_INCOMPATIBLE)
+        .filter((release) => compareVersions(release.version, installedVersion) > 0)
+        .reduce(
+            (best, release) => (!best || compareVersions(release.version, best.version) > 0 ? release : best),
+            null,
+        );
+}
+
+/** 已装那个版本自己的判定：拿不到（比如纯本地的手工 DLL）就算没这回事。 */
+function installedVersionVerdict(record) {
+    if (!record?.id) return "";
+    return releaseVerdict(record.id, record.version);
 }
 
 /** 列表数据源：磁盘扫描优先，拿不到扫描结果时退回「安装记录 + 未识别列表」。 */
@@ -288,7 +375,7 @@ const INSTALLED_FILTERS = {
     all: {label: "installedFilterAll", match: () => true},
     enabled: {label: "installedFilterEnabled", match: (item) => !installedRowDisabled(item)},
     disabled: {label: "installedFilterDisabled", match: (item) => installedRowDisabled(item)},
-    outdated: {label: "installedFilterOutdated", match: (item) => Boolean(newerReleaseFor(item))},
+    outdated: {label: "installedFilterOutdated", match: (item) => Boolean(installableUpdate(item))},
 };
 
 function installedFilterKey() {
@@ -372,7 +459,7 @@ function renderInstalledToolbar(items) {
     if (invert) invert.disabled = items.length === 0;
 
     const actionable = {
-        "#update-selected": selected.filter((item) => newerReleaseFor(item)).length,
+        "#update-selected": selected.filter((item) => installableUpdate(item)).length,
         "#disable-selected": selected.filter((item) => installedRowToggleable(item) && !installedRowDisabled(item)).length,
         "#enable-selected": selected.filter((item) => installedRowToggleable(item) && installedRowDisabled(item)).length,
         "#remove-selected": selected.filter((item) => installedRowPackageId(item)).length,
@@ -447,6 +534,61 @@ function newVersionChip(version) {
     return chip;
 }
 
+/**
+ * 「有更新但不兼容」那句话：按已知的轴拼出来 —— 只知道游戏就只说游戏，两个都知道才用「和」。
+ *
+ * 拼法（与设计一致）：`有更新（{版本}），但不兼容你的 ` + `Sprocket {}` + `和` + `MelonLoader {}`。
+ */
+function incompatibleUpdateText(version) {
+    const sprocket = state.environment?.sprocket?.version || state.environment?.sprocket?.raw || "";
+    const loader = state.environment?.melonloader?.used_version || "";
+    const parts = [];
+    if (sprocket) parts.push(tr("environmentAxisSprocket", {version: sprocket}));
+    if (loader) parts.push(tr("environmentAxisMelonLoader", {version: loader}));
+    if (!parts.length) return tr("incompatibleUpdateUnknown", {version});
+    return tr("incompatibleUpdateHead", {version}) + parts.join(tr("environmentAxisAnd"));
+}
+
+/**
+ * 有更新、但那个版本跟本机环境不兼容：行里只放一枚感叹号，原因（哪一轴拦下来的）走 tooltip。
+ *
+ * 整句「有更新（0.2.3），但不兼容你的 Sprocket …」塞进行里会把版本号和按钮挤走；
+ * 判定信息本来就只该按需展开，所以默认收成 18px 的一枚标记。
+ */
+function incompatibleUpdateChip(version) {
+    const reason = incompatibleUpdateText(version);
+    const chip = document.createElement("span");
+    chip.className = "state-chip unknown update-alert";
+    chip.textContent = "!";
+    chip.title = reason;
+    chip.setAttribute("role", "img");
+    chip.setAttribute("aria-label", reason);
+    return chip;
+}
+
+/**
+ * 行上关于「新版本」的标记：能装的更新写成版本号，装不了（被环境拦下来）的只留一枚感叹号。
+ *
+ * 两枚可能同时出现：最新的那版跑不了、但中间还有一版能跑时，既要说明能更新到哪版，
+ * 也要说明再新的那版为什么装不了。
+ */
+function updateChips(item) {
+    const chips = [];
+    const update = installableUpdate(item);
+    if (update) chips.push(newVersionChip(update.version));
+    const latest = newerRelease(item);
+    if (latest?.verdict === VERDICT_INCOMPATIBLE) chips.push(incompatibleUpdateChip(latest.version));
+    return chips;
+}
+
+/** 当前装的这个版本跟环境对不上：只标记，不拦（磁盘上的东西永远照原样显示）。 */
+function compatibilityChip(verdict) {
+    const chip = document.createElement("span");
+    chip.className = `state-chip ${verdictClass(verdict)}`.trim();
+    chip.textContent = verdictLabel(verdict);
+    return chip;
+}
+
 /** 扫描行：一条 = 磁盘上的一个 DLL（或 .dll.disable），身份来自静态元数据。 */
 function renderScannedModRow(mod) {
     const row = document.createElement("article");
@@ -488,8 +630,9 @@ function renderScannedModRow(mod) {
     // 先状态、后形态：避免"形态"落在按钮后面看起来像补充说明。
     // 禁用状态由按钮的反向动作（显示"启用"）表达。
     appendIntegrityChip(actions, record);
-    const latest = newerReleaseFor(mod);
-    if (latest) actions.append(newVersionChip(latest));
+    const installedVerdict = installedVersionVerdict(record);
+    if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
+    actions.append(...updateChips(mod));
     if (mod.kind) {
         const kind = document.createElement("span");
         kind.className = "state-chip";
@@ -572,9 +715,10 @@ function renderLegacyModRow(item) {
     }
     if (!item.unrecognized) {
         appendIntegrityChip(actions, item);
+        const installedVerdict = installedVersionVerdict(item);
+        if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
     }
-    const latest = newerReleaseFor(item);
-    if (latest) actions.append(newVersionChip(latest));
+    actions.append(...updateChips(item));
     if (local?.path) {
         const toggle = document.createElement("button");
         toggle.className = local.disabled ? "secondary-button" : "danger-button";
@@ -628,7 +772,7 @@ async function confirmRemove(pkg) {
     }
     const message = tr("removed", {names: result.removed.join(", ")});
     toast(result.warnings?.length ? `${message} | ${result.warnings.join("; ")}` : message);
-    setStatus(message, "ready");
+    setStatus("", "ready");
     await refreshInstalled();
 }
 
@@ -639,27 +783,34 @@ async function confirmRemove(pkg) {
  * 三个操作都复用单行用的端点，逐个调用并把结果汇总成一条提示，不假装整批是原子的。
  */
 
-/** 选中项里真正有新版本的包 id（去重：一个包可能对应多个 DLL）。 */
-function selectedUpdateIds() {
-    return [...new Set(
-        selectedInstalledItems()
-            .filter((item) => newerReleaseFor(item))
-            .map((item) => installedRowPackageId(item))
-            .filter(Boolean),
-    )];
+/** 选中项里可安装的更新：包 id → 要装的那一版（去重：一个包可能对应多个 DLL）。
+ *
+ * 被环境拦下来的版本不在里面 —— 所以它既不点亮「更新」，也不会被点名装上去。
+ */
+function selectedUpdateVersions() {
+    const versions = {};
+    for (const item of selectedInstalledItems()) {
+        const id = installedRowPackageId(item);
+        if (!id || id in versions) continue;
+        const update = installableUpdate(item);
+        if (update) versions[id] = update.version;
+    }
+    return versions;
 }
 
 async function updateSelectedMods() {
     if (queueActive()) return;
-    const ids = selectedUpdateIds();
+    // 把版本一起交上去：列表上写的「新版本 X」和实际会装的必须是同一版。
+    const versions = selectedUpdateVersions();
+    const ids = Object.keys(versions);
     if (!ids.length) {
         toast(tr("noUpdates"));
-        setStatus(tr("noUpdates"), "ready");
+        setStatus("", "ready");
         return;
     }
     const loaderDecision = await ensureMelonLoader(null);
     if (!loaderDecision.proceed) return;
-    const result = await callApi("enqueue_install", ids, loaderDecision.allowWithout);
+    const result = await callApi("enqueue_install", ids, loaderDecision.allowWithout, false, versions);
     if (!result.ok) {
         resultError(result);
         return;
@@ -668,7 +819,7 @@ async function updateSelectedMods() {
         ? `${tr("updateQueued", {count: result.count})} | ${tr("skippedMods", {count: result.failed.length})}`
         : tr("updateQueued", {count: result.count});
     toast(message);
-    setStatus(message, "ready");
+    setStatus("", "ready");
     await pollQueue(true);
     await showPage("downloads");
 }
@@ -844,8 +995,11 @@ async function pollQueue(force = false) {
         renderQueue();
         renderMelonLoader();
         updatePageHeader();
+        // 队列跑没跑完也是状态栏要看的活状态。
+        renderStatusbar();
         if (newlyCompleted) await refreshInstalled();
-        if (newlyFailed) toast(newlyFailed.message || tr("operationFailed"), "error");
+        // 队列里失败的那一条也算「出过事」：状态栏红着，直到下一次操作成功。
+        if (newlyFailed) setStatus(newlyFailed.message || tr("operationFailed"), "error");
         if (result.close_pending) setStatus(tr("closeWaiting"));
     } catch (_error) {
         // A closing WebView can reject an in-flight poll. There is nothing left to update.

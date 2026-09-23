@@ -29,12 +29,15 @@ async function saveSettings(values = null) {
         return false;
     }
     state.settings = result.settings;
-    if (previousGamePath !== (result.settings.game_path || "")) state.melonloader = null;
+    if (previousGamePath !== (result.settings.game_path || "")) {
+        state.melonloader = null;
+        void refreshEnvironment();
+    }
     state.languageMode = result.settings.language;
     applyTextScale(result.settings.text_scale);
     setLanguage(result.language);
     toast(tr("settingsSaved"));
-    setStatus(tr("settingsSaved"), "ready");
+    setStatus("", "ready");
     return true;
 }
 

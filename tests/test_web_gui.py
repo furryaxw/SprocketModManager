@@ -33,7 +33,7 @@ class BlockingService:
         self.release = threading.Event()
         self.registry = None
 
-    def install(self, _package_id, _game_path, *, progress=None):
+    def install(self, _package_id, _game_path, *, version_range="*", progress=None):
         self.started.set()
         self.release.wait(2)
 
@@ -157,6 +157,7 @@ class WebGuiTests(unittest.TestCase):
                 game_path=Path("game"),
                 context=service,
                 force_conflicts=True,
+                version_range="*",
             )
             api = ClientApi("test", app_dir=Path(directory))
             try:
@@ -514,13 +515,14 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn('heading.className = "detail-heading"', javascript)
         self.assertIn('readmeSection.className = "detail-readme"', javascript)
         self.assertIn(
-            "panel.append(topline, heading, actions, readmeSection, facts, dependencySection, recommendationSection)",
+            "panel.append(compatibilitySection(pkg, verdict))",
             javascript,
+            "兼容性细节挂在详情页最底下",
         )
         self.assertIn('"enqueue_install",', javascript)
         self.assertIn("loaderDecision.allowWithout", javascript)
         self.assertIn("function applyTextScale", javascript)
-        self.assertIn("checkbox.checked = false", javascript)
+        self.assertIn("checkbox.checked = planState.recommendedSelection.has(plan.id)", javascript)
         self.assertIn('className: "installed"', javascript)
         self.assertIn(".state-chip.installed", (
             root / "sprocket_mod_manager" / "presentation" / "client_ui" / "app.css"

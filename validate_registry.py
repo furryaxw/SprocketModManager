@@ -156,6 +156,19 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
     return errors
 
 
+def validate_environment(index_module) -> list[str]:
+    """The loader/game compatibility table: a platform fact, so a bad entry fails here
+    instead of silently narrowing what the client can filter."""
+    path = index_module.ENVIRONMENT_FILE
+    if not path.is_file():
+        return [f"{path.name} is missing"]
+    table, warnings = index_module.load_environment_table(path)
+    errors = list(warnings)
+    if not table["entries"]:
+        errors.append(f"{path.name} has no usable entry")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the Sprocket mod registry")
     parser.add_argument("--mods-dir", default="mods")
@@ -167,12 +180,18 @@ def main() -> int:
     except Exception as exc:
         print(f"registry error: {exc}", file=sys.stderr)
         return 1
+    failures: list[str] = [
+        f"environment: {error}" for error in validate_environment(index_module)
+    ]
     if args.offline:
+        if failures:
+            for failure in failures:
+                print(f"registry error: {failure}", file=sys.stderr)
+            return 1
         print(f"validated {len(packages)} registry entries (offline)")
         return 0
 
     api = GitHubApi()
-    failures: list[str] = []
     for meta in packages:
         errors = validate_online(meta, api)
         if errors:
