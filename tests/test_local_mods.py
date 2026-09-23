@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from sprocket_mod_manager.application.adoption import (
     REASON_DECLARED_ID,
@@ -312,6 +313,40 @@ class LocalModsApiTests(unittest.TestCase):
                 api.install_queue.close()
             self.assertTrue((Path(directory) / "outside.dll").is_file())
             self.assertTrue((game / "UserData" / "thing.dll").is_file())
+
+    def test_open_mod_location_reveals_a_file_inside_the_game_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, game = self._api(Path(directory))
+            try:
+                with patch(
+                    "sprocket_mod_manager.presentation.controllers.catalog_controller.reveal_in_file_manager"
+                ) as reveal:
+                    result = api.open_mod_location("Mods/FixtureMod.dll")
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["path"], "Mods/FixtureMod.dll")
+        reveal.assert_called_once_with(game / "Mods" / "FixtureMod.dll")
+
+    def test_open_mod_location_rejects_paths_outside_the_game_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, _game = self._api(Path(directory))
+            try:
+                with patch(
+                    "sprocket_mod_manager.presentation.controllers.catalog_controller.reveal_in_file_manager"
+                ) as reveal:
+                    results = [
+                        api.open_mod_location(path)
+                        for path in ("../outside.dll", "C:/Windows/System32/calc.exe", "")
+                    ]
+            finally:
+                api.install_queue.close()
+
+        for result in results:
+            self.assertFalse(result["ok"], result)
+            self.assertEqual(result["code"], "open_mod_location_failed")
+        reveal.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -277,6 +277,31 @@ function selectPackage(packageId) {
     if (!pkg?.private) void loadPackageReadme(packageId);
 }
 
+/**
+ * 跳到某个包在目录里的位置：切到它所在的页（翻译包在「翻译」页），并把它选中。
+ *
+ * 会挡住这一行的筛选一律让开（搜索词、分类、以及默认折叠的不兼容包）——「跳转」要真的落在
+ * 那一行上，否则只是换了个页面、还是看不见它。
+ */
+async function focusPackage(packageId) {
+    const pkg = (state.packages || []).find((item) => item.id === packageId);
+    if (!pkg) return false;
+    const page = pkg.category === "translation" ? "translations" : "catalog";
+    if (page === "translations") {
+        $("#translation-search").value = "";
+    } else {
+        $("#catalog-search").value = "";
+        $("#category-select").value = "all";
+    }
+    if (packageHidden(pkg)) state.showIncompatible = true;
+    state.selectedId = packageId;
+    await showPage(page);
+    selectPackage(packageId);
+    packageBrowserView().container?.querySelector?.(".package-row.selected")
+        ?.scrollIntoView({block: "nearest"});
+    return true;
+}
+
 function appendFact(list, label, value) {
     const group = document.createElement("div");
     const term = document.createElement("dt");

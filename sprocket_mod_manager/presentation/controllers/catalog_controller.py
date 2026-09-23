@@ -16,6 +16,7 @@ from ...domain.compatibility import Environment, release_verdict
 from ...domain.errors import ModManagerError, ModToggleError
 from ...domain.models import RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
+from ...infrastructure.desktop import reveal_in_file_manager
 from ...infrastructure.dll_metadata import flush_metadata_cache
 from ...infrastructure.suppression_store import store_for
 from ...infrastructure.mod_toggle import (
@@ -27,6 +28,7 @@ from ...infrastructure.mod_toggle import (
     apply_enabled,
     resolve_mod_path,
 )
+from ...utilities.package_paths import validate_relative_path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -382,6 +384,20 @@ class CatalogController(ApiController):
             )
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="toggle_mod_failed")
+
+    def open_mod_location(self, path: str = "") -> dict[str, Any]:
+        """在资源管理器里定位磁盘上的这个模组文件。
+
+        只接受游戏目录内的相对路径（与安装记录同一套写法）：界面不该能点名打开任意位置。
+        `UserLibs` / `AutoTranslator` 下的条目没有改名动作可做，但同样值得直接跳过去看。
+        """
+        try:
+            game_path = self._resolved_game_path()
+            relative = validate_relative_path(str(path or "").strip())
+            reveal_in_file_manager(game_path / Path(*relative.parts))
+            return self._success(path=relative.as_posix())
+        except (ModManagerError, OSError, ValueError) as exc:
+            return self._failure(exc, code="open_mod_location_failed")
 
     @staticmethod
     def _resolve_mod_path(game_path: Path, path: str) -> Path:

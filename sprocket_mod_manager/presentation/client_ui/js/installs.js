@@ -251,6 +251,11 @@ function installedRowPath(item) {
     return String(item.path || localModFor(item)?.path || "");
 }
 
+/** 定位用的路径：再兜一层安装记录里的文件名，免得只有记录、没有本地扫描的行点不动。 */
+function installedRowRevealPath(item) {
+    return String(installedRowPath(item) || (item.files || [])[0] || "");
+}
+
 /** 该行是否已被禁用。 */
 function installedRowDisabled(item) {
     return item.fromScan ? Boolean(item.disabled) : Boolean(localModFor(item)?.disabled);
@@ -428,14 +433,45 @@ function selectionCheckbox(item, key) {
 }
 
 /**
- * 整行可点：点空白处等于勾选这一行，所以进了多选就不必去够那个小方框。
- * 点在按钮、选择框、链接上时不接管——那些控件有自己的动作。
+ * 行上的两种点击：双击跳到模组目录里这个包的位置，右键做多选（与目录页同一套习惯）。
+ *
+ * 单击不做事 —— 跳页会丢掉当前视野，得双击才够明确。点在按钮、选择框、链接上时不接管。
  */
-function selectOnRowClick(row, key) {
-    row.addEventListener("click", (event) => {
+function wireInstalledRow(row, item, key) {
+    row.addEventListener("dblclick", (event) => {
+        if (event?.target?.closest?.("button, input, a, label")) return;
+        void openInstalledRow(item);
+    });
+    row.addEventListener("contextmenu", (event) => {
+        // 先挡掉 WebView 自带的右键菜单，再把这一行翻过来。
+        event.preventDefault();
         if (event?.target?.closest?.("button, input, a, label")) return;
         setRowSelected(key, !installedSelection().has(key));
     });
+}
+
+/**
+ * 双击的去处：目录里有这个包就跳到目录页并选中它；目录里没有（纯本地 DLL、`UserLibs` 库）
+ * 就退到资源管理器里定位文件 —— 两种都比「双击了却没反应」强。
+ */
+async function openInstalledRow(item) {
+    const id = installedRowPackageId(item);
+    if (id && (state.packages || []).some((pkg) => pkg.id === id)) {
+        await focusPackage(id);
+        return;
+    }
+    await openModLocation(item);
+}
+
+/** 目录里查无此包时的兜底：在资源管理器里定位该行的文件。 */
+async function openModLocation(item) {
+    const path = installedRowRevealPath(item);
+    if (!path) {
+        toast(tr("modLocationUnknown"));
+        return;
+    }
+    const result = await callApi("open_mod_location", path);
+    if (!result.ok) resultError(result);
 }
 
 /**
@@ -675,7 +711,7 @@ function renderScannedModRow(mod) {
     }
 
     row.append(selectionCheckbox(mod, key), title, actions);
-    selectOnRowClick(row, key);
+    wireInstalledRow(row, mod, key);
     return row;
 }
 
@@ -752,7 +788,7 @@ function renderLegacyModRow(item) {
         actions.append(remove);
     }
     row.append(selectionCheckbox(item, key), title, actions);
-    selectOnRowClick(row, key);
+    wireInstalledRow(row, item, key);
     return row;
 }
 
