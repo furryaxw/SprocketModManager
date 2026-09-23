@@ -15,6 +15,7 @@ from ...domain.errors import ModManagerError
 from ...domain.models import RegistryPackage, ResolutionPlan
 from ...infrastructure.config import effective_game_path
 from ...infrastructure.melonloader import MelonLoaderInstallation, MelonLoaderRelease
+from ...utilities.processes import sprocket_is_running, terminate_sprocket
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class InstallationController(ApiController):
                     "used_version": used_version,
                 },
                 environment=self.environment_payload(),
+                sprocket_running=sprocket_is_running(self._game_path_or_none()),
                 revision=int(snapshot.get("revision") or 0),
             )
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
@@ -484,6 +486,21 @@ class InstallationController(ApiController):
                 "game_path_required"
                 if isinstance(exc, GamePathRequiredError)
                 else "remove_failed"
+            )
+            return self._failure(exc, code=code)
+
+    def kill_sprocket(self) -> dict[str, Any]:
+        """结束当前游戏路径里的 Sprocket：改模组文件前不用自己去关游戏。"""
+        try:
+            game_path = self._game_path_or_none()
+            if game_path is None:
+                raise GamePathRequiredError("valid Sprocket game path is required")
+            return self._success(killed=terminate_sprocket(game_path))
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            code = (
+                "game_path_required"
+                if isinstance(exc, GamePathRequiredError)
+                else "sprocket_kill_failed"
             )
             return self._failure(exc, code=code)
 

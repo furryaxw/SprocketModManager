@@ -263,6 +263,38 @@ async function installMelonLoader(skipCompatibilityCheck = false) {
     }
 }
 
+/**
+ * 状态栏右侧那个按钮：结束正在跑的游戏。
+ *
+ * 结束后端只做路径匹配的结束（见 `utilities/processes.py`），所以这里只要确认一次；
+ * 进程真正退出还要一点时间，界面上那行由每秒一次的环境轮询自己更新。
+ */
+async function killRunningSprocket() {
+    const confirmed = await showModal({
+        kicker: tr("modRuntime"),
+        title: tr("killSprocketTitle"),
+        body: tr("killSprocketMessage"),
+        confirmText: tr("killSprocket"),
+        destructive: true,
+    });
+    if (!confirmed) return;
+    state.gameKillPending = true;
+    renderGameState();
+    try {
+        const result = await callApi("kill_sprocket");
+        if (!result.ok) {
+            resultError(result);
+            return;
+        }
+        if (!result.killed?.length) toast(tr("sprocketAlreadyStopped"));
+    } catch (error) {
+        resultError({message: String(error)});
+    } finally {
+        state.gameKillPending = false;
+        await refreshEnvironment(false);
+    }
+}
+
 async function openUrl(url) {
     const result = await callApi("open_url", url);
     if (!result.ok) resultError(result);

@@ -7,6 +7,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sprocket_mod_manager.application.service import ModManagerService
@@ -179,6 +180,50 @@ class EnvironmentApiTests(unittest.TestCase):
         self.assertIsNone(result["melonloader"]["version"])
         self.assertEqual(result["environment"]["state"], "unknown", "没有加载器版本就判不了这层")
 
+    def test_the_running_game_process_is_reported_and_can_be_ended(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            game = game_dir_with_version(Path(directory), unity_payload("0.2.53.2"))
+            api = self._api(Path(directory), game)
+            running = {4242: game / "Sprocket.exe"}
+            try:
+                with patch(
+                    "sprocket_mod_manager.utilities.processes.running_executables",
+                    return_value=running,
+                ):
+                    result = api.get_environment()
+                with (
+                    patch(
+                        "sprocket_mod_manager.utilities.processes.running_executables",
+                        return_value=running,
+                    ),
+                    patch(
+                        "sprocket_mod_manager.utilities.processes.subprocess.run",
+                        return_value=SimpleNamespace(returncode=0),
+                    ) as taskkill,
+                ):
+                    killed = api.kill_sprocket()
+            finally:
+                self._close(api)
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["sprocket_running"])
+        self.assertTrue(killed["ok"], killed)
+        self.assertEqual(killed["killed"], [4242])
+        self.assertEqual(taskkill.call_args.args[0][:3], ["taskkill", "/PID", "4242"])
+
+    def test_an_unconfigured_game_path_has_no_running_game_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory), Path(directory) / "missing-game")
+            try:
+                result = api.get_environment()
+                killed = api.kill_sprocket()
+            finally:
+                self._close(api)
+
+        self.assertFalse(result["sprocket_running"])
+        self.assertFalse(killed["ok"])
+        self.assertEqual(killed["code"], "game_path_required")
+
     def test_a_installed_loader_is_reported_with_its_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             game = game_dir_with_version(Path(directory), unity_payload("0.2.53.2"))
@@ -308,6 +353,19 @@ class EnvironmentUiTests(unittest.TestCase):
         self.assertIn("toast(source ?", core, "话进 toast")
         self.assertIn("state.lastToast", core, "同一句话三秒内只弹一次")
         self.assertNotIn("state.lastError", core, "不记「上次失败」：那是另一种不实时")
+
+    def test_the_statusbar_reports_the_running_game_and_offers_to_end_it(self) -> None:
+        """右侧那行是实时读数（每秒轮询）+ 一个结束游戏的口子。"""
+        core = (CLIENT_UI / "js" / "core.js").read_text(encoding="utf-8")
+        melonloader = (CLIENT_UI / "js" / "melonloader.js").read_text(encoding="utf-8")
+        main = (CLIENT_UI / "js" / "main.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="game-state"', self.html)
+        self.assertIn('id="kill-sprocket"', self.html)
+        self.assertIn("function renderGameState()", core)
+        self.assertIn("state.environment.sprocket_running === true", core)
+        self.assertIn('callApi("kill_sprocket")', melonloader)
+        self.assertIn('$("#kill-sprocket").addEventListener("click"', main)
 
     def test_the_sidebar_keeps_versions_and_spells_out_the_reason(self) -> None:
         melonloader = (CLIENT_UI / "js" / "melonloader.js").read_text(encoding="utf-8")

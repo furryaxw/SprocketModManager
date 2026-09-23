@@ -428,7 +428,14 @@
 
         <footer class="statusbar">
             <span class="status-mark" aria-hidden="true"></span>
-            <span id="status-text" data-i18n="statusStarting">正在启动</span>        </footer>
+            <span id="status-text" data-i18n="statusStarting">正在启动</span>
+            <span class="game-state" id="game-state" hidden>
+                <span class="game-dot" aria-hidden="true"></span>
+                <span id="game-state-text"></span>
+                <button class="kill-button" id="kill-sprocket" type="button" data-i18n="killSprocket" hidden>结束游戏
+                </button>
+            </span>
+        </footer>
     </main>
 </div>
 

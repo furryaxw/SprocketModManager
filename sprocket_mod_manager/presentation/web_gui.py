@@ -312,6 +312,9 @@ class ClientApi:
     def remove(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.remove(*args, **kwargs)
 
+    def kill_sprocket(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.kill_sprocket(*args, **kwargs)
+
     def get_queue(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.get_queue(*args, **kwargs)
 

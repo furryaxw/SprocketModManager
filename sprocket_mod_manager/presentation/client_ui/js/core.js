@@ -32,6 +32,7 @@ const state = {
     showIncompatible: false,
     melonloader: null,
     melonloaderLoading: false,
+    gameKillPending: false,
     readmes: new Map(),
     readmeLoading: new Set(),
     update: null,
@@ -193,9 +194,35 @@ function renderStatusbar() {
     const kind = statusbarState();
     text.textContent = tr(kind === "error" ? "statusError" : kind === "busy" ? "statusBusy" : "statusReady");
     const mark = $(".status-mark");
-    if (!mark) return;
-    mark.classList.toggle("ready", kind === "ready");
-    mark.classList.toggle("error", kind === "error");
+    if (mark) {
+        mark.classList.toggle("ready", kind === "ready");
+        mark.classList.toggle("error", kind === "error");
+    }
+    renderGameState();
+}
+
+/**
+ * 状态栏右侧：当前游戏路径里的 Sprocket 在不在跑。
+ *
+ * 后端按完整路径匹配，所以「同名但装在别处」的进程不会让这里点亮；在跑时才给一个
+ * 「结束游戏」的出口——改模组文件之前本来就要求游戏先退。
+ */
+function renderGameState() {
+    const region = $("#game-state");
+    const label = $("#game-state-text");
+    const kill = $("#kill-sprocket");
+    if (!region || !label || !kill) return;
+    const sprocket = state.environment?.sprocket || {};
+    if (!state.environment || sprocket.state === "unconfigured") {
+        region.hidden = true;
+        return;
+    }
+    const running = state.environment.sprocket_running === true;
+    region.hidden = false;
+    region.classList.toggle("running", running);
+    label.textContent = tr(running ? "sprocketRunning" : "sprocketStopped");
+    kill.hidden = !running;
+    kill.disabled = state.gameKillPending;
 }
 
 /** `setStatus` 那句话改走 toast（状态栏不再堆细节），然后把状态栏按当前状况重算。 */
