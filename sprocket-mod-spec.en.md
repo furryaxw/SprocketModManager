@@ -230,10 +230,11 @@ layer does not know" — it counts as neither compatible nor conflicting. `versi
 standard SemVer range and may carry a prerelease segment (`6.0.0-be.785`).
 
 The client judges a release as follows: a failing axis means incompatible; no
-evaluable axis means unknown; when the table says the loader in use does not support
-the local game version the environment contradicts itself, so the verdict is unknown.
-Translation packages do not judge their own compatibility declarations, while the
-packages they depend on are judged normally.
+evaluable axis means unknown; when a loader is installed and the table says that
+loader does not support the local game version, or no loader is installed and no row
+covers the local game version, the environment contradicts itself, so the verdict is
+unknown. Translation packages do not judge their own compatibility declarations, while
+the packages they depend on are judged normally.
 
 ## Translation Packages
 
