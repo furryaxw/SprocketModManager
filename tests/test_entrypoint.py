@@ -47,7 +47,7 @@ class EntrypointTests(unittest.TestCase):
             result = modman.main()
 
         self.assertEqual(result, 0)
-        self.assertTrue(configure.call_args.kwargs["console"])
+        self.assertTrue(configure.call_args.kwargs["debug"])
         cli_main.assert_called_once_with(["--debug", "packages"])
 
     def test_cli_marker_can_follow_debug_argument(self) -> None:

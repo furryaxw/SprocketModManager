@@ -41,7 +41,7 @@ def run_self_update_child(argv: list[str]) -> int:
         index = argv.index("--app-dir")
         if index + 1 < len(argv):
             app_dir = Path(argv[index + 1]).expanduser()
-    configure_logging(app_dir, debug=False, console=False)
+    configure_logging(app_dir, debug=False)
     LOGGER.info("self-update child starting argv=%s", argv)
     return self_update_mode(argv)
 
@@ -465,7 +465,7 @@ def main() -> int:
             app_dir = Path(inline_app_dir).expanduser()
     config_debug = ConfigStore(app_dir).load().get("debug") is True
     debug = debug_flag or config_debug
-    configure_logging(app_dir, debug=debug, console=is_cli)
+    configure_logging(app_dir, debug=debug)
     executable = frozen_executable()
     if executable is not None:
         cleanup_staged(executable)
