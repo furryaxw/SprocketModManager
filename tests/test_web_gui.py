@@ -569,6 +569,27 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn("<h1>Test mod</h1>", result["html"])
         self.assertEqual(result["page_url"], "https://github.com/example/TestMod#readme")
 
+    def test_the_catalog_page_reads_the_merged_reading_from_one_place(self):
+        """公开注册表与私有服务器在数据层视图里合并一次，页面不再各自拼 `state.packages`。"""
+        root = Path(__file__).parents[1]
+        client_ui = root / "sprocket_mod_manager" / "presentation" / "client_ui"
+        data = (client_ui / "js" / "data.js").read_text(encoding="utf-8")
+        catalog = (client_ui / "js" / "catalog.js").read_text(encoding="utf-8")
+        servers = (client_ui / "js" / "private_servers.js").read_text(encoding="utf-8")
+        business = (client_ui / "js" / "business.js").read_text(encoding="utf-8")
+
+        self.assertIn('publicPackages: () => dataValue("catalog")?.packages || []', data)
+        self.assertIn('privatePackages: () => dataValue("servers")?.packages || []', data)
+        self.assertIn(
+            '...(dataValue("servers")?.packages || []),',
+            data,
+            "合并只在这一处发生",
+        )
+        self.assertNotIn("state.packages = ", catalog)
+        self.assertNotIn("state.packages = ", servers)
+        self.assertIn('callApi("data_request", "catalog")', catalog, "目录读数由数据层刷")
+        self.assertIn("function watchCatalogData()", business, "页面按推送重画")
+
     def test_default_entry_and_assets_do_not_depend_on_tk(self):
         root = Path(__file__).parents[1]
         entry = (root / "modman.py").read_text(encoding="utf-8")
@@ -614,7 +635,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn('star.textContent = "★"', javascript)
         self.assertIn('tr("starterRecommended")', javascript)
         self.assertIn("function showStarterRecommendations()", javascript)
-        self.assertIn("state.unrecognized = result.unrecognized || []", javascript)
+        self.assertIn('unrecognized: () => dataValue("installed")?.unrecognized || []', javascript)
         self.assertIn('status.textContent = tr("unrecognized")', javascript)
         self.assertIn("if (item.unrecognized)", javascript)
         self.assertIn('class="brand-line" aria-hidden="true"', html)

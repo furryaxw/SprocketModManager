@@ -297,8 +297,9 @@ class LocalModsApiTests(unittest.TestCase):
                 self.assertTrue(disabled["restart_required"])
                 self.assertFalse((game / "Mods" / "FixtureMod.dll").exists())
                 self.assertTrue((game / "Mods" / "FixtureMod.dll.disable").is_file())
-                self.assertIn("Mods/FixtureMod.dll.disable", {mod["path"] for mod in disabled["mods"]})
-                self.assertEqual(disabled["summary"]["disabled"], 1)
+                listed = api.get_local_mods()
+                self.assertIn("Mods/FixtureMod.dll.disable", {mod["path"] for mod in listed["mods"]})
+                self.assertEqual(listed["summary"]["disabled"], 1)
 
                 enabled = api.toggle_mod("Mods/FixtureMod.dll.disable", True)
                 self.assertTrue(enabled["ok"], enabled)

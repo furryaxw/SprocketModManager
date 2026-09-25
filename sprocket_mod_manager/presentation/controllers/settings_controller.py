@@ -7,6 +7,13 @@ from typing import Any
 
 from .base import ApiController
 from ..api_constants import MANAGER_REPOSITORY_URL, REGISTRY_WEBSITE_URL
+from ...application.data_hub import (
+    KEY_CATALOG,
+    KEY_ENVIRONMENT,
+    KEY_INSTALLED,
+    KEY_LOADERS,
+    KEY_SERVERS,
+)
 from ...infrastructure.defaults import DEFAULT_INDEX_URL
 from ...infrastructure.app_logging import set_logging_level
 from ...infrastructure.config import (
@@ -152,6 +159,12 @@ class SettingsController(ApiController):
             if previous_game_path != self.config["game_path"]:
                 # 换了游戏目录：环境读数与目录判定的缓存都要作废，不然左下角还显示上一个游戏的版本。
                 self._environment_monitor.invalidate()
+                # 上一个目录推出来的长期读数**由数据层**作废并重取：界面不用自己逐个清，
+                # 也不会出现"游戏版本是新的、加载器还是旧目录的"这种混读。
+                self.data_invalidate([
+                    KEY_INSTALLED, KEY_ENVIRONMENT, KEY_CATALOG, KEY_SERVERS, KEY_LOADERS,
+                ])
+                self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS)
             set_logging_level(self._debug_override or self.config["debug"])
             LOGGER.info(
                 "debug configuration saved configured=%s override=%s active=%s",

@@ -1,10 +1,11 @@
-// 在 Node 里执行真实的 installs.js 渲染逻辑（无浏览器）。
+// 在 Node 里执行真实的 installs.js 与 modloaders.js 渲染逻辑（无浏览器）。
 //
 // 用法：node render_installed_harness.js <client_ui_dir> <payload.json>
 //
-// 目的：GUI 的「已安装」页在无头环境下也能被真正执行与断言——注入最小 DOM，加载仓库里
-// 未修改的 installs.js，调用 renderInstalled() 并输出结构化结果。这不是打包 WebView 的
-// 验收，但能抓住"字段接错/按钮没接线/芯片缺失"这类问题。
+// 目的：GUI 的「已安装」页与左下角环境区在无头环境下也能被真正执行与断言——注入最小 DOM，
+// 加载仓库里未修改的 installs.js / modloaders.js，调用 renderInstalled() 与 renderEnvironment()
+// 并输出结构化结果。这不是打包 WebView 的验收，但能抓住"字段接错/名字取错来源/按钮没接线/
+// 芯片缺失"这类问题。
 "use strict";
 
 const fs = require("fs");
@@ -66,6 +67,12 @@ class FakeElement {
         return {
             add: (name) => { owner.className = `${owner.className} ${name}`.trim(); },
             remove: (name) => { owner.className = owner.className.replace(name, "").trim(); },
+            toggle: (name, force) => {
+                const has = owner.className.split(" ").includes(name);
+                const wanted = force === undefined ? !has : Boolean(force);
+                if (wanted && !has) owner.className = `${owner.className} ${name}`.trim();
+                if (!wanted && has) owner.className = owner.className.replace(name, "").trim();
+            },
         };
     }
 }
@@ -74,6 +81,8 @@ const elements = {
     "#installed-list": new FakeElement("div"),
     "#installed-count": new FakeElement("span"),
     "#installed-filter-all": new FakeElement("button"),
+    "#installed-filter-loaders": new FakeElement("button"),
+    "#installed-filter-mods": new FakeElement("button"),
     "#installed-filter-enabled": new FakeElement("button"),
     "#installed-filter-disabled": new FakeElement("button"),
     "#installed-filter-outdated": new FakeElement("button"),
@@ -86,6 +95,17 @@ const elements = {
     "#disable-selected": new FakeElement("button"),
     "#enable-selected": new FakeElement("button"),
     "#remove-selected": new FakeElement("button"),
+    // 左下角环境区与它渲染时要碰的状态栏元素（`renderEnvironment` 会顺手重算状态栏）。
+    "#environment-sprocket": new FakeElement("div"),
+    "#environment-loaders": new FakeElement("div"),
+    "#environment-install-loader": new FakeElement("button"),
+    "#environment-note": new FakeElement("div"),
+    "#status-text": new FakeElement("span"),
+    ".status-mark": new FakeElement("span"),
+    "#toast-region": new FakeElement("div"),
+    "#game-state": new FakeElement("div"),
+    "#game-state-text": new FakeElement("span"),
+    "#kill-sprocket": new FakeElement("button"),
 };
 
 const documentStub = {
@@ -106,21 +126,17 @@ const sandbox = {
     setTimeout,
     clearTimeout,
     queueMicrotask,
+    reportClientLog: (level, message) => {
+        if (level === "error") apiCalls.push({kind: "client-log", message: String(message)});
+    },
     state: {
         ready: true,
-        language: "zh",
-        languageMode: "zh",
-        packages: payload.packages || [],
-        installed: payload.installed || [],
-        unrecognized: payload.unrecognized || [],
-        localMods: payload.local_mods || [],
-        localSummary: payload.local_summary || null,
-        queue: [],
+        language: payload.language || "zh",
+        languageMode: payload.language || "zh",
+        packages: [],
         batch: new Map(),
         installedFilter: payload.filter || "all",
         installedSelection: new Set(),
-        environment: payload.environment || null,
-        modloaders: payload.modloaders || [],
         modloadersRequested: true,
     },
     localized: (values, fallback = "") => {
@@ -183,6 +199,8 @@ const sandbox = {
             invertSelection: "Invert selection",
             selectionCount: `${values.count} selected`,
             installedFilterAll: "All",
+            installedFilterLoaders: "Loaders",
+            installedFilterMods: "Mods",
             installedFilterEnabled: "Enabled",
             installedFilterDisabled: "Disabled",
             installedFilterOutdated: "Updates",
@@ -217,6 +235,8 @@ const sandbox = {
     resultError: (result) => { apiCalls.push({ kind: "error", result }); },
     renderCatalog: () => {},
     renderDetail: () => {},
+    renderStatusbar: () => {},
+    renderGameState: () => {},
     showPage: async () => {},
     pollQueue: async () => {},
     showModal: async () => true,
@@ -236,15 +256,36 @@ sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 
 const context = vm.createContext(sandbox);
-// `compatibility.js`、`modloaders.js` 与 `installs.js` 合成一个脚本再执行：页面上它们是分开的
-// `<script>`，但顶层的 `const`（三色常量）不跨脚本共享，合成后才与页面里的可见性一致。
-const source = ["compatibility.js", "modloaders.js", "installs.js"]
+
+// `data.js`、`compatibility.js`、`modloaders.js` 与 `installs.js` 合成一个脚本再执行：页面上它们是
+// 分开的 `<script>`，但顶层的 `const`（三色常量、数据镜像）不跨脚本共享，合成后才与页面里的可见性一致。
+const source = ["data.js", "compatibility.js", "modloaders.js", "installs.js"]
     .map((name) => fs.readFileSync(path.join(clientUiDir, "js", name), "utf8"))
     .join("\n");
 vm.runInContext(source, context, { filename: "installs.js" });
 
+// 已安装页的读数和线上一样由**数据层推来**：这里用同一条入口写进镜像，页面只读镜像。
+vm.runInContext(
+    `dataDeliver(${JSON.stringify({key: "installed", value: payload, revision: 1})});`,
+    context,
+);
+vm.runInContext(
+    `dataDeliver(${JSON.stringify({key: "environment", value: payload.environment || null, revision: 1})});`,
+    context,
+);
+vm.runInContext(
+    `dataDeliver(${JSON.stringify({key: "loaders", value: {modloaders: payload.modloaders || []}, revision: 1})});`,
+    context,
+);
+vm.runInContext(
+    `dataDeliver(${JSON.stringify({key: "catalog", value: {packages: payload.packages || [], source: ""}, revision: 1})});`,
+    context,
+);
+
 for (const key of payload.selection || []) sandbox.state.installedSelection.add(String(key));
-vm.runInContext("renderInstalled();", context);
+// 只画这两处：已装页与左下角环境区。目录页与加载器页的渲染函数都不运行 —— 名字该从
+// 数据层（`state.packages` / 扫描结果）来，而不是靠那两页渲染时顺手填进去。
+vm.runInContext("renderInstalled(); renderEnvironment();", context);
 
 // 行上三种事件各走一遍：单击（不做事）、双击（跳转）、右键（多选）。
 // `target` 为空表示点在行体上；`closest` 命中表示点在行内控件上，行不该接管。
@@ -315,6 +356,12 @@ setImmediate(() => {
         rows,
         clickedButtons: clicks,
         apiCalls,
+        sidebar: {
+            loaders: elements["#environment-loaders"].children.map((line) => line.textContent),
+            sprocket: elements["#environment-sprocket"].textContent,
+            installHidden: Boolean(elements["#environment-install-loader"].hidden),
+            note: elements["#environment-note"].textContent,
+        },
         toolbar: {
             selection: elements["#installed-selection"].textContent,
             barHidden: Boolean(elements["#installed-selection-bar"].hidden),
@@ -324,7 +371,7 @@ setImmediate(() => {
             },
             invertDisabled: Boolean(elements["#invert-selection"].disabled),
             filters: Object.fromEntries(
-                ["all", "enabled", "disabled", "outdated", "incompatible"].map((key) => [
+                ["all", "loaders", "mods", "enabled", "disabled", "outdated", "incompatible"].map((key) => [
                     key,
                     {
                         text: elements[`#installed-filter-${key}`].textContent,

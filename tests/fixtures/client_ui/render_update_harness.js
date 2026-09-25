@@ -119,16 +119,13 @@ const injected = {
     language: "en",
     languageMode: "en",
     page: "about",
-    packages: [],
-    installed: [],
-    localMods: [],
-    queue: [],
     update: null,
 };
 
 const source = [
     fs.readFileSync(path.join(clientUiDir, "js", "i18n.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "core.js"), "utf8"),
+    fs.readFileSync(path.join(clientUiDir, "js", "data.js"), "utf8"),
     `Object.assign(state, ${JSON.stringify(injected)});`,
     fs.readFileSync(path.join(clientUiDir, "js", "modloaders.js"), "utf8"),
 ].join("\n");

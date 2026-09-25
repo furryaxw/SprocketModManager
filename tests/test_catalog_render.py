@@ -113,6 +113,22 @@ def package(
     }
 
 
+def installed_record(package_id: str, version: str = "1.0.0", **overrides) -> dict:
+    """安装记录的一条：目录页的「已装/更新/卸载」都从数据层推来的这一份里查。"""
+    record = {
+        "id": package_id,
+        "name": package_id,
+        "version": version,
+        "requested": True,
+        "corrupted": False,
+        "integrity": "release",
+        "suppressed": False,
+        "files": [],
+    }
+    record.update(overrides)
+    return record
+
+
 def environment(
         *,
         installed: bool = True,
@@ -447,20 +463,22 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertFalse(state["buttons"]["clear"])
 
     def test_installed_rows_enable_the_uninstall_action(self) -> None:
-        installed = package("test.fine", [("1.0.0", "compatible")])
-        installed["installed"] = {"name": "test.fine", "version": "1.0.0", "requested": True,
-                                 "corrupted": False, "integrity": "release", "suppressed": False, "files": []}
-        result = self._render(packages=[installed], select_rows=[0])
+        result = self._render(
+            packages=[package("test.fine", [("1.0.0", "compatible")])],
+            installed=[installed_record("test.fine")],
+            select_rows=[0],
+        )
 
         state = result["selectionAfterRows"]
         self.assertFalse(state["buttons"]["remove"], "有安装记录 → 卸载可用")
 
     def test_a_row_with_nothing_to_install_can_still_be_picked(self) -> None:
         """装到最新只是「安装」没活干，勾选还要给「卸载」用，所以选择框不能灰掉。"""
-        current = package("test.current", [("1.0.0", "compatible")])
-        current["installed"] = {"name": "test.current", "version": "1.0.0", "requested": True,
-                                "corrupted": False, "integrity": "release", "suppressed": False, "files": []}
-        result = self._render(packages=[current], check_row=0)
+        result = self._render(
+            packages=[package("test.current", [("1.0.0", "compatible")])],
+            installed=[installed_record("test.current")],
+            check_row=0,
+        )
 
         checkbox = result["rows"][0]["children"][0]
         self.assertEqual(checkbox["className"], "package-check")

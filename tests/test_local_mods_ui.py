@@ -16,9 +16,12 @@ class LocalModsClientUiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.javascript = client_javascript()
         self.installs = (CLIENT_UI / "js" / "installs.js").read_text(encoding="utf-8")
+        self.data = (CLIENT_UI / "js" / "data.js").read_text(encoding="utf-8")
+        self.business = (CLIENT_UI / "js" / "business.js").read_text(encoding="utf-8")
 
     def test_installed_page_consumes_local_metadata(self) -> None:
-        self.assertIn("state.localMods = result.local_mods || []", self.installs)
+        # 这一份读数由数据层推来、页面只读镜像（不在页面上从接口返回值另存一份）。
+        self.assertIn("localMods: () => dataValue(\"installed\")?.local_mods || []", self.data)
         self.assertIn("const scanned = state.localMods || []", self.installs)
         self.assertIn("function renderScannedModRow(mod)", self.installs)
         self.assertIn("function renderLegacyModRow(item)", self.installs)
@@ -31,8 +34,8 @@ class LocalModsClientUiTests(unittest.TestCase):
 
     def test_adoption_never_blocks_the_list(self) -> None:
         # 认领必须在 renderInstalled() 之后异步触发，而不是等它返回再渲染。
-        render = self.installs.index("renderInstalled();")
-        claim = self.installs.index("void claimExistingMods();")
+        render = self.business.index("renderInstalled();")
+        claim = self.business.index("void claimExistingMods();")
         self.assertLess(render, claim, "the list renders before the network-bound claim starts")
         self.assertIn('callApi("adopt_existing")', self.installs)
         self.assertIn("let claimInFlight = false;", self.installs, "claims must not stack up")
@@ -58,7 +61,7 @@ class LocalModsClientUiTests(unittest.TestCase):
         self.assertIn('data-i18n="installedRowHint"', html)
 
     def test_previous_unrecognized_shape_still_renders(self) -> None:
-        self.assertIn("state.unrecognized = result.unrecognized || []", self.installs)
+        self.assertIn("unrecognized: () => dataValue(\"installed\")?.unrecognized || []", self.data)
         self.assertIn("if (item.unrecognized)", self.installs)
         self.assertIn('tr("unrecognized")', self.installs)
 

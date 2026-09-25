@@ -1,20 +1,30 @@
 "use strict";
 
 // 加载器 = 带 `loader: true` 的普通注册表包：这一层只管显示什么、按钮点了调哪个接口，
-// 装/卸/校验都在后端。左下角环境区也在这里：它要显示加载器的名字，而名字只在加载器目录里。
+// 装/卸/校验都在后端。左下角环境区也在这里：它要显示加载器的名字，名字从注册表条目里查。
+
+/**
+ * 注册表里某个包的多语言名：加载器目录与模组目录里都查，两处都没有（或那个条目没带名字）返回空串。
+ *
+ * 名字只从数据层的注册表条目里查：已装页、左下角环境区与加载器卡片的依赖行读的是同一份数据，
+ * 因此同一个包在哪里都是同一个名字。空串由调用方决定退回包 id 还是 DLL 自己的元数据。
+ */
+function registryPackageLabel(packageId) {
+    if (!packageId) return "";
+    const known = (state.modloaders || []).find((item) => item.id === packageId)
+        || (state.packages || []).find((item) => item.id === packageId);
+    if (!known) return "";
+    return localized(known.display_name, "") || String(known.name || "");
+}
 
 /** 加载器的显示名：注册表里的本地化名字，认不出来就退回包 id。 */
 function loaderLabel(loaderId) {
-    const known = (state.modloaders || []).find((item) => item.id === loaderId);
-    return known ? localized(known.display_name, known.name || loaderId) : loaderId;
+    return registryPackageLabel(loaderId) || loaderId;
 }
 
-/** 一个包 id 的显示名：加载器目录里有就用它，否则去模组目录找，都没有就写 id。 */
+/** 一个包 id 的显示名：加载器目录或模组目录里有就用它，都没有就写 id。 */
 function packageOrLoaderLabel(packageId) {
-    const known = (state.modloaders || []).find((item) => item.id === packageId);
-    if (known) return localized(known.display_name, known.name || packageId);
-    const pkg = (state.packages || []).find((item) => item.id === packageId);
-    return pkg ? packageLabel(pkg) : packageId;
+    return registryPackageLabel(packageId) || packageId;
 }
 
 /** 环境轴拼出来的一句话：哪些轴有值就说哪些，一个都没有时返回空串。 */
@@ -49,21 +59,20 @@ function environmentConflictText() {
 /**
  * 拉加载器目录并重画。
  *
- * 目录是「注册表里有哪些加载器包、装没装、能不能更新、当前环境下能不能跑」的完整答案，
- * 环境轮询给不了这些（它只报版本）。
+ * 这份读数归数据层（`loaders` 那个 key），这条只是**刷新命令**；变了之后怎么画在 `business.js` 里。
+ * `modloadersLoading` 只是这一次请求期间的界面状态：`checking` 那一行按它显示。
  */
 async function refreshModloaders() {
-    state.modloadersLoading = true;
     state.modloadersRequested = true;
+    state.modloadersLoading = true;
     renderModloaders();
     renderEnvironment();
     try {
-        const result = await callApi("get_modloaders");
+        const result = await callApi("data_request", "loaders");
         if (!result.ok) {
             resultError(result);
             return false;
         }
-        state.modloaders = result.modloaders || [];
         return true;
     } catch (error) {
         resultError({message: String(error)});
@@ -80,10 +89,7 @@ async function ensureModloaderNames() {
     if (state.modloadersRequested || (state.modloaders || []).length || !state.ready) return;
     state.modloadersRequested = true;
     try {
-        const result = await callApi("get_modloaders");
-        if (!result.ok) return;
-        state.modloaders = result.modloaders || [];
-        renderEnvironment();
+        await callApi("data_request", "loaders");
     } catch (_error) {
         // 取不到名字就用 id：侧栏不该因为这一次读取而报错。
     }
@@ -260,7 +266,7 @@ function renderModloaderCard(item) {
 /** 主按钮：走模组那条安装路（解析 → 安装确认里挑版本、看依赖 → 入队）。 */
 async function installLoader(item) {
     if (queueActive() || state.modloadersLoading) return false;
-    await beginInstall([item.id]);
+    await beginInstall([item.id], null, true);
     return true;
 }
 
@@ -285,7 +291,9 @@ async function removeLoader(item) {
             resultError(result);
             return;
         }
-        toast(tr("modloaderRemoved", {name}));
+        // 卸载是逐条做的：没搬走的条目原样留在游戏目录里，逐条说明为什么，不要只报「已卸载」。
+        const message = tr("modloaderRemoved", {name});
+        toast(result.warnings?.length ? `${message} | ${result.warnings.join("; ")}` : message);
         setStatus("", "ready");
         removed = true;
     } catch (error) {
@@ -302,17 +310,19 @@ async function removeLoader(item) {
     }
 }
 
+/** 让数据层刷一次环境读数：命令只回 ack，读数经推送回来（怎么画在 `business.js` 里）。 */
 async function refreshEnvironment(includeLatest = false) {
     try {
-        const result = await callApi("get_environment", includeLatest);
-        state.environment = result.ok ? result : null;
+        const result = await callApi(
+            "data_request",
+            "environment",
+            includeLatest ? {include_latest: true} : null,
+        );
+        if (!result.ok) throw new Error(result.message || "environment refresh failed");
     } catch (_error) {
         // 环境信息读不到就不显示版本，别让左下角冒红：本机情况在列表里有更准确的呈现。
-        state.environment = null;
+        reportClientLog("warning", "environment refresh failed");
     }
-    if (state.environment) state.environmentRevision = state.environment.revision;
-    renderEnvironment();
-    void ensureModloaderNames();
 }
 
 /** 环境里真正影响判定的那几项：只有它们变了才值得重新拉目录。 */
@@ -327,57 +337,6 @@ function environmentKey(environment) {
         loaderKey,
         environment.environment?.state || "",
     ].join("|");
-}
-
-/**
- * 左下角重画用的指纹：Sprocket 版本，加上每个加载器「装没装、是哪版」。
- *
- * `revision` 只跟着游戏目录里的文件走，注册表加载完不会动它；而加载器清单恰恰是注册表给的，
- * 所以「要不要重画」不能只看 `revision`，这份指纹也要算进来。
- */
-function environmentRenderKey(environment) {
-    if (!environment) return "";
-    const sprocket = environment.sprocket || {};
-    const loaders = environment.loaders || {};
-    const loaderKey = Object.keys(loaders).sort()
-        .map((loaderId) => {
-            const info = loaders[loaderId] || {};
-            return `${loaderId}:${info.installed ? "1" : "0"}:${info.version || info.used_version || ""}`;
-        })
-        .join(",");
-    return [
-        sprocket.state || "",
-        sprocket.version || "",
-        loaderKey,
-        environment.environment?.state || "",
-    ].join("|");
-}
-
-/**
- * 每秒问一次环境。
- *
- * `revision` 变了说明游戏目录里动过东西（游戏更新、加载器装/卸、Mods 里增删文件）：
- * 版本或判定口径变了就重拉目录（每个 release 的判定是后端按环境算的），只是文件变了就刷新列表。
- * 加载器清单本身变了也要重画 —— 注册表加载不会动 `revision`，只看它左下角就会一直停在旧读数。
- */
-async function pollEnvironment() {
-    if (!state.ready) return;
-    let result;
-    try {
-        result = await callApi("get_environment", false);
-    } catch (_error) {
-        return;
-    }
-    if (!result.ok) return;
-    const previousKey = environmentKey(state.environment);
-    const changed = state.environmentRevision !== result.revision;
-    state.environmentRevision = result.revision;
-    state.environment = result;
-    renderStatusbar();
-    if (!changed && environmentRenderKey(result) === state.environmentRenderKey) return;
-    renderEnvironment();
-    if (environmentKey(result) !== previousKey) await loadCatalog(false);
-    else await refreshInstalled();
 }
 
 /**
@@ -420,8 +379,6 @@ function renderEnvironment() {
     note.hidden = !problem;
     note.className = "environment-line environment-note error";
     note.textContent = problem;
-    // 记下这次画的是哪一份读数：轮询靠它判断加载器清单有没有变。
-    state.environmentRenderKey = environmentRenderKey(environment);
     // 环境是状态栏要看的活状态之一，顺手重算一次。
     renderStatusbar();
 }

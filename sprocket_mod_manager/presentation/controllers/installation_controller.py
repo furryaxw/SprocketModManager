@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterable, cast
 
 from .base import ApiController
 from ..api_support import GamePathRequiredError
+from ...application.data_hub import KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS, KEY_QUEUE
 from ...application.install_queue import ACTIVE_STATES, InstallQueueEntry
 from ...application.preparer import PlanPreparer
 from ...application.private_install import prepare_private_package
@@ -248,6 +249,8 @@ class InstallationController(ApiController):
                 self._loader_idle.set()
                 self._mutation_lock.release()
             self._environment_monitor.invalidate()
+            # 装完一个加载器：四份读数都变了 —— 让数据层自己重算并推给界面。
+            self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS, KEY_QUEUE)
             items = self._modloader_items(service, game_path, [package.id])
             item = items[0] if items else {}
             return self._success(
@@ -276,12 +279,18 @@ class InstallationController(ApiController):
                 if not self._mutation_lock.acquire(blocking=False):
                     raise RuntimeError("another game-directory operation is already running")
             try:
-                service.remove(package.id, game_path)
+                removed, warnings = service.remove(package.id, game_path)
             finally:
                 self._mutation_lock.release()
             self._environment_monitor.invalidate()
+            # 卸载加载器会把它供给的目录一起搬走：四份读数都变了。
+            self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS, KEY_QUEUE)
             items = self._modloader_items(service, game_path, [package.id])
-            return self._success(modloader=items[0] if items else {})
+            return self._success(
+                modloader=items[0] if items else {},
+                removed=removed,
+                warnings=warnings,
+            )
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"
@@ -538,6 +547,7 @@ class InstallationController(ApiController):
                     force_conflicts=bool(force_conflicts),
                     version_ranges=ranges,
                 )
+            self.data_changed(KEY_QUEUE)
             return self._success(added=[entry.task_id for entry in added], count=len(added), failed=failed)
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
@@ -625,6 +635,8 @@ class InstallationController(ApiController):
                     removed, warnings = service.remove(package.id, game_path)
                 # 交还加载器的树会改掉加载器清单：环境读数必须重来一次，否则左下角留着旧读数。
                 self._environment_monitor.invalidate()
+                # 卸载会连带搬走供给目录里的模组：四份读数都变了。
+                self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS, KEY_QUEUE)
             finally:
                 self._mutation_lock.release()
             return self._success(removed=removed, warnings=warnings)
@@ -690,8 +702,10 @@ class InstallationController(ApiController):
                         progress=progress,
                     )
             finally:
-                # 队列装的可能就是加载器：装完环境读数必须重来一次。
+                # 队列装的可能就是加载器：装完环境读数必须重来一次；已安装读数与队列本身也变了，
+                # 让数据层自己重算并推送 —— 不在返回值里另带一份。
                 self._environment_monitor.invalidate()
+                self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_QUEUE, KEY_LOADERS)
 
     def _install_private_package(
             self,
@@ -760,8 +774,11 @@ class InstallationController(ApiController):
         )
 
     def cancel_queue_item(self, task_id: str) -> dict[str, Any]:
-        return self._success(canceled=self.install_queue.cancel(str(task_id)))
+        canceled = self.install_queue.cancel(str(task_id))
+        self.data_changed(KEY_QUEUE)
+        return self._success(canceled=canceled)
 
     def clear_finished(self) -> dict[str, Any]:
         self.install_queue.clear_finished()
-        return self._success(entries=self._queue_data())
+        self.data_changed(KEY_QUEUE)
+        return self._success()

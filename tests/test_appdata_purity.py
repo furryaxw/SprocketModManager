@@ -61,6 +61,7 @@ class AppDataPurityTests(unittest.TestCase):
                 self.assertTrue(api.verify_installed()["ok"])
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             state_dir = game / "SprocketModManager"
             state_file = state_dir / "installed.json"

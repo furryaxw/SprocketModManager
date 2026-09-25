@@ -1,8 +1,9 @@
-"""在 Node 里真实执行客户端「已安装」页的渲染逻辑。
+"""在 Node 里真实执行客户端「已安装」页与左下角环境区的渲染逻辑。
 
-用最小 DOM 注入运行仓库里未修改的 `installs.js`（见 `fixtures/client_ui/render_installed_harness.js`），
+用最小 DOM 注入运行仓库里未修改的 `installs.js` / `modloaders.js`
+（见 `fixtures/client_ui/render_installed_harness.js`），
 断言真实 `get_installed` payload（含 `local_mods`）会被渲染成正确的名称、芯片与启用/禁用按钮，
-并且按钮真的调用 `toggle_mod`。
+并且按钮真的调用 `toggle_mod`；名字的取用来源与左下角的加载器行也在同一处断言。
 
 这不是打包 WebView 的人工验收，但比"字符串存在性"断言强得多；没有 node 时自动跳过。
 """
@@ -36,6 +37,9 @@ def payload(
         dblclick_row_buttons: list | None = None,
         environment: dict | None = None,
         modloaders: list | None = None,
+        local_mods: list | None = None,
+        installed: list | None = None,
+        language: str = "",
 ) -> dict:
     """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
     integrity = "corrupted" if corrupted else "suppressed" if suppressed else "release"
@@ -109,6 +113,12 @@ def payload(
         "has_any_mods": True,
     }
     document["packages"] = packages or []
+    if installed is not None:
+        document["installed"] = installed
+    if local_mods is not None:
+        document["local_mods"] = local_mods
+    if language:
+        document["language"] = language
     if environment is not None:
         document["environment"] = environment
     if modloaders is not None:
@@ -360,10 +370,66 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
         filters = self._render(packages=[package])["toolbar"]["filters"]
         self.assertEqual(filters["all"], {"text": "All (3)", "active": True})
+        self.assertEqual(filters["loaders"], {"text": "Loaders (0)", "active": False})
+        self.assertEqual(filters["mods"], {"text": "Mods (3)", "active": False})
         self.assertEqual(filters["enabled"], {"text": "Enabled (2)", "active": False})
         self.assertEqual(filters["disabled"], {"text": "Disabled (1)", "active": False})
         self.assertEqual(filters["outdated"], {"text": "Updates (1)", "active": False})
         self.assertEqual(filters["incompatible"], {"text": "Incompatible (0)", "active": False})
+
+    def test_the_loaders_filter_keeps_only_what_the_data_layer_calls_a_loader(self) -> None:
+        """加载器与模组分得开：事实来自数据层（每条记录带 `loader`），界面不靠文件名猜。"""
+
+        def record(package_id: str, **overrides) -> dict:
+            base = {
+                "id": package_id, "name": package_id, "version": "1.0.0", "requested": True,
+                "corrupted": False, "suppressed": False, "integrity": "release", "files": [],
+            }
+            base.update(overrides)
+            return base
+
+        mod = {
+            "path": "Mods/SprocketLaserRangefinder.dll",
+            "name": "SprocketLaserRangefinder.dll",
+            "display_name": "Sprocket Laser Rangefinder",
+            "version": "0.1.3",
+            "authors": ["furryAxw"],
+            "kind": "Mods",
+            "disabled": False,
+            "registry_id": "furryaxw.sprocket-laser-rangefinder",
+            "installed_package_id": "furryaxw.sprocket-laser-rangefinder",
+            "assembly_name": "SprocketLaserRangefinder",
+            "required_dependencies": [],
+            "missing_dependencies": [],
+            "incompatible_assemblies": [],
+            "sha256": "",
+            "error": "",
+        }
+        bridge_id = "1499501762.bepinex-melonloader-loader"
+        bridge = {
+            **mod,
+            "path": "BepInEx/plugins/MLLoader.dll",
+            "name": "MLLoader.dll",
+            "display_name": "MLLoader",
+            "registry_id": bridge_id,
+            "installed_package_id": bridge_id,
+        }
+        records = [
+            record("furryaxw.sprocket-laser-rangefinder"),
+            record(bridge_id, kind="loaderbridge", loader=True),
+        ]
+
+        every = self._render(local_mods=[mod, bridge], installed=records)["toolbar"]["filters"]
+        self.assertEqual(every["loaders"]["text"], "Loaders (1)")
+        self.assertEqual(every["mods"]["text"], "Mods (1)")
+
+        only_loaders = self._render(local_mods=[mod, bridge], installed=records, filter_key="loaders")
+        self.assertEqual(len(only_loaders["rows"]), 1, "有 loader 事实的那一行才留下")
+        self.assertIn("MLLoader", json.dumps(only_loaders["rows"], ensure_ascii=False))
+
+        only_mods = self._render(local_mods=[mod, bridge], installed=records, filter_key="mods")
+        self.assertEqual(len(only_mods["rows"]), 1)
+        self.assertIn("Sprocket Laser Rangefinder", json.dumps(only_mods["rows"], ensure_ascii=False))
 
     def test_filter_hides_rows_that_do_not_match(self) -> None:
         disabled = self._render(filter_key="disabled")
@@ -390,7 +456,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["className"], "empty-list")
         self.assertEqual(result["rows"][0]["children"][0]["text"], "No mods match this filter")
         self.assertEqual(result["count"], "3 detected mods", "空态也不该说磁盘上没有模组")
-        self.assertEqual(len(result["toolbar"]["filters"]), 5)
+        self.assertEqual(len(result["toolbar"]["filters"]), 7)
 
     def test_double_clicking_a_catalog_row_opens_it_in_the_catalog(self) -> None:
         """双击那一行的去处是模组目录页：切过去并选中这个包。"""
@@ -521,6 +587,98 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         )
         self.assertEqual(marker["title"], reason)
         self.assertEqual(marker["ariaLabel"], reason, "tooltip 之外还要有可读标签")
+
+    def test_registry_names_render_without_the_catalog_or_loader_page(self) -> None:
+        """注册表数据到位、目录页与加载器页都还没画：已装页与左下角也用注册表的本地化名。
+
+        扫描结果是注册表加载之前的那一份（没有 `registry_display_name`、也没有 `registry_id`）：
+        有安装记录的行靠 `installed_package_id`，只有 DLL 声明 id 的行靠 `declared_id`，
+        两边都从数据层里的注册表条目取名字；两种界面语言都走 `localized` 的既有回退规则。
+        """
+        catalog = [
+            {
+                "id": "furryaxw.sprocket-laser-rangefinder",
+                "name": "SprocketLaserRangefinder",
+                "display_name": {"en": "Sprocket Laser Rangefinder", "zh": "Sprocket 激光测距仪"},
+            },
+            {
+                "id": "furryaxw.cannon-sound-pool-fix",
+                "name": "CannonSoundPoolFix",
+                "display_name": {"en": "Cannon Sound Pool Fix", "zh": "炮声池修复"},
+            },
+            {
+                "id": "lavagang.melonloader",
+                "name": "MelonLoader",
+                "display_name": {"en": "MelonLoader", "zh": "Melon 加载器"},
+            },
+        ]
+        # 两行的 `display_name` 都是 DLL 自报的英文名：注册表在场时它不该盖过本地化名。
+        scan = [
+            {
+                "path": "Mods/SprocketLaserRangefinder.dll",
+                "name": "SprocketLaserRangefinder.dll",
+                "display_name": "SprocketLaserRangefinder",
+                "version": "0.1.3",
+                "authors": ["furryAxw"],
+                "kind": "Mods",
+                "disabled": False,
+                "declared_id": "furryaxw.sprocket-laser-rangefinder",
+                "registry_id": "",
+                "registry_match": "",
+                "required_dependencies": [],
+                "incompatible_assemblies": [],
+                "installed_package_id": "furryaxw.sprocket-laser-rangefinder",
+                "assembly_name": "SprocketLaserRangefinder",
+                "sha256": "",
+                "error": "",
+            },
+            {
+                "path": "Mods/CannonSoundPoolFix.dll",
+                "name": "CannonSoundPoolFix.dll",
+                "display_name": "CannonSoundPoolFix",
+                "version": "1.2.0",
+                "authors": ["furryAxw"],
+                "kind": "Mods",
+                "disabled": False,
+                "declared_id": "furryaxw.cannon-sound-pool-fix",
+                "registry_id": "",
+                "registry_match": "",
+                "required_dependencies": [],
+                "incompatible_assemblies": [],
+                "installed_package_id": "",
+                "assembly_name": "CannonSoundPoolFix",
+                "sha256": "",
+                "error": "",
+            },
+        ]
+        environment = {
+            "sprocket": {"state": "ok", "version": "0.2.53.2"},
+            "loaders": {
+                "lavagang.melonloader": {
+                    "installed": True, "version": "0.7.2", "latest_version": "0.7.3", "used_version": "0.7.2",
+                },
+            },
+        }
+        # 界面默认语言（harness 不传 language 时）与另一种语言各断言一遍。
+        cases = [
+            (None, ("Sprocket 激光测距仪", "炮声池修复"), "Melon 加载器 0.7.2"),
+            ("en", ("Sprocket Laser Rangefinder", "Cannon Sound Pool Fix"), "MelonLoader 0.7.2"),
+        ]
+        for language, row_names, sidebar_line in cases:
+            with self.subTest(language=language or "default"):
+                result = self._render(
+                    packages=catalog,
+                    local_mods=scan,
+                    language=language or "",
+                    environment=environment,
+                )
+                for index, expected in enumerate(row_names):
+                    title = " | ".join(
+                        child["text"] for child in result["rows"][index]["children"][1]["children"]
+                    )
+                    self.assertIn(expected, title, "已装页的识别名来自注册表，不是 DLL 自报的英文名")
+                self.assertEqual(result["sidebar"]["loaders"], [sidebar_line],
+                                 "左下角环境区的加载器名来自注册表，不是包 id")
 
     def test_batch_update_enqueues_only_the_selected_outdated_packages(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}

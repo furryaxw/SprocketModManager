@@ -37,6 +37,11 @@ def client_javascript(root: Path) -> str:
     )
 
 
+def server_reading(api: ClientApi) -> dict:
+    """开发者服务器那份读数（服务器 / 私有包 / 登录状态）归数据层：测试从那里读。"""
+    return api.data.get("servers") or {}
+
+
 def signing_identity(private_key, key_id):
     public = private_key.public_key()
     raw = public.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -300,13 +305,14 @@ class PrivateServerTests(unittest.TestCase):
                     signing_identity=identity,
                 )
                 with patch.object(DeveloperServerClient, "info", side_effect=ValueError("offline")):
-                    result = api.get_developer_servers()
+                    api.get_developer_servers()
+                    reading = server_reading(api)
             finally:
                 api.install_queue.close()
-        self.assertEqual(result["servers"][0]["status"], "offline")
-        self.assertNotIn("cached", result["servers"][0])
-        self.assertIn("expired", result["servers"][0]["cache_error"])
-        self.assertEqual(result["packages"], [])
+        self.assertEqual(reading["servers"][0]["status"], "offline")
+        self.assertNotIn("cached", reading["servers"][0])
+        self.assertIn("expired", reading["servers"][0]["cache_error"])
+        self.assertEqual(reading["packages"], [])
 
     def test_strict_key_status_rejects_expired_or_revoked_signing_key(self):
         private = Ed25519PrivateKey.generate()
@@ -854,13 +860,33 @@ class PrivateServerTests(unittest.TestCase):
                 self.assertTrue(api.set_demo_github_login("123")["ok"])
                 activated = api.activate_developer_server("test-server", "TEST-KEY")
                 self.assertTrue(activated["ok"])
-                servers = api.get_developer_servers()
+                api.get_developer_servers()
+                servers = server_reading(api)
                 self.assertEqual(servers["packages"][0]["server_name"], "Test Server")
                 self.assertTrue(servers["packages"][0]["private"])
                 removed = api.remove_developer_server("test-server")
                 self.assertTrue(removed["ok"])
             finally:
                 api.install_queue.close()
+
+    def test_the_private_server_reading_goes_into_the_data_layer(self):
+        """开发者服务器那份读数进数据层：`get_developer_servers` 只回 ack，读数由 `servers` 那个 key 持有。"""
+        with TemporaryDirectory() as directory:
+            api = ClientApi("test", app_dir=Path(directory))
+            try:
+                self.assertTrue(api.add_developer_server(self.url)["ok"])
+                self.assertTrue(api.set_demo_github_login("123")["ok"])
+                self.assertTrue(api.activate_developer_server("test-server", "TEST-KEY")["ok"])
+                ack = api.get_developer_servers()
+                reading = server_reading(api)
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(ack["ok"], ack)
+        for key in ("servers", "packages", "adopted", "github_user_id", "github_login_expired"):
+            self.assertNotIn(key, ack, f"读数不该在返回值里：{key}")
+        self.assertEqual(reading["servers"][0]["server_id"], "test-server")
+        self.assertEqual(reading["packages"][0]["server_name"], "Test Server")
 
     def test_server_added_after_global_github_login_receives_its_own_session(self):
         with TemporaryDirectory() as directory:
@@ -987,9 +1013,10 @@ class PrivateServerTests(unittest.TestCase):
                 with patch("sprocket_mod_manager.presentation.controllers.private_distribution_controller.github_current_user",
                            side_effect=ValueError("GitHub access token is invalid")):
                     result = api.get_developer_servers()
+                    reading = server_reading(api)
                 self.assertTrue(result["ok"])
-                self.assertTrue(result["github_login_expired"])
-                self.assertEqual(result["github_user_id"], "")
+                self.assertTrue(reading["github_login_expired"])
+                self.assertEqual(reading["github_user_id"], "")
                 self.assertEqual(api._github_token(), "")
             finally:
                 api.install_queue.close()
@@ -1059,11 +1086,12 @@ class PrivateServerTests(unittest.TestCase):
                 self.assertTrue(api.get_developer_servers()["ok"])
                 with patch.object(DeveloperServerClient, "entitlements", side_effect=ValueError("offline")):
                     cached = api.get_developer_servers()
+                    reading = server_reading(api)
                 self.assertTrue(cached["ok"])
-                self.assertEqual(cached["servers"][0]["status"], "offline")
-                self.assertTrue(cached["servers"][0]["cached"])
-                self.assertTrue(cached["packages"][0]["cached"])
-                self.assertEqual(cached["adopted"], [])
+                self.assertEqual(reading["servers"][0]["status"], "offline")
+                self.assertTrue(reading["servers"][0]["cached"])
+                self.assertTrue(reading["packages"][0]["cached"])
+                self.assertEqual(reading["adopted"], [])
                 with patch.object(DeveloperServerClient, "packages", side_effect=ValueError("offline")):
                     planned = api.plan_install(["test-server:private.mod"])
                 self.assertFalse(planned["ok"])
@@ -1087,8 +1115,9 @@ class PrivateServerTests(unittest.TestCase):
                         code="invalid_session",
                     ),
                 ):
-                    result = api.get_developer_servers()
-                self.assertEqual(result["servers"][0]["status"], "reauth_required")
+                    api.get_developer_servers()
+                    reading = server_reading(api)
+                self.assertEqual(reading["servers"][0]["status"], "reauth_required")
             finally:
                 api.install_queue.close()
 
@@ -1154,10 +1183,11 @@ class PrivateServerTests(unittest.TestCase):
                     api.config_store.save(api.config)
                     self.assertTrue(api.add_developer_server(self.url)["ok"])
                     self.assertTrue(api.set_demo_github_login("123")["ok"])
-                    result = api.get_developer_servers()
+                    api.get_developer_servers()
+                    reading = server_reading(api)
                     package_id = "test-server:private.mod"
-                    self.assertEqual(result["adopted"][0]["id"], package_id)
-                    self.assertNotIn("adopted", result["packages"][0]["installed"])
+                    self.assertEqual(reading["adopted"][0]["id"], package_id)
+                    self.assertNotIn("adopted", reading["packages"][0]["installed"])
                     self.assertEqual(api._installed_data()[0]["id"], package_id)
                     self.assertTrue(api.remove(package_id)["ok"])
                     self.assertFalse(target.exists())

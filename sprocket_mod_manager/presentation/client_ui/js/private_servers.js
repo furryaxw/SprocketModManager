@@ -1,7 +1,5 @@
 "use strict";
 
-let developerServersLoadPromise = null;
-
 function renderDeveloperServers() {
     const container = $("#developer-server-list");
     if (!container) return;
@@ -231,35 +229,12 @@ async function logoutGithub() {
     await loadDeveloperServers();
 }
 
+/** 让数据层刷一次开发者服务器：命令只回 ack，读数经推送回来（怎么画在 `business.js` 里）。 */
 async function loadDeveloperServers() {
-    if (developerServersLoadPromise) return developerServersLoadPromise;
-    developerServersLoadPromise = loadDeveloperServersOnce();
+    if (!state.ready) return;
     try {
-        return await developerServersLoadPromise;
-    } finally {
-        developerServersLoadPromise = null;
-    }
-}
-
-async function loadDeveloperServersOnce() {
-    try {
-        const result = await callApi("get_developer_servers");
-        if (!result.ok) {
-            resultError(result);
-            return;
-        }
-        if (result.github_login_expired) {
-            state.settings.github_user_id = "";
-            renderGithubLogin();
-        } else if (typeof result.github_user_id === "string") {
-            state.settings.github_user_id = result.github_user_id;
-            renderGithubLogin();
-        }
-        state.developerServers = result.servers || [];
-        state.privatePackages = result.packages || [];
-        state.packages = [...state.publicPackages, ...state.privatePackages];
-        renderDeveloperServers();
-        renderCatalog();
+        const result = await callApi("data_request", "servers");
+        if (!result.ok) resultError(result);
     } catch (error) {
         resultError({message: String(error)});
     }
@@ -334,10 +309,6 @@ async function removeDeveloperServer(serverId) {
         resultError(result);
         return;
     }
-    state.developerServers = state.developerServers.filter((server) => server.server_id !== serverId);
-    state.privatePackages = state.privatePackages.filter((pkg) => pkg.server_id !== serverId);
-    state.packages = [...state.publicPackages, ...state.privatePackages];
-    renderDeveloperServers();
-    renderCatalog();
     toast(tr("serverRemoved"));
+    await loadDeveloperServers();
 }

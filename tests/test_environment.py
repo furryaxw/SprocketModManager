@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -336,6 +337,16 @@ class GameVersionTests(unittest.TestCase):
         self.assertIn("globalgamemanagers", version.detail)
 
 
+class _FakeWindow:
+    """假窗口：只关心推过去的脚本，用来验证桥这一段。"""
+
+    def __init__(self) -> None:
+        self.scripts: list[str] = []
+
+    def evaluate_js(self, script: str) -> None:
+        self.scripts.append(script)
+
+
 class EnvironmentApiTests(unittest.TestCase):
     def _api(self, root: Path, game: Path | str | None) -> ClientApi:
         app_dir = root / "app"
@@ -347,6 +358,206 @@ class EnvironmentApiTests(unittest.TestCase):
     def _close(self, api: ClientApi) -> None:
         api._environment_monitor.stop()
         api.install_queue.close()
+        api.data.close()
+
+    def test_installed_rows_say_what_they_are(self) -> None:
+        """已安装读数每条都带 `kind` / `loader`：加载器与模组的分野由数据层给出，界面不猜。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api = self._api(root, None)
+            api.service.registry = Registry([loader_package()], _loader_table())
+            try:
+                rows = api._catalog_controller._installed_data(
+                    api.service,
+                    installed={
+                        LOADER_ID: {"name": "MelonLoader", "version": "0.7.3", "files": []},
+                        "test.mod": {"name": "TestMod", "version": "1.0.0", "files": []},
+                        # 注册表里没有、记录里也没写 kind 的（私有包之类）：说不出是什么，就不假装是加载器。
+                        "someone.private": {"name": "Private", "version": "2.0.0", "files": []},
+                        # 记录里留了 kind、但注册表已经不认它了：按记录说。
+                        "old.bridge": {
+                            "name": "OldBridge", "version": "1.0.0", "files": [], "kind": "loaderbridge",
+                        },
+                    },
+                )
+            finally:
+                self._close(api)
+
+        by_id = {row["id"]: row for row in rows}
+        self.assertEqual(by_id[LOADER_ID]["kind"], "modloader", "注册表说它是基础运行时")
+        self.assertTrue(by_id[LOADER_ID]["loader"])
+        self.assertFalse(by_id["test.mod"]["loader"], "注册表里没有它 → 不是加载器")
+        self.assertEqual(by_id["test.mod"]["kind"], "")
+        self.assertFalse(by_id["someone.private"]["loader"], "什么都不知道时不假装是加载器")
+        self.assertTrue(by_id["old.bridge"]["loader"], "注册表不认了，就按记录里的 kind 说")
+
+    @staticmethod
+    def _wait_for_push(pushed: list[dict], timeout: float = 5.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if pushed:
+                return True
+            time.sleep(0.025)
+        return bool(pushed)
+
+    def test_the_data_layer_pushes_the_installed_reading(self) -> None:
+        """长期显示的读数走推送：订阅只拿首次快照，之后的读数由数据层推过来。
+
+        这是「禁止请求后返回」在桥上的落点：`data_request` 只回 ack，数据本身经推送到达；
+        写操作（这里是一次完整性校验）让数据层自己重算，不再自带一份读数。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            api = self._api(root, game)
+            pushed: list[dict] = []
+            api.service.registry = Registry([loader_package()], _loader_table())
+            api.data.set_pusher(pushed.append)
+            try:
+                subscribed = api.data_subscribe(["installed"])
+                self.assertTrue(self._wait_for_push(pushed), "订阅之后数据层自己去刷")
+                first = pushed[-1]
+                ack = api.data_request("installed")
+                verified = api.verify_installed()
+                reading = api.data.get("installed")
+            finally:
+                self._close(api)
+
+        self.assertTrue(subscribed["ok"], subscribed)
+        self.assertEqual(subscribed["keys"], ["installed"])
+        self.assertIn("snapshot", subscribed, "订阅时给一份首次读数")
+        self.assertTrue(ack["ok"], ack)
+        self.assertNotIn("value", ack, "刷新命令不许把数据当返回值带回来")
+        self.assertEqual(first["key"], "installed")
+        self.assertGreaterEqual(first["revision"], 1)
+        self.assertTrue(first["value"], "推过来的就是已安装页那一整份读数")
+        self.assertTrue(verified["ok"], verified)
+        self.assertNotIn("installed", verified, "校验只报自己的结果，读数归数据层")
+        self.assertIn("installed", reading or {}, "读数一直在数据层那一份里")
+
+    def test_the_data_layer_pushes_the_loader_catalog(self) -> None:
+        """加载器目录也归数据层：订阅之后推一份过来，页面只读镜像。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            api = self._api(root, game)
+            pushed: list[dict] = []
+            api.service.registry = Registry([loader_package()], _loader_table())
+            api.data.set_pusher(pushed.append)
+            try:
+                subscribed = api.data_subscribe(["loaders"])
+                self.assertTrue(self._wait_for_push(pushed), "订阅之后数据层自己去刷")
+                reading = pushed[-1]["value"]
+            finally:
+                self._close(api)
+
+        self.assertEqual(subscribed["keys"], ["loaders"])
+        self.assertEqual(pushed[-1]["key"], "loaders")
+        self.assertEqual([item["id"] for item in reading["modloaders"]], [LOADER_ID])
+        self.assertIn("supply", reading["modloaders"][0], "「提供什么、装在哪」在读数里")
+
+    def test_the_data_layer_pushes_the_environment_reading(self) -> None:
+        """环境读数也归数据层：订阅之后推一份过来，页面不再每秒去问后端。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            api = self._api(root, game)
+            pushed: list[dict] = []
+            api.service.registry = Registry([loader_package()], _loader_table())
+            api.data.set_pusher(pushed.append)
+            try:
+                subscribed = api.data_subscribe(["environment"])
+                self.assertTrue(self._wait_for_push(pushed), "订阅之后数据层自己去刷")
+                reading = pushed[-1]["value"]
+                ack = api.data_request("environment")
+            finally:
+                self._close(api)
+
+        self.assertTrue(subscribed["ok"], subscribed)
+        self.assertEqual(subscribed["keys"], ["environment"])
+        self.assertEqual(pushed[-1]["key"], "environment")
+        self.assertEqual(reading["sprocket"]["version"], "0.2.53.2")
+        self.assertIn(LOADER_ID, reading["loaders"], "左下角要的加载器清单在这里")
+        self.assertTrue(ack["ok"], ack)
+        self.assertNotIn("value", ack, "刷新命令不许把数据当返回值带回来")
+
+    def test_the_data_layer_pushes_the_install_queue(self) -> None:
+        """队列那张表也归数据层：订阅之后推一份过来，页面不再每 400ms 轮询。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            api = self._api(root, game)
+            pushed: list[dict] = []
+            api.service.registry = Registry([loader_package()], _loader_table())
+            api.data.set_pusher(pushed.append)
+            try:
+                subscribed = api.data_subscribe(["queue"])
+                self.assertTrue(self._wait_for_push(pushed), "订阅之后数据层自己去刷")
+                reading = pushed[-1]["value"]
+                ack = api.data_request("queue")
+                cleared = api.clear_finished()
+            finally:
+                self._close(api)
+
+        self.assertTrue(subscribed["ok"], subscribed)
+        self.assertEqual(subscribed["keys"], ["queue"])
+        self.assertEqual(pushed[-1]["key"], "queue")
+        self.assertEqual(reading["entries"], [], "没有任务时就是一张空表")
+        self.assertIn("close_pending", reading)
+        self.assertTrue(ack["ok"], ack)
+        self.assertNotIn("value", ack, "刷新命令不许把数据当返回值带回来")
+        self.assertTrue(cleared["ok"], cleared)
+        self.assertNotIn("entries", cleared, "清空之后读数是数据层的事，不在返回值里另带一份")
+
+    def test_the_data_layer_watches_the_game_directory(self) -> None:
+        """数据层自己盯着游戏目录：盘上多了一个模组，读数自己重算并推过来（没人去问它）。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            # 先让 MelonLoader 在盘上（它的目录才会被扫），这样往 `Mods` 里放东西才改得动读数。
+            detected_melonloader(game)
+            api = self._api(root, game)
+            pushed: list[dict] = []
+            api.service.registry = Registry([loader_package()], _loader_table())
+            api.data.set_pusher(pushed.append)
+            # 自动刷新要有界面才生效：绑一个假窗口，监听任务才会起来。
+            api.bind_window(_FakeWindow())
+            try:
+                api.data_subscribe(["installed"])
+                self.assertTrue(self._wait_for_push(pushed), "订阅之后先来一份读数")
+                pushed.clear()
+
+                (game / "Mods").mkdir(exist_ok=True)
+                shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
+                self.assertTrue(
+                    self._wait_for_push(pushed, timeout=15.0),
+                    "磁盘变了，数据层要自己重算并推送",
+                )
+                reading = pushed[-1]["value"]
+            finally:
+                self._close(api)
+
+        self.assertIn("FixtureMod.dll", json.dumps(reading, ensure_ascii=False), reading)
+        self.assertTrue(reading["has_any_mods"], "盘上多了一个模组，读数要跟上")
+
+    def test_the_window_bridge_forwards_data_events_to_the_client(self) -> None:
+        """推送经 `evaluate_js` 交给前端的 `smmBridge.deliver`，数据层不认识窗口。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            api = self._api(root, game)
+            window = _FakeWindow()
+            api.bind_window(window)
+            api.data.subscribe("ui", ["installed"])
+            try:
+                api.data.publish("installed", {"installed": [{"id": "test.mod"}]})
+            finally:
+                self._close(api)
+
+        self.assertEqual(len(window.scripts), 1, window.scripts)
+        self.assertIn("window.smmBridge", window.scripts[0])
+        self.assertIn("deliver(", window.scripts[0])
+        self.assertIn("test.mod", window.scripts[0])
 
     def test_an_unusable_game_path_reports_an_unconfigured_environment(self) -> None:
         # 配了一个没有 Sprocket.exe 的路径：不能回落到自动探测（本机有游戏，测试要确定性地"没配好"）
@@ -567,6 +778,26 @@ class EnvironmentApiTests(unittest.TestCase):
                 self.assertTrue(tree_gone, "加载器自己的树整棵交还")
                 self.assertTrue(proxy_gone, "代理文件也要清掉")
 
+    def test_uninstalling_a_loader_reports_what_it_moved(self) -> None:
+        """卸载要按条目报出来做了什么：界面显示逐条目原因，不能只报「已卸载」。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            detected_melonloader(game)
+            api = self._api(root, game)
+            api.service.registry = Registry([loader_package()], _loader_table())
+            try:
+                result = api.remove_modloader(LOADER_ID)
+                backup = game / "SprocketModManager" / "backup" / "loaders" / LOADER_ID
+                archived = (backup / "manifest.json").is_file()
+            finally:
+                self._close(api)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["removed"], [LOADER_ID])
+        self.assertEqual(result["warnings"], [])
+        self.assertTrue(archived, "搬走的东西有据可查")
+
     def test_removing_a_loader_refreshes_the_environment_payload(self) -> None:
         """卸载会改掉加载器清单，环境读数不能停在缓存里那份。
 
@@ -712,7 +943,7 @@ class EnvironmentApiTests(unittest.TestCase):
         self.assertEqual(displaced, [LOADER_ID])
 
     def test_installing_a_loader_uninstalls_the_loader_sharing_its_capability(self) -> None:
-        """装桥接加载器会把官方加载器交还掉，并先把它那棵树归档进备份区。"""
+        """装桥接加载器会把官方加载器交还掉，它的安装位置整棵搬进备份区等下次重装还原。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             game = game_dir_with_version(root, unity_payload("0.2.53.2"))
@@ -742,16 +973,17 @@ class EnvironmentApiTests(unittest.TestCase):
                     api.service.install(BRIDGE_ID, game)
                 installed = api.service.installed(game)
                 tree_gone = not (game / "MelonLoader").exists()
-                archives = sorted(
-                    (game / "SprocketModManager" / "backup" / "replaced").rglob("*.zip")
-                )
+                backup = game / "SprocketModManager" / "backup" / "loaders"
+                manifests = sorted(backup.rglob("manifest.json"))
+                archived_tree = sorted(backup.rglob("MelonLoader.dll"))
             finally:
                 self._close(api)
 
         self.assertNotIn(LOADER_ID, installed, "供给同一能力的旧加载器要让位")
         self.assertIn(BRIDGE_ID, installed)
         self.assertTrue(tree_gone, "交还的是它自己声明的目录树")
-        self.assertTrue(archives, "交还前先把它的树归档进保留的备份区")
+        self.assertTrue(manifests, "交还前先把它的安装位置搬进备份区")
+        self.assertTrue(archived_tree, "搬走的是整棵树，不是删掉")
 
     def test_installing_a_modloader_reports_the_files_it_wrote(self) -> None:
         """基础运行时不逐文件记账，写入数由这次安装自己报出来（这里真的走一遍落盘）。"""
@@ -954,11 +1186,10 @@ class EnvironmentUiTests(unittest.TestCase):
         self.assertIn('showPage("modloaders")', self.javascript)
 
     def test_the_client_asks_the_backend_for_the_environment(self) -> None:
-        self.assertIn('callApi("get_environment", includeLatest)', self.javascript)
-        self.assertIn('callApi("get_environment", false)', self.javascript, "轮询用缓存读数")
+        self.assertIn('callApi(\n            "data_request",\n            "environment"', self.javascript)
         self.assertIn("function renderEnvironment()", self.javascript)
         self.assertIn("void refreshEnvironment(true);", self.javascript)
-        self.assertIn("function pollEnvironment()", self.javascript)
+        self.assertIn("function watchEnvironmentData()", self.javascript)
 
     def test_the_uninstalled_loader_link_is_a_clickable_element(self) -> None:
         i18n = (CLIENT_UI / "js" / "i18n.js").read_text(encoding="utf-8")
@@ -980,16 +1211,39 @@ class EnvironmentUiTests(unittest.TestCase):
         self.assertIn("showIncompatible: false", core, "默认隐藏")
         self.assertNotIn("showIncompatible", settings, "开关不落盘：重启回到默认")
 
-    def test_the_environment_poll_reloads_what_changed(self) -> None:
-        modloaders = (CLIENT_UI / "js" / "modloaders.js").read_text(encoding="utf-8")
+    def test_the_queue_reading_comes_from_the_data_layer(self) -> None:
+        """队列不再由页面每 400ms 轮询：数据层定时问一次，表变了才推。"""
+        installs = (CLIENT_UI / "js" / "installs.js").read_text(encoding="utf-8")
+        business = (CLIENT_UI / "js" / "business.js").read_text(encoding="utf-8")
         main = (CLIENT_UI / "js" / "main.js").read_text(encoding="utf-8")
+        data = (CLIENT_UI / "js" / "data.js").read_text(encoding="utf-8")
 
-        self.assertIn("function pollEnvironment()", modloaders)
-        self.assertIn("state.environmentRevision !== result.revision", modloaders)
-        self.assertIn('await loadCatalog(false)', modloaders)
-        self.assertIn("await refreshInstalled()", modloaders)
-        self.assertIn("void pollEnvironment();", main)
-        self.assertIn("}, 1000);", main, "每秒问一次环境")
+        self.assertIn("function watchQueueData()", business)
+        self.assertIn('dataWatch(["queue"]', business)
+        self.assertIn("queue: () => dataValue(\"queue\")?.entries || []", data, "队列是数据层的只读视图")
+        self.assertNotIn('callApi("get_queue")', installs, "队列不再由页面轮询后端")
+        self.assertNotIn("queueSignature", installs)
+        self.assertNotIn("queueStates", installs)
+        self.assertNotIn("}, 400);", main, "400ms 轮询收进数据层了")
+
+    def test_the_environment_reading_comes_from_the_data_layer(self) -> None:
+        """环境不再由页面每秒去问：数据层推过来，页面按 key 的推送重画。"""
+        modloaders = (CLIENT_UI / "js" / "modloaders.js").read_text(encoding="utf-8")
+        business = (CLIENT_UI / "js" / "business.js").read_text(encoding="utf-8")
+        main = (CLIENT_UI / "js" / "main.js").read_text(encoding="utf-8")
+        data = (CLIENT_UI / "js" / "data.js").read_text(encoding="utf-8")
+
+        self.assertIn("function watchEnvironmentData()", business)
+        self.assertIn('dataWatch(["environment"]', business)
+        self.assertIn("environment: () => dataValue(\"environment\") || null", data, "环境是数据层的只读视图")
+        self.assertIn("const DATA_KEYS = [", business)
+        self.assertIn('callApi("data_subscribe", DATA_KEYS)', main)
+        self.assertIn("watchData()", main, "启动时把长期读数的监听一次装上")
+        for key in ("installed", "environment", "queue", "loaders", "catalog", "servers"):
+            self.assertIn(f'"{key}"', business, f"界面要订 {key}")
+        self.assertNotIn("pollEnvironment", modloaders, "每秒轮询收进数据层了")
+        self.assertNotIn("pollEnvironment", main)
+        self.assertIn("void loadCatalog(false)", business, "判定口径变了才重拉目录")
 
     def test_an_incompatible_update_is_a_yellow_exclamation(self) -> None:
         installs = (CLIENT_UI / "js" / "installs.js").read_text(encoding="utf-8")
@@ -1060,17 +1314,10 @@ class EnvironmentUiTests(unittest.TestCase):
             self.assertEqual(i18n.count(f"{key}:"), 2, f"{key} 要有 zh 与 en")
 
     def test_switching_the_game_directory_reloads_every_cached_reading(self) -> None:
-        """换目录时客户端要把各页各自的缓存一起重置：漏一个就会拿旧目录的结果去判兼容性。"""
+        """换目录后要重新取那几份读数；**作废**由数据层自己在本机设置落盘时做。"""
         settings = (CLIENT_UI / "js" / "settings.js").read_text(encoding="utf-8")
 
-        for reset in (
-            "state.packages = []",
-            "state.installed = []",
-            "state.localMods = []",
-            "state.modloaders = []",
-            "state.environment = null",
-        ):
-            self.assertIn(reset, settings, f"换目录后 {reset.split('=')[0].strip()} 也要作废")
+        self.assertNotIn('callApi("data_invalidate"', settings, "作废由数据层自己做，界面不再逐个清")
         for reload_call in (
             "await refreshEnvironment(",
             "await loadCatalog(",
@@ -1078,6 +1325,24 @@ class EnvironmentUiTests(unittest.TestCase):
             "await refreshModloaders(",
         ):
             self.assertIn(reload_call, settings, f"换目录后要重新取：{reload_call}")
+
+
+    def test_the_client_waits_for_the_registry_and_retries_a_busy_verify(self) -> None:
+        """认领要等目录到齐；校验撞上别的操作只算这一轮没排上，留到下一轮再审。"""
+        installs = (CLIENT_UI / "js" / "installs.js").read_text(encoding="utf-8")
+        main = (CLIENT_UI / "js" / "main.js").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "if (!(state.packages || []).length) return;",
+            installs,
+            "目录还没加载时不要发认领请求（后端只会回 registry is not loaded）",
+        )
+        self.assertEqual(
+            installs.count("pendingVerify = true;"),
+            4,
+            "「刷新完排一次队」「撞上别的模组操作」「刷新失败」「取回新读数失败」各留一次",
+        )
+        self.assertIn("void claimExistingMods();", main, "目录加载完之后再认领一次")
 
 
 if __name__ == "__main__":

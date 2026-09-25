@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable
 
 from .base import ApiController
 from ..api_support import release_data as _release_data, startup_trace as _startup_trace
+from ...application.data_hub import KEY_SERVERS
 from ...application.solver import DependencySolver
 from ...domain.errors import ModManagerError
 from ...domain.models import PreparedFile, ProgressCallback, RegistryPackage, ReleaseAsset, ReleaseInfo, ResolutionPlan
@@ -530,7 +531,11 @@ class PrivateDistributionController(ApiController):
             result.append(data)
         return result
 
-    def get_developer_servers(self) -> dict[str, Any]:
+    def servers_payload(self) -> dict[str, Any]:
+        """开发者服务器那一份读数：服务器、它们的私有包、以及 GitHub 登录状态。
+
+        给数据层用（`KEY_SERVERS` 的刷新器），也供 `get_developer_servers` 自己调。
+        """
         self.config = self.config_store.load()
         login = self._verify_github_login()
         servers = self._developer_servers_data()
@@ -539,13 +544,22 @@ class PrivateDistributionController(ApiController):
         installed = self._installed()
         for package in packages:
             package["installed"] = self._installed_entry(installed.get(package["id"]))
-        return self._success(
-            servers=servers,
-            packages=packages,
-            adopted=adopted,
-            github_login_expired=login.get("code") == "github_login_expired",
-            github_user_id=str(self.config.get("github_user_id", "") or ""),
-        )
+        return {
+            "servers": servers,
+            "packages": packages,
+            "adopted": adopted,
+            "github_login_expired": login.get("code") == "github_login_expired",
+            "github_user_id": str(self.config.get("github_user_id", "") or ""),
+        }
+
+    def get_developer_servers(self) -> dict[str, Any]:
+        """刷新开发者服务器读数。读数归数据层 —— 这条只回 ack。"""
+        try:
+            payload = self.servers_payload()
+        except (ModManagerError, OSError, ValueError) as exc:
+            return self._failure(exc, code="developer_servers_failed")
+        self.data.publish(KEY_SERVERS, payload)
+        return self._success()
 
     def add_developer_server(self, url: str, confirmed_fingerprint: str = "") -> dict[str, Any]:
         try:
@@ -585,6 +599,7 @@ class PrivateDistributionController(ApiController):
             self._save_developer_servers(entries)
             if self._github_token():
                 self.sync_github_gist()
+            self.data_changed(KEY_SERVERS)
             return self._success(server={**entry, "status": "registered", "packages": []})
         except DeveloperServerError as exc:
             if exc.status == 401 and exc.code in {
@@ -635,6 +650,8 @@ class PrivateDistributionController(ApiController):
             return self._success(entitlements=entitlements, packages=packages)
         except (OSError, ValueError) as exc:
             return self._failure(exc, code="developer_server_activation_failed")
+        finally:
+            self.data_changed(KEY_SERVERS)
 
     def remove_developer_server(self, server_id: str) -> dict[str, Any]:
         entries = self._developer_server_entries(include_deleted=True)
@@ -659,6 +676,7 @@ class PrivateDistributionController(ApiController):
                 name="sprocket-delete-gist-sync",
                 daemon=True,
             ).start()
+        self.data_changed(KEY_SERVERS)
         return self._success(sync_pending=bool(self._github_token()))
 
     def logout_github(self) -> dict[str, Any]:
