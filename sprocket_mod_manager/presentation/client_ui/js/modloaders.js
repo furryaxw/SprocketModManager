@@ -22,6 +22,20 @@ function loaderLabel(loaderId) {
     return registryPackageLabel(loaderId) || loaderId;
 }
 
+/**
+ * 能力轴的名字：能力 id 自己就是一个包时用那个包的名字；只是一个包供给的能力时，用供给它的那个包的
+ * `name`（供给者的 `display_name` 是它自己那套运行时的叫法，`bepinex.bepinex-be` 写的是
+ * "BepInEx (Bleeding Edge)"，当能力名太长），都认不出来才写 id。
+ */
+function capabilityLabel(capabilityId) {
+    const named = registryPackageLabel(capabilityId);
+    if (named) return named;
+    const provider = (state.modloaders || []).concat(state.packages || []).find(
+        (item) => item.provides && Object.prototype.hasOwnProperty.call(item.provides, capabilityId),
+    );
+    return String(provider?.name || "") || capabilityId;
+}
+
 /** 一个包 id 的显示名：加载器目录或模组目录里有就用它，都没有就写 id。 */
 function packageOrLoaderLabel(packageId) {
     return registryPackageLabel(packageId) || packageId;

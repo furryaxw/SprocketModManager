@@ -14,11 +14,11 @@ const SPROCKET_AXIS_ID = "hamish.sprocket";
 
 /**
  * 兼容性那一行的轴名：逐轴结果自带 id，名字照 id 查 —— 游戏轴是固定的，
- * 其余每轴就是它自己那个包，名字从加载器目录里取，认不出来就写 id。
+ * 其余每轴都是它自己那个能力（见 `capabilityLabel`），认不出来就写 id。
  */
 function axisLabel(axisId) {
     if (axisId === SPROCKET_AXIS_ID) return "Sprocket";
-    return loaderLabel(axisId);
+    return capabilityLabel(axisId);
 }
 
 /** 包的全部可安装版本（新到旧）；索引里没带就是空数组。 */
