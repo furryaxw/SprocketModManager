@@ -8,6 +8,7 @@ from sprocket_mod_manager.application.data_hub import (
     KEY_LOADERS,
     DataHub,
 )
+from sprocket_mod_manager.domain.errors import CatalogBusyError
 
 
 class DataHubTests(unittest.TestCase):
@@ -154,6 +155,33 @@ class DataHubTests(unittest.TestCase):
         self.assertTrue(self.events, "令牌一变就要自己刷一次")
         self.assertEqual(self.events[-1]["value"], [{"id": "reading"}])
 
+    def test_a_periodic_poll_stays_out_of_the_log(self) -> None:
+        """周期轮询不写日志：只有界面明确发来的刷新命令才留一行。"""
+        records: list[logging.LogRecord] = []
+
+        class _Collect(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        hub_logger = logging.getLogger("sprocket_mod_manager.application.data_hub")
+        collector = _Collect()
+        collector.setLevel(logging.DEBUG)
+        hub_logger.addHandler(collector)
+        hub_logger.setLevel(logging.DEBUG)
+        self.addCleanup(hub_logger.removeHandler, collector)
+        self.addCleanup(hub_logger.setLevel, logging.NOTSET)
+
+        self.hub.register(KEY_INSTALLED, lambda: [])
+        self.hub.add_periodic([KEY_INSTALLED], 0.05, name="test")
+
+        time.sleep(0.3)
+        polled = [record.getMessage() for record in records]
+        self.assertEqual([text for text in polled if "requested" in text], [], f"轮询不该写日志：{polled}")
+
+        self.hub.request(KEY_INSTALLED)
+        asked = [record.getMessage() for record in records]
+        self.assertTrue([text for text in asked if "requested" in text], "界面明确要的刷新要留一行")
+
     def test_close_stops_the_periodic_tasks(self) -> None:
         calls: list[int] = []
         self.hub.register(KEY_INSTALLED, lambda: calls.append(1) or [])
@@ -194,6 +222,38 @@ class DataHubTests(unittest.TestCase):
             logger.removeHandler(handler)
 
         self.assertEqual(self.hub.get(KEY_INSTALLED), [{"id": "old"}], "刷不出来不能把旧值抹掉")
+        self.assertEqual(self.hub.revision(KEY_INSTALLED), 1)
+
+    def test_a_coded_refresh_failure_keeps_the_value_without_a_traceback(self) -> None:
+        """带 code 的领域错误是「这一轮算不出来」（同一份读数正在别处算），不是要看的栈。"""
+        records: list[logging.LogRecord] = []
+
+        class _Collect(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        def busy() -> list:
+            raise CatalogBusyError("catalog load is already running")
+
+        handler = _Collect()
+        handler.setLevel(logging.DEBUG)
+        logger = logging.getLogger("sprocket_mod_manager.application.data_hub")
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+        self.hub.publish(KEY_INSTALLED, [{"id": "old"}])
+        self.hub.register(KEY_INSTALLED, busy)
+        try:
+            self.hub.request(KEY_INSTALLED)
+            deadline = time.time() + 5
+            while time.time() < deadline and not any("skipped" in item.getMessage() for item in records):
+                time.sleep(0.02)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(logging.NOTSET)
+
+        self.assertEqual(self.hub.get(KEY_INSTALLED), [{"id": "old"}], "算不出来的一轮保留上一次读数")
+        self.assertTrue([item for item in records if "skipped" in item.getMessage()], "写一条 debug 说明跳过了")
+        self.assertEqual([item for item in records if item.levelno >= logging.ERROR], [], "这一轮不是故障")
         self.assertEqual(self.hub.revision(KEY_INSTALLED), 1)
 
 

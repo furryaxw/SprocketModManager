@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from sprocket_mod_manager.application.service import ModManagerService
+from sprocket_mod_manager.domain.errors import CatalogBusyError
 from sprocket_mod_manager.infrastructure.config import ConfigStore
 from sprocket_mod_manager.presentation.web_gui import ClientApi
 
@@ -170,6 +171,28 @@ class CatalogVerdictTests(unittest.TestCase):
         self.assertTrue(packages, "目录读数在数据层里")
         for key in ("packages", "installed", "unrecognized", "local_mods", "local_summary", "has_any_mods"):
             self.assertNotIn(key, payload, f"目录读数不该再带 {key}")
+
+    def test_a_second_catalog_load_reports_busy(self) -> None:
+        """同一时刻只跑一份目录加载：第二份立刻报 catalog_busy，数据层那一路保持上一次读数。"""
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                before = api.data.get("catalog")
+                self.assertTrue(api._catalog_lock.acquire(blocking=False))
+                try:
+                    busy = api.load_catalog()
+                    with self.assertRaises(CatalogBusyError):
+                        api.catalog_payload(False)
+                finally:
+                    api._catalog_lock.release()
+                after = api.data.get("catalog")
+            finally:
+                self._close(api)
+
+        self.assertFalse(busy["ok"], busy)
+        self.assertEqual(busy["code"], "catalog_busy")
+        self.assertEqual(after, before, "算不出来的这一轮不许动上一次的读数")
 
     def test_every_release_carries_its_verdict(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

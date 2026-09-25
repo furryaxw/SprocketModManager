@@ -15,7 +15,7 @@ from ...application.integrity import suppression_key, suppression_key_of, suppre
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
 from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
-from ...domain.errors import ModManagerError, ModToggleError
+from ...domain.errors import CatalogBusyError, ModManagerError, ModToggleError
 from ...domain.models import LOADER_KINDS, RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
 from ...infrastructure.desktop import reveal_in_file_manager
@@ -42,7 +42,7 @@ class CatalogController(ApiController):
         给数据层用（`KEY_CATALOG` 的刷新器），也供 `load_catalog` 自己调 —— 两边算的是同一份东西。
         """
         if not self._catalog_lock.acquire(blocking=False):
-            raise ModManagerError("catalog load is already running")
+            raise CatalogBusyError("catalog load is already running")
         try:
             return self._build_catalog(refresh)
         finally:
@@ -51,7 +51,7 @@ class CatalogController(ApiController):
     def load_catalog(self, refresh: bool = False) -> dict[str, Any]:
         """刷新目录读数。读数归数据层 —— 这条只回 ack。"""
         if not self._catalog_lock.acquire(blocking=False):
-            return self._failure(RuntimeError("catalog load is already running"), code="catalog_busy")
+            return self._failure(CatalogBusyError("catalog load is already running"), code="catalog_busy")
         try:
             payload = self._build_catalog(refresh)
         except (ModManagerError, OSError, ValueError) as exc:

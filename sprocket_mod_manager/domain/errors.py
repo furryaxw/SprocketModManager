@@ -28,3 +28,7 @@ class InstallConflictError(InstallError):
 
 class ModToggleError(ModManagerError):
     pass
+
+
+class CatalogBusyError(ModManagerError):
+    code = "catalog_busy"
