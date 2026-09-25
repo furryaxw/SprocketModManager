@@ -1,0 +1,46 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 2,
+  "id": "hans21223.sprocket-quality-of-life",
+  "name": "SprocketQoL",
+  "authors": ["Hans21223"],
+  "repository": "Hans21223/Sprocket-Quality-of-Life",
+  "license": "MIT",
+  "display_name": {
+    "en": "Quality of Life Editor Tools",
+    "zh": "编辑器增强工具"
+  },
+  "description": {
+    "en": "Editor tools for the vehicle designer: a hotkeys box read from the game's live bindings, flat-axis move and scale locks, mirror-aware face merging, Blender-style join, boolean cut, hole quality, merge add-ons, turret to add-on, and speed and acceleration readouts.",
+    "zh": "载具设计器的编辑器工具：按游戏实际按键显示的快捷键面板、锁定平面轴的移动与缩放、镜像同步的合并面、Blender 风格合并、布尔切割、孔洞质量、合并附加件、炮塔转附加件，以及速度与加速度读数。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["Quality-of-Life-*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": ["hans21223.sprocket-mod-loader"],
+  "featured": false,
+  "install": {
+    "files": [
+      {
+        "match": "BepInEx/plugins/*.dll",
+        "type": "bepinex:plugin"
+      }
+    ],
+    "scan_dlls": false,
+    "exclude": []
+  },
+  "category": "utility",
+  "tags": ["editor", "utility", "bepinex", "quality-of-life"]
+}
