@@ -463,7 +463,7 @@ Releases。外部来源没有可以查询的 API，因此这样的条目必须�
 提交通过 Registry 仓库 PR 完成。CI 至少检查：
 
 - GitHub 仓库公开；
-- 仓库包含 SPDX 开源许可证和 LICENSE 文件；
+- 仓库包含 LICENSE/COPYING 文件，许可证以条目的 SPDX 标识为准；
 - 仓库中存在源码/工程文件，而不是仅保存 DLL；
 - Release tag 可解析并至少包含一个可扫描资产；
 - 每个依赖 id 都是已注册的包或一个能力，真实包之间无环；

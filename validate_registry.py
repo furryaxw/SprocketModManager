@@ -37,6 +37,8 @@ SOURCE_SUFFIXES = {
     ".vb",
 }
 LICENSE_NAMES = {"license", "license.md", "license.txt", "copying", "copying.md", "copying.txt"}
+# 条目用这个占位值声明许可证还没定：SPDX 与 LICENSE 文件两项检查豁免。
+PLACEHOLDER_LICENSE = "TODO-SPDX"
 
 
 def load_index_module():
@@ -117,9 +119,9 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
         errors.append("repository must be public")
     if repo.get("archived"):
         errors.append("repository must not be archived")
+    pending_license = str(meta.get("license", "")).strip().casefold() == PLACEHOLDER_LICENSE.casefold()
     license_id = (repo.get("license") or {}).get("spdx_id")
-    if not license_id or license_id in {"NOASSERTION", "OTHER"}:
-        errors.append("repository must have a recognized SPDX open-source license")
+    recognized_license = bool(license_id) and license_id not in {"NOASSERTION", "OTHER"}
 
     branch = quote(str(repo.get("default_branch", "")), safe="")
     tree_available = True
@@ -132,8 +134,12 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
     if tree_available and tree.get("truncated"):
         errors.append("repository tree is too large to verify source presence")
     paths = [str(item.get("path", "")) for item in tree.get("tree") or [] if item.get("type") == "blob"]
-    if tree_available and not any(Path(path).name.casefold() in LICENSE_NAMES for path in paths):
+    license_file = any(Path(path).name.casefold() in LICENSE_NAMES for path in paths)
+    if tree_available and not pending_license and not license_file:
         errors.append("repository must contain a LICENSE or COPYING file")
+        # 文件是现成的，GitHub 认不出它（LGPL 文本后接了 GPL 全文这类）不算失败：以条目声明为准。
+        if not recognized_license:
+            errors.append("repository must have a recognized SPDX open-source license")
     if tree_available and not any(Path(path).suffix.casefold() in SOURCE_SUFFIXES for path in paths):
         errors.append("repository must contain source files, not only release binaries")
 
