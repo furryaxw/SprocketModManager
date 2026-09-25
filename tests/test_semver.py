@@ -64,6 +64,22 @@ class VersionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Version.parse("01.2.3")
 
+    def test_a_zero_fourth_segment_is_the_same_version(self):
+        """程序集自报 `0.2.2.0`、发布 tag 写 `0.2.2`：两边第四段缺省按 0 读，是同一个版本。"""
+        self.assertEqual(Version.parse("0.2.2.0"), Version.parse("0.2.2"))
+        self.assertEqual(Version.parse("0.9.1.0"), Version.parse("0.9.1"))
+        self.assertEqual(str(Version.parse("0.2.2.0")), "0.2.2")
+
+    def test_a_non_zero_fourth_segment_is_a_different_version(self):
+        self.assertNotEqual(Version.parse("1.2.3.4"), Version.parse("1.2.3"))
+        self.assertLess(Version.parse("1.2.3"), Version.parse("1.2.3.4"))
+        self.assertLess(Version.parse("1.2.3.4"), Version.parse("1.2.4"))
+        self.assertEqual(str(Version.parse("1.2.3.4")), "1.2.3.4")
+
+    def test_a_fourth_segment_keeps_the_prerelease_suffix(self):
+        self.assertEqual(Version.parse("6.0.0.1-be.788"), Version(6, 0, 0, ("be", "788"), 1))
+        self.assertEqual(str(Version.parse("6.0.0.1-be.788")), "6.0.0.1-be.788")
+
     def test_range_validation_checks_every_or_branch(self):
         with self.assertRaises(ValueError):
             validate_range("* || not-a-version")

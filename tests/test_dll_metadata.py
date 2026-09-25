@@ -10,6 +10,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 from sprocket_mod_manager.domain.errors import ScanError
+from sprocket_mod_manager.domain.semver import Version
 from sprocket_mod_manager.infrastructure.dll_metadata import (
     MELON_KIND_MODS,
     MELON_KIND_PLUGINS,
@@ -209,7 +210,10 @@ class DeployedModSmokeTests(unittest.TestCase):
         self.assertEqual(metadata.assembly_name, "SprocketJitterFix")
         self.assertEqual(metadata.melon_kind, MELON_KIND_MODS)
         self.assertEqual(metadata.melon_name, "LayingDrive Jitter Fix")
-        self.assertEqual(metadata.melon_version, "0.9.0")
+        # 这个文件在维护者机器上会随模组更新而变，所以只断言读出来的版本是个版本号，
+        # 不钉死具体哪一版。
+        self.assertTrue(metadata.melon_version)
+        Version.parse(metadata.melon_version)
         self.assertEqual(metadata.melon_author, "furryAxw")
         self.assertEqual(metadata.target_framework, ".NETCoreApp,Version=v6.0")
         self.assertEqual(metadata.errors, ())
