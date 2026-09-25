@@ -180,11 +180,21 @@ def prepared_modloader(
     return PreparedPlan(plan, [PreparedPackage(resolved, files=prepared_files)], root)
 
 
-def prepared_target(root: Path, target: str, content: bytes, *, package_id: str = "test.other") -> PreparedPlan:
+def prepared_target(
+    root: Path,
+    target: str,
+    content: bytes,
+    *,
+    package_id: str = "test.other",
+    supply: dict[str, str] | None = None,
+) -> PreparedPlan:
     """一个普通包，落在指定目标路径（用来在别处占住一个目录）。"""
     source = root / f"{package_id}-source.dll"
     source.write_bytes(content)
-    package = registry_package(package_id, "Other")
+    package = replace(
+        registry_package(package_id, "Other"),
+        supply=dict(supply or {}),
+    )
     release = ReleaseInfo(9, "v1.0.0", Version.parse("1.0.0"), False, "", ())
     resolved = ResolvedPackage(package, release, ())
     file = PreparedFile(package_id, source, source.name, target, sha256_file(source))
@@ -560,7 +570,7 @@ class ModloaderRecordTests(unittest.TestCase):
             self.assertEqual(
                 [entry["path"] for entry in record["payload_files"]],
                 ["version.dll"],
-                "落在游戏根目录的顶层文件也要记下来（卸载时靠它清掉代理 DLL）",
+                "落在游戏根目录的顶层文件也要记下来（卸载时靠它搬走代理 DLL）",
             )
             self.assertEqual(
                 record["payload_files"][0]["sha256"], sha256_file(game / "version.dll"),
@@ -590,7 +600,7 @@ class ModloaderRecordTests(unittest.TestCase):
             self.assertNotIn(self.LOADER_ID, store.load()["packages"])
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
-    def test_removing_a_modloader_deletes_its_tree_and_root_level_files(self, _running):
+    def test_removing_a_modloader_moves_its_tree_and_root_files_into_the_backup(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             installer, game, store = self._installer(root)
@@ -608,14 +618,23 @@ class ModloaderRecordTests(unittest.TestCase):
 
             removed, warnings = installer.remove(self.LOADER_ID, game)
 
+            backup = game / "SprocketModManager" / "backup" / "loaders" / self.LOADER_ID
             self.assertEqual(removed, [self.LOADER_ID])
             self.assertEqual(warnings, [])
-            self.assertFalse((game / "MelonLoader").exists(), "加载器自己的树整棵交还")
-            self.assertFalse((game / "version.dll").exists(), "代理 DLL 也要清掉")
+            self.assertFalse((game / "MelonLoader").exists(), "加载器自己的树整棵搬走")
+            self.assertFalse((game / "version.dll").exists(), "代理 DLL 一起搬走")
+            self.assertEqual(
+                (backup / "payload" / "MelonLoader" / "net6" / "MelonLoader.dll").read_bytes(),
+                b"loader",
+            )
+            self.assertEqual((backup / "payload" / "version.dll").read_bytes(), b"proxy")
+            manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["loader"], self.LOADER_ID)
+            self.assertEqual(sorted(manifest["moved"]), ["MelonLoader", "version.dll"])
             self.assertNotIn(self.LOADER_ID, store.load()["packages"])
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
-    def test_removing_a_modloader_preserves_a_modified_root_file(self, _running):
+    def test_removing_a_modloader_moves_a_modified_root_file_instead_of_deleting_it(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             installer, game, _store = self._installer(root)
@@ -626,42 +645,147 @@ class ModloaderRecordTests(unittest.TestCase):
 
             _removed, warnings = installer.remove(self.LOADER_ID, game)
 
-            self.assertEqual(warnings, ["preserved modified loader file: version.dll"])
-            self.assertEqual((game / "version.dll").read_bytes(), b"hand edit", "改过的文件不许删")
+            self.assertEqual(warnings, [])
+            self.assertFalse((game / "version.dll").exists(), "搬走而不是删掉")
+            self.assertEqual(
+                (
+                    game / "SprocketModManager" / "backup" / "loaders" / self.LOADER_ID
+                    / "payload" / "version.dll"
+                ).read_bytes(),
+                b"hand edit",
+                "用户改过的内容照样保住",
+            )
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
-    def test_removing_a_modloader_preserves_a_directory_owned_by_another_package(self, _running):
+    def test_removing_a_modloader_takes_the_other_packages_files_with_it(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            installer, game, _store = self._installer(root)
+            installer, game, store = self._installer(root)
             installer.apply(
                 prepared_modloader(root, files={"LoaderTree/core/loader.dll": b"loader"}), game
             )
             installer.apply(prepared_target(root, "LoaderTree/extra.dll", b"other"), game)
+            self.assertIn("test.other", store.load()["packages"])
 
             _removed, warnings = installer.remove(self.LOADER_ID, game)
 
+            self.assertEqual(warnings, [])
+            self.assertFalse((game / "LoaderTree").exists(), "整棵树搬走")
             self.assertEqual(
-                warnings, ["preserved directory owned by other packages: LoaderTree"]
+                (
+                    game / "SprocketModManager" / "backup" / "loaders" / self.LOADER_ID
+                    / "payload" / "LoaderTree" / "extra.dll"
+                ).read_bytes(),
+                b"other",
             )
-            self.assertTrue((game / "LoaderTree" / "extra.dll").is_file(), "别的包的文件不许删")
+            self.assertNotIn("test.other", store.load()["packages"], "搬走的文件不再算已安装")
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
-    def test_removing_a_modloader_preserves_a_shared_directory(self, _running):
+    def test_removing_a_modloader_empties_the_directory_it_supplies(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            installer, game, _store = self._installer(root)
+            installer, game, store = self._installer(root)
             installer.apply(
                 prepared_modloader(
                     root, target="{Sprocket}/Mods", files={"Mods/LoaderStub.dll": b"loader"}
                 ),
                 game,
             )
+            installer.apply(prepared_target(root, "Mods/TestMod.dll", b"mod"), game)
 
             _removed, warnings = installer.remove(self.LOADER_ID, game)
 
-            self.assertEqual(warnings, ["preserved shared directory: Mods"])
-            self.assertTrue((game / "Mods" / "LoaderStub.dll").is_file(), "共享根目录不动")
+            self.assertEqual(warnings, [])
+            self.assertFalse((game / "Mods").exists(), "供给目录整棵搬走")
+            self.assertNotIn("test.other", store.load()["packages"], "目录里的模组跟着停用")
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_a_supplier_takes_the_mods_in_the_directory_it_supplies_with_it(self, _running):
+        """不是基础运行时的供给者（桥接）也一样：它供给的目录里的模组跟着搬走、重装再搬回来。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installer, game, store = self._installer(root)
+            bridge = prepared_target(
+                root,
+                "MLLoader/MelonLoader/core.dll",
+                b"core",
+                package_id="test.bridge",
+                supply={"melonloader:mod": "{Sprocket}/MLLoader/Mods"},
+            )
+            installer.apply(bridge, game)
+            installer.apply(prepared_target(root, "MLLoader/Mods/TestMod.dll", b"mod"), game)
+
+            removed, warnings = installer.remove(
+                "test.bridge", game, loader_supply={"test.bridge": ("MLLoader/Mods",)}
+            )
+
+            self.assertEqual(warnings, [])
+            self.assertEqual(removed, ["test.bridge"])
+            self.assertFalse((game / "MLLoader" / "MelonLoader").exists(), "自己的树搬走")
+            self.assertFalse((game / "MLLoader" / "Mods").exists(), "供给给模组的目录一起搬走")
+            self.assertNotIn("test.other", store.load()["packages"], "供给目录里的模组跟着停用")
+
+            installer.apply(bridge, game)
+
+            self.assertEqual(
+                (game / "MLLoader" / "Mods" / "TestMod.dll").read_bytes(),
+                b"mod",
+                "重装供给者把模组带回来",
+            )
+            self.assertIn("test.other", store.load()["packages"], "记录也跟着回来")
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_a_loader_that_cannot_be_moved_keeps_its_install_record(self, _running):
+        """搬不动就不算卸掉：记录留着、文件留着，界面上的按钮继续有意义。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installer, game, store = self._installer(root)
+            installer.apply(
+                prepared_modloader(
+                    root,
+                    files={"MelonLoader/net6/MelonLoader.dll": b"loader", "version.dll": b"proxy"},
+                ),
+                game,
+            )
+
+            with patch(
+                "sprocket_mod_manager.infrastructure.installer.archive_location",
+                side_effect=InstallError("locked"),
+            ):
+                removed, warnings = installer.remove(self.LOADER_ID, game)
+
+            self.assertEqual(removed, [], "一个位置都没搬走就不算卸载")
+            self.assertIn(self.LOADER_ID, store.load()["packages"], "记录必须留着")
+            self.assertTrue((game / "MelonLoader" / "net6" / "MelonLoader.dll").is_file())
+            self.assertTrue((game / "version.dll").is_file())
+            self.assertEqual(len(warnings), 3, warnings)
+            self.assertTrue(
+                any("still in the game directory" in line for line in warnings), warnings
+            )
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_reinstalling_the_modloader_brings_back_what_it_moved_away(self, _running):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installer, game, store = self._installer(root)
+            plan = prepared_modloader(root, files={"MelonLoader/net6/MelonLoader.dll": b"loader"})
+            installer.apply(plan, game)
+            installer.apply(prepared_target(root, "Mods/TestMod.dll", b"mod"), game)
+
+            installer.remove(self.LOADER_ID, game, loader_supply={self.LOADER_ID: ("Mods",)})
+            self.assertFalse((game / "Mods" / "TestMod.dll").exists(), "供给目录里的模组跟着搬走")
+            self.assertNotIn("test.other", store.load()["packages"], "搬走的不再算已安装")
+
+            installer.apply(plan, game)
+
+            self.assertEqual(
+                (game / "Mods" / "TestMod.dll").read_bytes(), b"mod", "重装加载器把模组带回来"
+            )
+            self.assertIn("test.other", store.load()["packages"], "记录也跟着回来")
+            self.assertFalse(
+                (game / "SprocketModManager" / "backup" / "loaders" / self.LOADER_ID).exists(),
+                "搬空的归档不再留着",
+            )
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_apply_reports_the_installed_file_count(self, _running):

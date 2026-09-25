@@ -8,9 +8,18 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .file_transaction import FileTransaction
+from .loader_archive import (
+    archive_location,
+    discard_archive,
+    loader_archive_dir,
+    payload_dir,
+    read_manifest,
+    restore_archive,
+    write_manifest,
+)
 from .manager_paths import backups_dir, manager_state_dir
 from .mod_toggle import actual_path_for, canonical_relative, is_disabled_path
 from .release_checksums import release_asset_sha256
@@ -37,7 +46,7 @@ from ..utilities.processes import sprocket_is_running
 
 LOGGER = logging.getLogger(__name__)
 
-# 卸载后顺手清空的目录根：基础运行时自己声明的目录另由 `_remove_loader_directories` 整树交还。
+# 卸载后顺手清空的目录根：基础运行时供给的目录由 `_archive_removed_loaders` 整棵搬进备份区。
 DEFAULT_MANAGED_ROOTS = ("Mods", "Plugins", "UserLibs", "UserData")
 
 # 补丁模式：安装时替换别的包的文件，卸载时还原。归档与事务无关，事务提交后仍保留。
@@ -94,6 +103,28 @@ def _recorded_payload_files(package: dict[str, Any]) -> list[dict[str, str]]:
     return recorded
 
 
+def _loader_locations(package: dict[str, Any], supplied: Iterable[str]) -> list[str]:
+    """这个加载器在游戏目录里占的位置：自己声明的顶层条目 + 它供给别人的目录。
+
+    位置互相包含时只留最外面那个（`BepInEx` 盖住 `BepInEx/plugins`），否则同一批文件会被搬两次。
+    """
+    locations: list[str] = []
+    candidates = [
+        *_recorded_directories(package),
+        *(entry["path"] for entry in _recorded_payload_files(package)),
+        *[str(item) for item in supplied if str(item).strip()],
+    ]
+    for candidate in candidates:
+        folded = canonical_relative(str(candidate)).strip("/")
+        if not folded or folded == ".":
+            continue
+        if any(_is_under_any(folded, [kept]) for kept in locations):
+            continue
+        locations = [kept for kept in locations if not _is_under_any(kept, [folded])]
+        locations.append(folded)
+    return locations
+
+
 def _path_exists(game_dir: Path, relative: str) -> bool:
     try:
         return _existing_managed_file(game_dir, relative) is not None
@@ -106,17 +137,6 @@ def _directory_exists(game_dir: Path, relative: str) -> bool:
         return _safe_game_path(game_dir, relative).is_dir()
     except InstallError:
         return False
-
-
-def _directory_has_other_owners(state: dict[str, Any], relative: str, removing: Iterable[str]) -> bool:
-    """这个目录（含子目录）里有没有别的包仍然拥有的文件。"""
-    gone = {str(item) for item in removing}
-    for path, entry in (state.get("files") or {}).items():
-        if not isinstance(entry, dict) or not _is_under_any(str(path), [relative]):
-            continue
-        if {str(owner) for owner in entry.get("owners", ())} - gone:
-            return True
-    return False
 
 
 def _safe_game_path(game_dir: Path, relative: str) -> Path:
@@ -273,7 +293,7 @@ class Installer:
         代理，两者卸载时都要交还。规则目标更深时直接记那个目录。没有 `payload` 规则的加载器
         按类型安装，落点就是各文件所在的目录/文件。
 
-        顶层文件连同它安装时的摘要一起记：卸载只删内容没变过的那份，用户改过就留下并警告。
+        顶层文件连同它安装时的摘要一起记：卸载时它按这份清单整棵搬进备份区，重装再搬回来。
         """
         directories: set[str] = set()
         files: dict[str, tuple[str, str]] = {}
@@ -371,6 +391,15 @@ class Installer:
         replaced_directory_list = list(replaced_directories.values())
         root_id = prepared.resolution.root_id
         warnings: list[str] = []
+        # 计划里的加载器：先把它上次卸载时搬进备份区的安装位置搬回来，记录也并回安装记录，
+        # 然后这次安装再覆盖同名文件。还原在判定冲突之前做完，否则还原回来的文件会被当成
+        # 「记录之外已存在的文件」。
+        loader_ids = modloader_ids | {
+            package.resolved.package.id
+            for package in prepared.packages
+            if package.resolved.package.supply
+        }
+        restored_ids = self._restore_loader_archives(game_dir, next_state, loader_ids, warnings)
 
         if replaced_directories:
             previous_replacing = {
@@ -507,7 +536,7 @@ class Installer:
                 }
             next_state["packages"][resolved.package.id] = record
 
-        for orphan_id in self._orphan_packages(next_state):
+        for orphan_id in self._orphan_packages(next_state) - restored_ids:
             orphan = next_state["packages"].pop(orphan_id)
             for relative in orphan.get("files", ()):
                 state_key = self._state_file_key(next_state, relative)
@@ -723,6 +752,7 @@ class Installer:
             game_dir: Path,
             *,
             modloaders: Iterable[str] = (),
+            loader_supply: Mapping[str, Iterable[str]] | None = None,
     ) -> tuple[list[str], list[str]]:
         game_dir = self.validate_game_dir(game_dir)
         LOGGER.info("removing package=%s game_dir=%s", package_id, game_dir)
@@ -732,6 +762,7 @@ class Installer:
         if package_id not in state["packages"]:
             raise InstallError(f"package is not installed: {package_id}")
         modloader_ids = {str(item) for item in modloaders}
+        supply = {str(key): tuple(str(item) for item in value) for key, value in (loader_supply or {}).items()}
         reverse = self._reverse_dependencies(state)
         required_by = sorted(reverse.get(package_id, set()))
         if required_by:
@@ -757,16 +788,10 @@ class Installer:
 
         next_state = copy.deepcopy(state)
         recorded_directories: set[str] = set()
-        loader_directories: set[str] = set()
-        loader_files: list[dict[str, str]] = []
         removed_roots: set[str] = set()
         for current in removing:
             package = next_state["packages"].pop(current)
-            if _is_modloader_record(package) or current in modloader_ids:
-                # 基础运行时不记逐文件归属：卸载按它自己声明的顶层条目交还整棵树与代理文件。
-                loader_directories |= _recorded_directories(package)
-                loader_files.extend(_recorded_payload_files(package))
-            else:
+            if not (_is_modloader_record(package) or current in modloader_ids):
                 recorded_directories |= {
                     item for item in package.get("directories", ()) if isinstance(item, str)
                 }
@@ -801,6 +826,8 @@ class Installer:
                     patched_files.setdefault(relative, record)
 
         warnings: list[str] = []
+        archive_dirs: list[Path] = []
+        kept_loaders: set[str] = set()
         transaction = FileTransaction(manager_state_dir(game_dir))
         try:
             for file_type, directory in replaced_restores.items():
@@ -836,6 +863,20 @@ class Installer:
                 if entry.get("owners"):
                     warnings.append(f"preserved modified file: {relative}")
 
+            # 基础运行时的安装位置整棵搬进备份区（含它供给的目录里别人的模组），记录跟着进归档：
+            # 这一步必须在存状态之前做完，记录才只反映真的搬走了什么。搬不动的留在原地并给出原因。
+            archive_dirs, kept_loaders = self._archive_removed_loaders(
+                game_dir,
+                state,
+                next_state,
+                removing=removing,
+                supply=supply,
+                warnings=warnings,
+            )
+            # 没搬动的加载器继续算装着：整条记录放回去，界面上的按钮才有意义。
+            for current in kept_loaders:
+                next_state["packages"][current] = state["packages"][current]
+
             for relative, entry in list(next_state["files"].items()):
                 if entry.get("owners"):
                     continue
@@ -851,6 +892,7 @@ class Installer:
             self.state_store.save(next_state)
         except Exception:
             LOGGER.exception("remove transaction failed; rolling back package=%s", package_id)
+            self._undo_removed_loader_archives(game_dir, archive_dirs, warnings)
             transaction.rollback()
             raise
         finally:
@@ -862,16 +904,10 @@ class Installer:
                 candidate.rmdir()  # 只有空目录会成功：用户往里放过东西就保留
             except OSError:
                 continue
-        self._remove_loader_directories(
-            game_dir, loader_directories, state=next_state, removing=removing, warnings=warnings
-        )
-        self._remove_loader_payload_files(
-            game_dir, loader_files, state=next_state, removing=removing, warnings=warnings
-        )
         self._remove_empty_managed_directories(game_dir, removed_roots)
         LOGGER.info("packages removed requested=%s count=%d warnings=%d directories=%d",
-                    package_id, len(removing), len(warnings), len(recorded_directories))
-        return sorted(removing), warnings
+                    package_id, len(removing) - len(kept_loaders), len(warnings), len(recorded_directories))
+        return sorted(removing - kept_loaders), warnings
 
     def reconcile(self, game_dir: Path, *, modloaders: Iterable[str] = ()) -> list[str]:
         """把安装记录对齐到磁盘：文件不在了就删记录，包没有文件了就删包。
@@ -1007,97 +1043,185 @@ class Installer:
         folded = relative.casefold()
         return next((key for key in state["files"] if key.casefold() == folded), None)
 
-    @staticmethod
-    def _remove_loader_directories(
+    def _archive_removed_loaders(
+            self,
             game_dir: Path,
-            directories: Iterable[str],
-            *,
             state: dict[str, Any],
-            removing: Iterable[str],
+            next_state: dict[str, Any],
+            *,
+            removing: set[str],
+            supply: Mapping[str, Iterable[str]],
+            warnings: list[str],
+    ) -> tuple[list[Path], set[str]]:
+        """把被卸载的基础运行时的安装位置整棵搬进备份区，它名下的记录跟着进归档。
+
+        搬的是它在游戏目录里占的**全部**位置：自己的树、游戏根目录的代理文件，以及它供给别人的
+        目录（`Mods` 等，里面躺着别的包的模组）。有一个位置搬不动就整体作罢：搬走的搬回去、记录
+        也不动，并给出留在原地的条目 —— 卸载只报真的做了什么，不报它打算做什么。
+
+        返回这次动过的归档目录（供 `_undo_removed_loader_archives` 回退）和**没能**卸掉的加载器 id。
+        """
+        archives: list[Path] = []
+        kept_loaders: set[str] = set()
+        for current in sorted(removing):
+            package = state["packages"].get(current)
+            if package is None:
+                continue
+            # 会占住游戏目录的是这两类：基础运行时（整棵树归它）和**供给别人安装目录的包**
+            # （桥接把模组重新安家到 `MLLoader/Mods`，卸载时那些模组必须跟着走）。
+            if not (_is_modloader_record(package) or supply.get(current)):
+                continue
+            archive_dir = loader_archive_dir(backups_dir(game_dir), current)
+            had_manifest = read_manifest(archive_dir) is not None
+            moved: list[str] = []
+            stuck: list[str] = []
+            for relative in _loader_locations(package, supply.get(current, ())):
+                try:
+                    if archive_location(archive_dir, game_dir, relative):
+                        moved.append(relative)
+                        continue
+                except InstallError as exc:
+                    warnings.append(f"could not move {relative} into the loader backup: {exc}")
+                if _path_exists(game_dir, relative) or _directory_exists(game_dir, relative):
+                    stuck.append(relative)
+            if stuck:
+                if moved:
+                    restore_archive(archive_dir, game_dir, warnings)
+                payload = payload_dir(archive_dir)
+                if not had_manifest and (not payload.is_dir() or not any(payload.iterdir())):
+                    discard_archive(archive_dir)
+                warnings.append(
+                    f"kept {current} installed: still in the game directory: {'; '.join(stuck)}"
+                )
+                kept_loaders.add(current)
+                continue
+            if not moved:
+                continue
+            manifest = read_manifest(archive_dir) or {}
+            archived_files, archived_packages = self._take_archived_records(next_state, moved)
+            manifest["loader"] = current
+            manifest["version"] = str(package.get("version") or "")
+            manifest["moved"] = sorted({*(manifest.get("moved") or ()), *moved})
+            manifest["files"] = {**(manifest.get("files") or {}), **archived_files}
+            manifest["packages"] = {**(manifest.get("packages") or {}), **archived_packages}
+            write_manifest(archive_dir, manifest)
+            archives.append(archive_dir)
+        return archives, kept_loaders
+
+    @staticmethod
+    def _take_archived_records(
+            next_state: dict[str, Any],
+            moved: Iterable[str],
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+        """取出落在搬走位置里的文件记录，并归档因此一个文件都不剩的包。"""
+        files: dict[str, dict[str, Any]] = {}
+        for relative in list(next_state["files"]):
+            if not _is_under_any(relative, moved):
+                continue
+            entry = next_state["files"].pop(relative)
+            # 没有归属的条目（它那个包这次一起没了）不进归档：文件已经搬走，记录跟着包消失就够了。
+            if entry.get("owners"):
+                files[relative] = entry
+        present = {key.casefold() for key in next_state["files"]}
+        packages: dict[str, dict[str, Any]] = {}
+        for package_id, info in list(next_state["packages"].items()):
+            if _is_modloader_record(info):
+                continue
+            recorded = [item for item in info.get("files", ()) if isinstance(item, str)]
+            if not recorded:
+                continue
+            remaining = [item for item in recorded if item.casefold() in present]
+            if len(remaining) != len(recorded):
+                info["files"] = remaining
+            if not remaining:
+                packages[package_id] = next_state["packages"].pop(package_id)
+        return files, packages
+
+    def _undo_removed_loader_archives(
+            self,
+            game_dir: Path,
+            archive_dirs: Iterable[Path],
             warnings: list[str],
     ) -> None:
-        """交还基础运行时的目录：整棵树删掉，除非它属于共享根目录或含有别的包拥有的文件。
+        """卸载没走完：把刚搬进备份区的东西搬回原地。归档原有的内容继续留在归档里。"""
+        for archive_dir in archive_dirs:
+            restore_archive(archive_dir, game_dir, warnings)
+            payload = payload_dir(archive_dir)
+            if not payload.is_dir() or not any(payload.iterdir()):
+                discard_archive(archive_dir)
 
-        这些目录是加载器自己的树（`install.payload` 的落点），树里的内容按约定归它。判不准的
-        情形 —— 共享根目录（`Mods` 等，用户和其它模组都在用）、别的包仍有文件在里面 —— 一律
-        保留并给出警告，绝不猜着删。
+    def _restore_loader_archives(
+            self,
+            game_dir: Path,
+            next_state: dict[str, Any],
+            loaders: Iterable[str],
+            warnings: list[str],
+    ) -> set[str]:
+        """重装加载器时把它上次卸载搬走的安装位置搬回来，归档里的记录并回安装记录。
+
+        返回这次恢复的包 id：它们本来就在场上，只是跟着加载器进了备份区，不该在这轮安装末尾被当成
+        「没人要的依赖」清掉。搬不回来的位置连同它的记录一起留在归档里，下次重装再说。
         """
-        root = Path(game_dir).resolve()
-        shared = {name.casefold() for name in DEFAULT_MANAGED_ROOTS}
-        for relative in sorted(directories, key=lambda item: item.count("/"), reverse=True):
-            folded = canonical_relative(str(relative)).strip("/")
-            if not folded or folded == ".":
+        restored: set[str] = set()
+        for loader_id in sorted({str(item) for item in loaders}):
+            archive_dir = loader_archive_dir(backups_dir(game_dir), loader_id)
+            manifest = read_manifest(archive_dir)
+            if manifest is None:
                 continue
-            top = folded.split("/", 1)[0].casefold()
-            if top in shared:
-                warnings.append(f"preserved shared directory: {relative}")
-                continue
-            if _directory_has_other_owners(state, relative, removing):
-                warnings.append(f"preserved directory owned by other packages: {relative}")
-                continue
-            try:
-                candidate = _safe_game_path(game_dir, relative)
-            except InstallError:
-                continue
-            if candidate == root or not candidate.is_dir():
-                continue
-            try:
-                shutil.rmtree(candidate)
-            except OSError:
-                warnings.append(f"could not delete loader directory: {relative}")
+            blocked = restore_archive(archive_dir, game_dir, warnings)
+            for path, entry in (manifest.get("files") or {}).items():
+                relative = str(path)
+                if not isinstance(entry, dict) or _is_under_any(relative, blocked):
+                    continue
+                if self._state_file_key(next_state, relative) or not _path_exists(game_dir, relative):
+                    continue
+                next_state["files"][relative] = dict(entry)
+            for package_id, record in (manifest.get("packages") or {}).items():
+                if not isinstance(record, dict) or str(package_id) in next_state["packages"]:
+                    continue
+                restored.add(str(package_id))
+                next_state["packages"][str(package_id)] = dict(record)
+            self._prune_restored_files(next_state, restored)
+            self._settle_archive(archive_dir, manifest, next_state)
+        return restored
 
     @staticmethod
-    def _remove_loader_payload_files(
-            game_dir: Path,
-            entries: Iterable[dict[str, str]],
-            *,
-            state: dict[str, Any],
-            removing: Iterable[str],
-            warnings: list[str],
-    ) -> None:
-        """交还基础运行时落在游戏根目录的顶层文件（代理 DLL 之类）。
+    def _prune_restored_files(next_state: dict[str, Any], restored: Iterable[str]) -> None:
+        present = {key.casefold() for key in next_state["files"]}
+        for package_id in restored:
+            record = next_state["packages"].get(package_id)
+            if not isinstance(record, dict):
+                continue
+            recorded = [item for item in record.get("files", ()) if isinstance(item, str)]
+            record["files"] = [item for item in recorded if item.casefold() in present]
 
-        只删安装时记下、且内容与摘要仍然一致的那份。判不准的情形 —— 别的包现在还拥有它、摘要
-        对不上、或记录里根本没摘要 —— 一律保留并警告。
-        """
-        gone = {str(item) for item in removing}
-        for entry in entries:
-            relative = str(entry.get("path") or "")
-            if not relative:
-                continue
-            folded = relative.casefold()
-            state_key = next(
-                (key for key in (state.get("files") or {}) if key.casefold() == folded), None
-            )
-            record = (state.get("files") or {}).get(state_key) if state_key else None
-            owners = {
-                str(owner) for owner in (record.get("owners") if isinstance(record, dict) else ()) or ()
-            }
-            if owners - gone:
-                warnings.append(f"preserved loader file owned by other packages: {relative}")
-                continue
-            try:
-                target = _existing_managed_file(game_dir, relative)
-            except InstallError:
-                continue
-            if target is None:
-                continue
-            expected = str(entry.get("sha256") or "")
-            if not expected:
-                warnings.append(f"preserved loader file without a recorded digest: {relative}")
-                continue
-            try:
-                digest = sha256_file(target)
-            except OSError:
-                warnings.append(f"could not verify loader file: {relative}")
-                continue
-            if digest != expected:
-                warnings.append(f"preserved modified loader file: {relative}")
-                continue
-            try:
-                target.unlink()
-            except OSError:
-                warnings.append(f"could not delete loader file: {relative}")
+    @staticmethod
+    def _settle_archive(
+            archive_dir: Path,
+            manifest: dict[str, Any],
+            next_state: dict[str, Any],
+    ) -> None:
+        """还原完把归档收拾干净：搬空了就删掉，还欠着的只留那几条记录。"""
+        payload = payload_dir(archive_dir)
+        leftovers = payload.is_dir() and any(payload.iterdir())
+        present = {key.casefold() for key in next_state["files"]}
+        remaining_files = {
+            str(path): entry
+            for path, entry in (manifest.get("files") or {}).items()
+            if str(path).casefold() not in present
+        }
+        remaining_packages = {
+            str(package_id): record
+            for package_id, record in (manifest.get("packages") or {}).items()
+            if str(package_id) not in next_state["packages"]
+        }
+        if not leftovers and not remaining_files and not remaining_packages:
+            discard_archive(archive_dir)
+            return
+        updated = dict(manifest)
+        updated["files"] = remaining_files
+        updated["packages"] = remaining_packages
+        write_manifest(archive_dir, updated)
 
     @staticmethod
     def _remove_empty_managed_directories(game_dir: Path, roots: Iterable[str] = ()) -> None:
