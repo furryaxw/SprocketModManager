@@ -14,7 +14,8 @@ function installVersions(packageIds) {
 /** 被兼容性藏起来的包：默认不显示，开关打开后照常出现（「显示不兼容」是内存态）。 */
 function hiddenByCompatibility() {
     return state.packages.filter(
-        (pkg) => !pkg.private && (pkg.category === "translation") === (state.page === "translations") && packageHidden(pkg),
+        (pkg) => !pkg.private && !isModloaderPackage(pkg)
+            && (pkg.category === "translation") === (state.page === "translations") && packageHidden(pkg),
     );
 }
 
@@ -302,14 +303,33 @@ async function focusPackage(packageId) {
     return true;
 }
 
-function appendFact(list, label, value) {
+function appendFact(list, label, value, tone = "") {
     const group = document.createElement("div");
+    group.className = "detail-row";
     const term = document.createElement("dt");
     const description = document.createElement("dd");
     term.textContent = label;
-    description.textContent = value || tr("none");
+    description.textContent = value;
+    if (tone) description.classList.add(tone);
     group.append(term, description);
     list.append(group);
+    return group;
+}
+
+/** 分组标题：占满整行，依赖 / 推荐 / 兼容性因此读起来是同一块里的三段。 */
+function appendGroupLabel(list, label, note = "") {
+    const group = document.createElement("div");
+    group.className = "detail-group";
+    const term = document.createElement("dt");
+    term.textContent = label;
+    group.append(term);
+    if (note) {
+        const description = document.createElement("dd");
+        description.textContent = note;
+        group.append(description);
+    }
+    list.append(group);
+    return group;
 }
 
 function renderDetail() {
@@ -380,83 +400,44 @@ function renderDetail() {
     authors.textContent = (pkg.authors || []).join(", ") || "-";
     heading.append(title, versionGroup, id, authors);
 
-    const facts = document.createElement("dl");
-    facts.className = "detail-facts";
-    appendFact(facts, tr("license"), pkg.license);
-    appendFact(facts, tr("categoryLabel"), categoryText(pkg.category));
-    appendFact(facts, tr("assets"), (pkg.install_assets || []).join(", "));
-    appendFact(facts, tr("repository"), pkg.repository);
-    if (pkg.private) appendFact(facts, tr("developerServers"), `${pkg.server_name} · ${pkg.server_url}`);
+    // 事实、依赖/推荐、兼容性共用一个 <dl>：一行一项，标签就是分组标题。
+    const block = document.createElement("dl");
+    block.className = "detail-block";
+    appendFact(block, tr("license"), pkg.license || tr("none"));
+    appendFact(block, tr("categoryLabel"), categoryText(pkg.category));
+    appendFact(block, tr("assets"), (pkg.install_assets || []).join(", ") || tr("none"));
+    appendFact(block, tr("repository"), pkg.repository || tr("none"));
+    if (pkg.private) appendFact(block, tr("developerServers"), `${pkg.server_name} · ${pkg.server_url}`);
 
-    const dependencySection = document.createElement("section");
-    dependencySection.className = "dependency-section";
-    const dependencyTitle = document.createElement("strong");
-    dependencyTitle.textContent = tr("dependencies").toUpperCase();
-    const dependencies = document.createElement("div");
-    dependencies.className = "dependency-list";
-    if (!pkg.dependencies?.length) {
-        const none = document.createElement("span");
-        none.className = "detail-id";
-        none.textContent = tr("none");
-        dependencies.append(none);
-    } else {
-        for (const item of pkg.dependencies) {
-            const line = document.createElement("div");
-            line.className = "dependency-line";
-            const name = document.createElement("span");
-            name.textContent = item.id;
-            const range = document.createElement("span");
-            range.textContent = item.version;
-            line.append(name, range);
-            dependencies.append(line);
-        }
+    appendGroupLabel(block, tr("dependencies").toUpperCase(), pkg.dependencies?.length ? "" : tr("none"));
+    for (const item of pkg.dependencies || []) {
+        appendFact(block, item.id, item.version);
     }
-    dependencySection.append(dependencyTitle, dependencies);
 
-    const recommendationSection = document.createElement("section");
-    recommendationSection.className = "dependency-section";
-    const recommendationTitle = document.createElement("strong");
-    recommendationTitle.textContent = tr("recommendations").toUpperCase();
-    const recommendations = document.createElement("div");
-    recommendations.className = "dependency-list";
-    if (!pkg.recommendations?.length) {
-        const none = document.createElement("span");
-        none.className = "detail-id";
-        none.textContent = tr("none");
-        recommendations.append(none);
-    } else {
-        for (const packageId of pkg.recommendations) {
-            const recommended = state.packages.find((candidate) => candidate.id === packageId);
-            const label = recommended ? packageLabel(recommended) : packageId;
-            const line = document.createElement("div");
-            line.className = "dependency-line";
-            const name = document.createElement("span");
-            name.textContent = label;
-            line.append(name);
-            // 认不出这个包时标签就等于 id，别再写第二遍。
-            if (label !== packageId) {
-                const id = document.createElement("span");
-                id.textContent = packageId;
-                line.append(id);
-            }
-            recommendations.append(line);
-        }
+    appendGroupLabel(block, tr("recommendations").toUpperCase(), pkg.recommendations?.length ? "" : tr("none"));
+    for (const packageId of pkg.recommendations || []) {
+        const recommended = state.packages.find((candidate) => candidate.id === packageId);
+        const label = recommended ? packageLabel(recommended) : packageId;
+        // 认不出这个包时标签就等于 id，别再写第二遍。
+        appendFact(block, label, label === packageId ? "" : packageId);
     }
-    recommendationSection.append(recommendationTitle, recommendations);
 
-    // 依赖与推荐并排；每一条自己占一行。
-    const sections = document.createElement("div");
-    sections.className = "detail-sections";
-    sections.append(dependencySection, recommendationSection);
+    appendCompatibility(block, pkg, verdict);
 
-    const readmeSection = document.createElement("section");
-    readmeSection.className = "detail-readme";
-    const readme = state.readmes.get(pkg.id);
+    // 说明默认收起：正文照常读取，展开才看。
+    const readmeDetails = document.createElement("details");
+    readmeDetails.className = "detail-readme";
+    const summary = document.createElement("summary");
+    summary.textContent = tr("readmeTitle");
+    const readmeBody = document.createElement("div");
+    readmeBody.className = "readme-body";
+    readmeDetails.append(summary, readmeBody);
+    const cached = state.readmes.get(pkg.id);
     if (pkg.private) {
         const privateNotice = document.createElement("div");
         privateNotice.className = "readme-status";
         privateNotice.textContent = `${tr("privateDistribution")} · ${pkg.server_name}`;
-        readmeSection.append(privateNotice);
+        readmeBody.append(privateNotice);
     } else if (state.readmeLoading.has(pkg.id)) {
         const loading = document.createElement("div");
         loading.className = "readme-status";
@@ -465,26 +446,26 @@ function renderDetail() {
         const label = document.createElement("span");
         label.textContent = tr("loadingReadme");
         loading.append(spinner, label);
-        readmeSection.append(loading);
-    } else if (readme?.error) {
+        readmeBody.append(loading);
+    } else if (cached?.error) {
         const failure = document.createElement("div");
         failure.className = "readme-status error";
         const message = document.createElement("span");
-        message.textContent = readme.error;
+        message.textContent = cached.error;
         const retry = document.createElement("button");
         retry.className = "secondary-button";
         retry.type = "button";
         retry.textContent = tr("retry");
         retry.addEventListener("click", () => loadPackageReadme(pkg.id, true));
         failure.append(message, retry);
-        readmeSection.append(failure);
-    } else if (readme?.html) {
-        readmeSection.append(sanitizeReadmeHtml(readme.html, pkg.id));
+        readmeBody.append(failure);
+    } else if (cached?.html) {
+        readmeBody.append(sanitizeReadmeHtml(cached.html, pkg.id));
     } else {
         const pending = document.createElement("div");
         pending.className = "readme-status";
         pending.textContent = tr("loadingReadme");
-        readmeSection.append(pending);
+        readmeBody.append(pending);
     }
 
     const actions = document.createElement("div");
@@ -509,11 +490,7 @@ function renderDetail() {
     install.addEventListener("click", () => beginInstall([pkg.id]));
     actions.append(repo, remove, install);
 
-    panel.append(
-        topline, heading, actions, readmeSection, facts, sections,
-    );
-    // 兼容性细节紧跟在依赖/推荐那一排下面，用的是同一套 detail-facts 版式。
-    panel.append(compatibilitySection(pkg, verdict));
+    panel.append(topline, heading, actions, readmeDetails, block);
 }
 
 async function loadCatalog(refresh = false) {
@@ -595,34 +572,17 @@ function planVersionControl(planId, planState, onVersionChange) {
     return control;
 }
 
-/** 详情页那块：把当前这个版本的兼容性按 detail-facts 的版式摆全。 */
-function compatibilitySection(pkg, verdict) {
-    const section = document.createElement("section");
-    section.className = "compatibility-section";
-    const title = document.createElement("strong");
-    title.textContent = tr("compatibilityTitle").toUpperCase();
-    section.append(title);
-
+/** 兼容性：详情块的最后一段。逐轴结果由后端算好（`axes`），这里只显示声明、本机值、过没过。 */
+function appendCompatibility(block, pkg, verdict) {
+    appendGroupLabel(block, tr("compatibilityTitle").toUpperCase());
     const release = packageReleases(pkg).find((item) => item.version === pkg.release?.version);
-    const facts = document.createElement("dl");
-    facts.className = "detail-facts compatibility-facts";
-    const addFact = (label, value, tone = "") => {
-        const group = document.createElement("div");
-        const term = document.createElement("dt");
-        term.textContent = label;
-        const description = document.createElement("dd");
-        description.textContent = value;
-        if (tone) description.classList.add(tone);
-        group.append(term, description);
-        facts.append(group);
-    };
+    const addFact = (label, value, tone = "") => appendFact(block, label, value, tone);
 
     if (pkg.category === "translation") {
         addFact(tr("compatibilityTitle"), tr("compatibilityTranslation"));
     } else {
-        // 逐轴结果由后端算好（`axes`），这里只显示：声明、本机值、这一轴过没过。
         for (const axis of release?.axes || []) {
-            const label = axis.id === SPROCKET_AXIS_ID ? "Sprocket" : "MelonLoader";
+            const label = axisLabel(axis.id);
             const declared = axis.declared || tr("compatibilityNotDeclared");
             const local = axis.local ? tr("compatibilityLocal", {version: axis.local}) : tr("compatibilityLocalUnknown");
             const tone = axis.satisfied === true ? "pass" : axis.satisfied === false ? "fail" : "";
@@ -645,13 +605,8 @@ function compatibilitySection(pkg, verdict) {
             verdict === VERDICT_INCOMPATIBLE ? "fail" : "");
     }
     if (state.environment?.environment?.state === "conflict") {
-        addFact(tr("compatibilityEnvironmentLabel"), tr("environmentConflict", {
-            loader: state.environment.melonloader?.used_version || tr("versionUnknown"),
-            sprocket: state.environment.sprocket?.version || "-",
-        }), "fail");
+        addFact(tr("compatibilityEnvironmentLabel"), environmentConflictText(), "fail");
     }
-    section.append(facts);
-    return section;
 }
 
 function createPlanBody(planState, onVersionChange = async () => {}) {
@@ -672,6 +627,15 @@ function createPlanBody(planState, onVersionChange = async () => {}) {
         const heading = document.createElement("strong");
         heading.textContent = localized(plan.display_name, plan.name || plan.id);
         group.append(heading);
+        // 供给同一项能力的加载器只能有一个：装这个之前先交还那些（各自的树先进备份区）。
+        for (const gone of plan.displaces || []) {
+            const displaced = document.createElement("div");
+            displaced.className = "loader-displace-warning";
+            displaced.textContent = tr("loaderDisplaceWarning", {
+                name: localized(gone.display_name, gone.name || gone.id),
+            });
+            group.append(displaced);
+        }
         for (const item of plan.packages || []) {
             const line = document.createElement("div");
             line.className = "plan-line";
@@ -865,45 +829,4 @@ async function loadPackageReadme(packageId, refresh = false) {
         state.readmeLoading.delete(packageId);
         if (state.selectedId === packageId) renderDetail();
     }
-}
-
-async function ensureMelonLoader(installedHint = null) {
-    let installed = installedHint;
-    if (installed === null) {
-        const status = await callApi("get_melonloader_status", false, false);
-        if (!status.ok) {
-            if (status.code === "game_path_required") {
-                showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
-            } else resultError(status);
-            return {proceed: false, allowWithout: false};
-        }
-        installed = Boolean(status.melonloader?.installed);
-    }
-    if (installed) return {proceed: true, allowWithout: false};
-
-    // 兼容表说这段加载器跑不了本机游戏版本时，先写清这一点再问（安装了也白装）。
-    const conflict = state.environment?.environment?.state === "conflict";
-    const body = document.createElement("div");
-    const prompt = document.createElement("p");
-    prompt.textContent = tr("melonloaderRequiredMessage");
-    body.append(prompt);
-    if (conflict) {
-        const note = document.createElement("p");
-        note.className = "modal-note";
-        note.textContent = tr("melonloaderRequiredIncompatible", {
-            version: state.environment?.melonloader?.used_version || tr("versionUnknown"),
-            sprocket: state.environment?.sprocket?.version || state.environment?.sprocket?.raw || "-",
-        });
-        body.append(note);
-    }
-    const installNow = await showModal({
-        kicker: tr("modRuntime"),
-        title: tr("melonloaderRequiredTitle"),
-        body,
-        confirmText: tr("installNow"),
-        cancelText: tr("continueWithout"),
-    });
-    if (!installNow) return {proceed: true, allowWithout: true};
-    const installedNow = await installMelonLoader(true);
-    return {proceed: installedNow, allowWithout: false};
 }

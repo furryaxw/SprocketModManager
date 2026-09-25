@@ -12,22 +12,26 @@ from urllib.parse import urlparse
 
 from .api_constants import MANAGER_REPOSITORY
 from .controllers import CatalogController, InstallationController, PrivateDistributionController, SettingsController
+from ..application.identifiers import detected_capabilities, log_sources, mod_directory_paths, runtime_states
 from ..application.install_queue import InstallQueue
 from ..application.service import ModManagerService
-from ..domain.compatibility import Environment
+from ..domain.compatibility import DEFAULT_GAME_CAPABILITY, CapabilityEnvironment
 from ..domain.errors import ModManagerError
-from ..domain.models import ReleaseInfo
+from ..domain.models import ReleaseInfo, VERSION_TEMPLATE
 from ..domain.semver import Version
 from ..infrastructure.config import ConfigStore, detect_language, effective_game_path, effective_github_proxy_url, \
     effective_proxy_url
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.desktop import open_directory
 from ..infrastructure.app_logging import manager_log_path
-from ..infrastructure.environment_cache import read_environment_table
-from ..infrastructure.environment_monitor import EnvironmentMonitor, game_environment_fingerprint
+from ..infrastructure.providers_cache import read_providers_table
+from ..infrastructure.environment_monitor import (
+    MOD_DIRECTORIES,
+    EnvironmentMonitor,
+    game_environment_fingerprint,
+)
 from ..infrastructure.game_version import GameVersion, read_game_version
-from ..infrastructure.log_upload import upload_latest_log, upload_log_file
-from ..infrastructure.melonloader import MELONLOADER_REPOSITORY, MelonLoaderManager
+from ..infrastructure.log_upload import upload_log_file
 from ..infrastructure.private_servers import PrivateCatalogCache
 from ..infrastructure.self_update import (
     can_self_update,
@@ -83,8 +87,8 @@ class ClientApi:
         self._github_access_token = ""
         self._gist_conflicts: list[dict[str, Any]] = []
         self._mutation_lock = threading.Lock()
-        self._melonloader_idle = threading.Event()
-        self._melonloader_idle.set()
+        self._loader_idle = threading.Event()
+        self._loader_idle.set()
         self._settings_controller = SettingsController(self)
         self._private_controller = PrivateDistributionController(self)
         self._catalog_controller = CatalogController(self)
@@ -97,17 +101,16 @@ class ClientApi:
         )
         self.install_queue = InstallQueue(self._run_queued_install)
         LOGGER.debug("ClientApi init: install queue created")
-        http = getattr(self.service, "http", None)
-        if http is None:
-            http = ModManagerService(self.config_store.app_dir).http
-        self.melonloader = MelonLoaderManager(self.config_store.app_dir, http)
+        # 指纹要覆盖活跃标识符的目录（含桥接加载器的 `MLLoader/Mods`）。目录名单随环境读数刷新，
+        # 指纹每秒只读这份缓存。
+        self._mod_directories: tuple[str, ...] = MOD_DIRECTORIES
         self._environment_monitor = EnvironmentMonitor(
             self._read_environment,
-            lambda: game_environment_fingerprint(self._game_path_or_none()),
+            lambda: game_environment_fingerprint(self._game_path_or_none(), self._mod_directories),
         )
-        # 环境表（加载器↔游戏）：内存里留一份，省掉每秒问一次时读盘。
-        self._environment_table_cache: dict[str, Any] | None = None
-        self._environment_table_read = False
+        # 供给表（加载器包↔游戏）在内存里留一份，省掉每秒问一次时读盘。
+        self._providers_table_cache: dict[str, Any] | None = None
+        self._providers_table_read = False
         LOGGER.info("Client API initialized version=%s", self.version)
 
     def environment_snapshot(self) -> dict[str, Any]:
@@ -122,58 +125,145 @@ class ClientApi:
         path = Path(value).expanduser()
         return path if (path / "Sprocket.exe").is_file() else None
 
-    def environment_table(self) -> tuple[dict[str, Any] | None, str]:
-        """加载器↔游戏表：索引里那份优先，其次用上次同步缓存下来的那份，都没有就是「没有表」。
+    def providers_table(self) -> tuple[dict[str, Any] | None, str]:
+        """加载器包↔游戏表：索引里那份优先，其次用上次同步缓存下来的那份，都没有就是「没有表」。
 
         本地不放内置副本：表是平台事实，会变；写死一份只会和注册表各说各话。
         """
         registry = self.service.registry if self.service is not None else None
-        environment = getattr(registry, "environment", None)
-        if environment and environment.get("entries"):
-            self._environment_table_cache = environment
-            return environment, "registry"
-        if not self._environment_table_read:
-            self._environment_table_cache = read_environment_table(self.config_store.app_dir)
-            self._environment_table_read = True
-        if self._environment_table_cache is None:
+        table = getattr(registry, "provider_table", None)
+        if table and table.get("entries"):
+            self._providers_table_cache = table
+            return table, "registry"
+        if not self._providers_table_read:
+            self._providers_table_cache = read_providers_table(self.config_store.app_dir)
+            self._providers_table_read = True
+        if self._providers_table_cache is None:
             return None, "missing"
-        return self._environment_table_cache, "cache"
+        return self._providers_table_cache, "cache"
 
-    def current_environment(self) -> Environment:
-        """判定用的环境：版本来自监听缓存，表来自索引（没有就用同步缓存下来的那份）。"""
+    def current_environment(self) -> CapabilityEnvironment:
+        """判定用的能力表：版本来自监听缓存，表来自索引（没有就用同步缓存下来的那份）。
+
+        每个加载器包取「在用版本」：装了就是装的那版，没装就用已知的最新版。能力版本由
+        加载器包的 `provides` 给出（`{version}` 按在用版本替换）—— 包版本与它提供的能力
+        版本可以不同，这正是桥接加载器能供给另一个加载器能力的原因。
+        """
         snapshot = self.environment_snapshot()
         sprocket = dict(snapshot.get("sprocket") or {})
-        melonloader = dict(snapshot.get("melonloader") or {})
-        table, _source = self.environment_table()
-        return Environment(
+        latest_loaders = dict(snapshot.get("latest_loaders") or {})
+        states = dict(snapshot.get("loaders") or {})
+        table, _source = self.providers_table()
+        registry = self.service.registry if self.service is not None else None
+        loaders: dict[str, str] = {}
+        for loader_id in set(states) | set(latest_loaders):
+            info = states.get(loader_id) or {}
+            version = str(info.get("version") or latest_loaders.get(loader_id) or "")
+            if version:
+                loaders[loader_id] = version
+        capabilities: dict[str, str] = {}
+        recorded: set[str] = set()
+        if registry is not None:
+            # 先铺未安装的（用已知最新版），再让已安装的覆盖：实际装上的那个才算数。
+            for installed_pass in (False, True):
+                for loader_id in sorted(loaders):
+                    info = states.get(loader_id) or {}
+                    if bool(info.get("installed")) != installed_pass:
+                        continue
+                    try:
+                        package = registry.get(loader_id)
+                    except ModManagerError:
+                        continue
+                    for capability_id, spec in package.capabilities().items():
+                        capabilities[capability_id] = (
+                            loaders[loader_id] if spec == VERSION_TEMPLATE else spec
+                        )
+                        if installed_pass:
+                            recorded.add(capability_id)
+        # 磁盘上检测到、但没进安装记录的运行时（管理器之外装的加载器）：按「装上了」处理，
+        # 版本取磁盘上的真值；已装供给者给出的值不覆盖。
+        for capability_id, version in (snapshot.get("detected") or {}).items():
+            capability_id = str(capability_id)
+            if capability_id in recorded:
+                continue
+            capabilities[capability_id] = str(version)
+        return CapabilityEnvironment(
+            game_id=getattr(registry, "game_id", DEFAULT_GAME_CAPABILITY) if registry is not None else DEFAULT_GAME_CAPABILITY,
             sprocket=str(sprocket.get("version") or "") or None,
             sprocket_state=str(sprocket.get("state") or "unconfigured"),
-            melonloader=melonloader.get("version") or snapshot.get("latest_loader"),
+            capabilities=capabilities,
+            loaders=loaders,
             table=table,
         )
 
     def environment_payload(self) -> dict[str, Any]:
-        _table, table_source = self.environment_table()
+        _table, table_source = self.providers_table()
         return self.current_environment().as_dict(table_source=table_source)
 
     def _read_environment(self) -> dict[str, Any]:
-        """本机环境：Sprocket 版本（读游戏目录）+ MelonLoader 版本（本机检测）。
+        """本机环境：Sprocket 版本（读游戏目录）+ 每个加载器装的是哪版（安装记录 + 磁盘检测）。
 
-        只读本地文件、不联网 —— 监听线程每隔一秒就可能走一遍这里。
+        只读本地文件、不联网 —— 监听线程每隔一秒就可能走一遍这里。安装记录读一次，
+        加载器状态与指纹要监听的目录都从这一份来；`detected` 一份供加载器状态与能力表共用。
         """
         game_path = self._game_path_or_none()
         if game_path is None:
+            self._mod_directories = MOD_DIRECTORIES
             return {
                 "sprocket": GameVersion.unconfigured().as_dict(),
-                "melonloader": {"installed": False, "version": None},
+                "loaders": {},
             }
-        installation = self.melonloader.detect(game_path)
+        installed: dict[str, dict[str, Any]] = {}
+        registry = self.service.registry if self.service is not None else None
+        if registry is not None:
+            installed = self.service.installed(game_path)
+        detected = detected_capabilities(game_path)
+        self._mod_directories = self._active_mod_directories(game_path, installed)
         return {
             "sprocket": read_game_version(game_path).as_dict(),
-            "melonloader": {
-                "installed": bool(installation.installed),
-                "version": str(installation.version) if installation.version else None,
-            },
+            "loaders": self._installed_loaders(installed, detected),
+            "detected": detected,
+        }
+
+    def _active_mod_directories(
+            self,
+            game_path: Path,
+            installed: dict[str, dict[str, Any]],
+    ) -> tuple[str, ...]:
+        """指纹要监听的目录：活跃标识符的目录，来自已装供给者或磁盘上检测到的运行时。"""
+        registry = self.service.registry if self.service is not None else None
+        if registry is None:
+            return MOD_DIRECTORIES
+        capabilities = getattr(self.service.environment, "capabilities", None)
+        directories = mod_directory_paths(
+            game_path,
+            registry.packages,
+            tuple(installed),
+            capabilities if isinstance(capabilities, dict) else {},
+        )
+        return directories or MOD_DIRECTORIES
+
+    def _installed_loaders(
+            self,
+            installed: dict[str, dict[str, Any]],
+            detected: dict[str, str],
+    ) -> dict[str, dict[str, Any]]:
+        """每个加载器类包在盘上的样子；「装没装」由 `runtime_states` 一处说了算。
+
+        这里覆盖**所有**加载器类包而不只是基础运行时：桥接/翻译/补丁加载器装上也提供能力
+        （`provides`），能力表少了它就判不了依赖那项能力的模组。
+        """
+        registry = self.service.registry if self.service is not None else None
+        if registry is None:
+            return {}
+        loaders = tuple(package for package in registry.packages if package.is_loader)
+        states = runtime_states(loaders, installed, detected)
+        return {
+            package.id: {
+                "installed": states[package.id][0],
+                "version": states[package.id][1] or None,
+            }
+            for package in loaders
         }
 
     def __getattr__(self, name: str) -> Any:
@@ -297,11 +387,14 @@ class ClientApi:
     def get_environment(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.get_environment(*args, **kwargs)
 
-    def get_melonloader_status(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._installation_controller.get_melonloader_status(*args, **kwargs)
+    def get_modloaders(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.get_modloaders(*args, **kwargs)
 
-    def install_melonloader(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._installation_controller.install_melonloader(*args, **kwargs)
+    def install_modloader(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.install_modloader(*args, **kwargs)
+
+    def remove_modloader(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.remove_modloader(*args, **kwargs)
 
     def plan_install(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.plan_install(*args, **kwargs)
@@ -327,38 +420,80 @@ class ClientApi:
     def clear_finished(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.clear_finished(*args, **kwargs)
 
-    def upload_latest_log(self) -> dict[str, Any]:
+    def _log_source_entries(self) -> list[dict[str, Any]]:
+        """可上传的日志：管理器那份永远在，运行时那份来自活跃标识符。
+
+        `path` 是给界面看的（管理器日志是绝对路径，运行时日志相对游戏根目录），`target` 是
+        真正要读的文件 —— 运行时的相对路径配上游戏根目录才读得到。
+        """
+        manager = manager_log_path(self.config_store.app_dir)
+        entries: list[dict[str, Any]] = [{
+            "id": "manager",
+            "kind": "manager",
+            "loader": "",
+            "path": str(manager),
+            "target": manager,
+            "available": True,
+        }]
+        game_path = self._game_path_or_none()
+        if game_path is None:
+            return entries
+        registry = self.service.registry if self.service is not None else None
+        packages = registry.packages if registry is not None else ()
+        installed = self.service.installed(game_path) if registry is not None else {}
+        capabilities = getattr(self.service.environment, "capabilities", None)
+        for source in log_sources(
+                game_path,
+                packages,
+                tuple(installed),
+                capabilities if isinstance(capabilities, dict) else {},
+        ):
+            target = game_path / source.path
+            entries.append({
+                "id": source.id,
+                "kind": "loader",
+                "loader": source.loader,
+                "path": source.path,
+                "target": target,
+                "available": target.is_file(),
+            })
+        return entries
+
+    def get_log_sources(self) -> dict[str, Any]:
         try:
-            LOGGER.info("uploading MelonLoader Latest.log")
-            result = upload_latest_log(
-                Path(effective_game_path(self.config)),
-                LOG_UPLOAD_ENDPOINT,
-                app_version=self.version,
-            )
-            return self._success(request_id=result.request_id, status=result.status,
-                                 bytes_uploaded=result.bytes_uploaded, url=result.url)
+            sources = [
+                {key: value for key, value in entry.items() if key != "target"}
+                for entry in self._log_source_entries()
+            ]
+            return self._success(sources=sources)
         except (OSError, ValueError, ModManagerError) as exc:
-            return self._failure(exc, code="log_upload_failed")
+            return self._failure(exc, code="log_sources_failed")
 
-    def open_manager_directory(self) -> dict[str, Any]:
+    def upload_log(self, source_id: str = "") -> dict[str, Any]:
         try:
-            open_directory(self.config_store.app_dir)
-            LOGGER.info("opened manager data directory path=%s", self.config_store.app_dir)
-            return self._success(path=str(self.config_store.app_dir))
-        except (OSError, ValueError) as exc:
-            return self._failure(exc, code="open_manager_directory_failed")
-
-    def upload_manager_log(self) -> dict[str, Any]:
-        try:
-            LOGGER.info("uploading manager log")
+            entry = next(
+                (item for item in self._log_source_entries() if item["id"] == str(source_id)),
+                None,
+            )
+            if entry is None:
+                return self._failure(
+                    ValueError(f"unknown log source: {source_id}"),
+                    code="log_source_unknown",
+                )
+            if not entry["available"]:
+                return self._failure(
+                    FileNotFoundError(f"log source is not on disk: {entry['path']}"),
+                    code="log_source_unavailable",
+                )
             _flush_logs()
             result = upload_log_file(
-                manager_log_path(self.config_store.app_dir),
+                entry["target"],
                 LOG_UPLOAD_ENDPOINT,
                 app_version=self.version,
             )
             LOGGER.info(
-                "manager log uploaded request_id=%s bytes=%s",
+                "log uploaded source_id=%s request_id=%s bytes=%s",
+                entry["id"],
                 result.request_id,
                 result.bytes_uploaded,
             )
@@ -369,7 +504,15 @@ class ClientApi:
                 url=result.url,
             )
         except (OSError, ValueError, ModManagerError) as exc:
-            return self._failure(exc, code="manager_log_upload_failed")
+            return self._failure(exc, code="log_upload_failed")
+
+    def open_manager_directory(self) -> dict[str, Any]:
+        try:
+            open_directory(self.config_store.app_dir)
+            LOGGER.info("opened manager data directory path=%s", self.config_store.app_dir)
+            return self._success(path=str(self.config_store.app_dir))
+        except (OSError, ValueError) as exc:
+            return self._failure(exc, code="open_manager_directory_failed")
 
     def get_manager_update(self) -> dict[str, Any]:
         """管理器自己的版本：最新发布是什么、有没有新、这台机器能不能就地换掉自己。"""
@@ -450,10 +593,7 @@ class ClientApi:
                 if parsed.path.rstrip("/").casefold() == "/login/device":
                     webbrowser.open(str(url))
                     return self._success()
-                allowed_repositories = {
-                    MANAGER_REPOSITORY.casefold(),
-                    MELONLOADER_REPOSITORY.casefold(),
-                }
+                allowed_repositories = {MANAGER_REPOSITORY.casefold()}
                 service = self._current_service()
                 if service.registry:
                     allowed_repositories.update(
@@ -475,7 +615,7 @@ class ClientApi:
         LOGGER.info("window closing requested")
         self._close_pending = True
         queue_closed = self.install_queue.close(timeout=0.25)
-        if queue_closed and self._melonloader_idle.wait(0.25):
+        if queue_closed and self._loader_idle.wait(0.25):
             mutation_finished = self._mutation_lock.acquire(blocking=False)
             if mutation_finished:
                 self._mutation_lock.release()
@@ -488,7 +628,7 @@ class ClientApi:
         def finish_close() -> None:
             LOGGER.debug("waiting for background mutations before close")
             self.install_queue.close(timeout=None)
-            self._melonloader_idle.wait()
+            self._loader_idle.wait()
             with self._mutation_lock:
                 pass
             if self._window is not None:
@@ -501,6 +641,6 @@ class ClientApi:
         LOGGER.info("window closed; draining background work")
         self._environment_monitor.stop()
         self.install_queue.close(timeout=5)
-        self._melonloader_idle.wait(5)
+        self._loader_idle.wait(5)
         if self._mutation_lock.acquire(timeout=5):
             self._mutation_lock.release()

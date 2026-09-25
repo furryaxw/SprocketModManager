@@ -192,14 +192,25 @@ class HttpClient:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise DownloadError(f"invalid JSON response from {url}") from exc
 
-    def download(self, asset: ReleaseAsset, destination: Path, progress: ProgressCallback | None = None) -> Path:
+    def download(
+            self,
+            asset: ReleaseAsset,
+            destination: Path,
+            progress: ProgressCallback | None = None,
+            *,
+            hosts: set[str] | None = None,
+    ) -> Path:
         LOGGER.info("asset download started name=%s size=%d", asset.name, asset.size)
+        allowed_hosts = {host.casefold() for host in (hosts or GITHUB_ASSET_HOSTS)}
         if asset.size < 0 or asset.size > MAX_ASSET_BYTES:
             raise DownloadError(f"asset size is outside the allowed range: {asset.name}")
-        self._validate_https(asset.download_url, GITHUB_ASSET_HOSTS)
+        # 没有声明大小的资产（例如外部来源只给了摘要）按全局上限读，不能用 0 反推成一个更小的上限。
+        declared_size = asset.size or MAX_ASSET_BYTES
+        self._validate_https(asset.download_url, allowed_hosts)
         request_url = asset.download_url
-        allowed_hosts = set(GITHUB_ASSET_HOSTS)
-        if self.github_proxy_url:
+        asset_host = (urlparse(asset.download_url).hostname or "").casefold()
+        # 加速器只镜像 GitHub 自己的资产地址；外部来源的地址必须原样请求，不能挂到它下面。
+        if self.github_proxy_url and asset_host in GITHUB_ASSET_HOSTS:
             request_url = f"{self.github_proxy_url}{asset.download_url}"
             proxy_host = urlparse(self.github_proxy_url).hostname
             if proxy_host:
@@ -207,7 +218,7 @@ class HttpClient:
         data = self.get_bytes(
             request_url,
             timeout=180,
-            max_bytes=max(asset.size + 1024 * 1024, 1024 * 1024),
+            max_bytes=declared_size + 1024 * 1024,
             allowed_hosts=allowed_hosts,
             progress=progress,
         )

@@ -14,10 +14,7 @@ from ...infrastructure.config import (
     DEFAULT_PROXY_URL,
     detect_game_path,
     effective_game_path,
-    effective_github_proxy_url,
-    effective_proxy_url,
 )
-from ...infrastructure.melonloader import MELONLOADER_REPOSITORY
 from ...utilities.ui_values import normalize_text_scale
 from ...utilities.urls import normalize_github_proxy_url, normalize_proxy_url
 
@@ -59,7 +56,7 @@ class SettingsController(ApiController):
             links={
                 "repository": MANAGER_REPOSITORY_URL,
                 "registry": REGISTRY_WEBSITE_URL,
-                "melonloader": f"https://github.com/{MELONLOADER_REPOSITORY}",
+                "modloaders": REGISTRY_WEBSITE_URL,
             },
         )
 
@@ -163,13 +160,6 @@ class SettingsController(ApiController):
                 self._debug_override or self.config["debug"],
             )
             self._configure_service_network(self.service)
-            melonloader_http = getattr(self.melonloader, "http", None)
-            configure = getattr(melonloader_http, "configure_network", None)
-            if configure is not None:
-                configure(
-                    effective_proxy_url(self.config),
-                    effective_github_proxy_url(self.config),
-                )
             return self._success(settings=self._settings_data(), language=self.language)
         except (OSError, ValueError) as exc:
             return self._failure(exc, code="settings_save_failed")

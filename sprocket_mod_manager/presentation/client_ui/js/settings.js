@@ -30,7 +30,6 @@ async function saveSettings(values = null) {
     }
     state.settings = result.settings;
     if (previousGamePath !== (result.settings.game_path || "")) {
-        state.melonloader = null;
         void refreshEnvironment();
     }
     state.languageMode = result.settings.language;
@@ -49,68 +48,6 @@ async function chooseGamePath() {
     }
     if (result.path) $("#game-path").value = result.path;
     if (result.path) scheduleSettingsSave(0);
-}
-
-async function uploadLog(buttonSelector, apiMethod, confirmMessageKey) {
-    const button = $(buttonSelector);
-    const confirmed = await showModal({
-        kicker: tr("logUpload"),
-        title: tr("uploadConfirmTitle"),
-        body: tr(confirmMessageKey),
-        confirmText: tr("confirm"),
-        closeOnBackdrop: false,
-    });
-    if (!confirmed) return;
-    if (button) button.disabled = true;
-    try {
-        const result = await callApi(apiMethod);
-        if (!result.ok) {
-            resultError(result);
-            return;
-        }
-        const body = document.createElement("div");
-        body.className = "log-upload-link-row";
-        const link = document.createElement("input");
-        link.type = "text";
-        link.readOnly = true;
-        link.value = result.url;
-        link.className = "field-input";
-        const copy = document.createElement("button");
-        copy.type = "button";
-        copy.className = "secondary-button";
-        copy.textContent = tr("copyLink");
-        copy.addEventListener("click", async () => {
-            try {
-                await navigator.clipboard.writeText(result.url);
-            } catch {
-                link.select();
-                document.execCommand("copy");
-            }
-            copy.textContent = tr("copied");
-            toast(tr("copied"));
-        });
-        body.append(link, copy);
-        showModal({
-            kicker: tr("logUpload"),
-            title: tr("uploadDoneTitle"),
-            body,
-            confirmText: tr("close"),
-            closeOnBackdrop: false,
-        });
-        $("#modal-cancel").hidden = true;
-        link.focus();
-        link.select();
-    } finally {
-        if (button) button.disabled = false;
-    }
-}
-
-async function uploadLatestLog() {
-    await uploadLog("#upload-latest-log", "upload_latest_log", "uploadConfirmMessage");
-}
-
-async function uploadManagerLog() {
-    await uploadLog("#upload-manager-log", "upload_manager_log", "uploadManagerLogConfirmMessage");
 }
 
 async function openManagerDirectory() {

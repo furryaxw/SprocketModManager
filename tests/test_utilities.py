@@ -6,7 +6,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from sprocket_mod_manager.domain.errors import ScanError
-from sprocket_mod_manager.utilities.package_paths import validate_relative_path, validate_target
+from sprocket_mod_manager.utilities.package_paths import (
+    file_type_is_wildcard,
+    file_type_namespace,
+    validate_file_type,
+    validate_relative_path,
+    validate_supply_type,
+    validate_target,
+)
 from sprocket_mod_manager.utilities.processes import sprocket_is_running, terminate_sprocket
 from sprocket_mod_manager.utilities.ui_values import normalize_text_scale
 from sprocket_mod_manager.utilities.urls import (
@@ -45,6 +52,25 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(normalize_text_scale(80), 100)
         self.assertEqual(normalize_text_scale(130), 130)
         self.assertEqual(normalize_text_scale(200), 160)
+
+    def test_file_types_may_be_concrete_or_wildcards(self) -> None:
+        self.assertEqual(validate_file_type(" melonloader:mod "), "melonloader:mod")
+        self.assertEqual(validate_file_type("xunity:translation"), "xunity:translation")
+        self.assertEqual(validate_file_type("melonloader:*"), "melonloader:*")
+        for value in ("*", "*:mod", "melonloader:", ":mod", "melonloader", "melonloader:**"):
+            with self.subTest(value=value):
+                with self.assertRaises(ScanError):
+                    validate_file_type(value)
+
+    def test_supply_types_must_be_concrete(self) -> None:
+        self.assertEqual(validate_supply_type("melonloader:mod"), "melonloader:mod")
+        with self.assertRaises(ScanError):
+            validate_supply_type("melonloader:*")
+
+    def test_file_type_helpers_split_the_namespace(self) -> None:
+        self.assertEqual(file_type_namespace("melonloader:mod"), "melonloader")
+        self.assertTrue(file_type_is_wildcard("melonloader:*"))
+        self.assertFalse(file_type_is_wildcard("melonloader:mod"))
 
 
 class ProcessTests(unittest.TestCase):

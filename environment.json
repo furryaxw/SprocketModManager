@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "entries": [
-    {
-      "melonloader": ">=0.7.0 <0.8.0",
-      "sprocket": "<0.2.54"
-    }
-  ]
-}

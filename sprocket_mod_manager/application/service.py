@@ -1,30 +1,32 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 from .adoption import AdoptionRecord, ExistingModsAdopter
+from .identifiers import detected_capabilities, runtime_states
 from .integrity import annotate, published_hashes
 from .integrity import BROKEN_STATUSES
 from .preparer import PlanPreparer
 from .solver import DependencySolver
-from ..domain.compatibility import Environment
+from ..domain.compatibility import CapabilityEnvironment
 from ..domain.errors import ModManagerError, RegistryError
 from ..infrastructure.mod_toggle import canonical_relative
 from ..domain.models import PreparedPlan, ProgressCallback, ResolutionPlan
 from ..domain.registry import Registry
 from ..infrastructure.defaults import default_app_dir
 from ..infrastructure.dll_metadata import cached_sha256, configure_metadata_backend
-from ..infrastructure.environment_cache import write_environment_table
+from ..infrastructure.providers_cache import write_providers_table
 from ..infrastructure.github import GitHubClient
 from ..infrastructure.http_client import HttpClient
 from ..infrastructure.installer import Installer
 from ..infrastructure.profiles import InstallerProfiles
 from ..infrastructure.file_metadata import FileMetadataStore
-from ..infrastructure.manager_paths import STATE_FILE_NAME, file_metadata_path, manager_state_dir
+from ..infrastructure.manager_paths import STATE_FILE_NAME, backups_dir, file_metadata_path, manager_state_dir, state_file_path
 from ..infrastructure.state import StateStore
 from ..infrastructure.registry_source import RegistrySourceLoader
+from ..infrastructure.xunity_backup import archive_replaced_directory
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,9 +44,11 @@ class ModManagerService:
         # 一起放在游戏目录里，AppData 里不留任何游戏相关的东西。
         self._metadata_game_dir: Path | None = None
         self.registry: Registry | None = None
-        # 求解时用的环境（界面每拿到一次 service 就刷新它）：给了就淘汰跑不了这个环境的版本；
-        # None 表示不按环境过滤（CLI 之类没有环境概念的调用方）。
-        self.environment: Environment | None = None
+        # 求解时用的能力表（界面每拿到一次 service 就刷新它）：给了就淘汰跑不了这个环境的版本；
+        # None 表示不按能力过滤（CLI 之类没有环境概念的调用方）。
+        self.environment: CapabilityEnvironment | None = None
+        # 上一次安装落盘的文件数：安装记录不再逐文件记账，调用方从这里拿加载器页要的写入数。
+        self.last_install_files = 0
         # 上一次标注里失效的抑制条目（由调用方写回游戏目录的 suppression.json）。
         self._stale_suppressions: list[str] = []
 
@@ -66,8 +70,8 @@ class ModManagerService:
         LOGGER.info("loading registry source=%s refresh=%s", source, refresh)
         registry = self._registry_loader.load(source, refresh=refresh)
         self.registry = registry
-        # 环境表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。
-        write_environment_table(self.app_dir, registry.environment)
+        # 供给表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。
+        write_providers_table(self.app_dir, registry.provider_table)
         LOGGER.info("registry loaded packages=%d", len(registry.packages))
         return registry
 
@@ -82,11 +86,15 @@ class ModManagerService:
             version_range: str = "*",
             *,
             pinned: bool = False,
+            installed: Iterable[str] = (),
     ) -> ResolutionPlan:
         """解一个包的依赖。
 
         `pinned` 表示这个版本范围是调用方（界面）点名定下的：那个根包不再按环境淘汰
         （用户有权装一个不兼容的版本），但它的依赖仍然按环境筛。
+
+        `installed` 是目标游戏目录里已经装上的包 id：一个类型有多个供给者时，只有已安装的
+        那个能决定安装目录；没有已安装的那一个就直接报错，绝不挑一个猜的。
         """
         LOGGER.debug("resolving package identifier=%s range=%s pinned=%s", identifier, version_range, pinned)
         registry = self._require_registry()
@@ -96,9 +104,25 @@ class ModManagerService:
             self.github,
             environment=self.environment,
             pinned=frozenset({package.id}) if pinned else frozenset(),
+            installed=frozenset(installed),
         ).resolve(package.id, version_range)
         LOGGER.info("resolved package=%s packages=%d", package.id, len(plan.packages))
         return plan
+
+    def _modloader_ids(self) -> frozenset[str]:
+        """注册表里的基础运行时包 id：既有记录缺 `kind` 时靠它归一。"""
+        if self.registry is None:
+            return frozenset()
+        return frozenset(package.id for package in self.registry.modloaders())
+
+    def _installed_ids(self, game_dir: Path) -> frozenset[str]:
+        """安装记录里的包 id；记录读不出来就当作「什么都没装」，让多供给者类型走显式报错。"""
+        try:
+            state = StateStore(state_file_path(game_dir)).load()
+        except (ModManagerError, OSError, ValueError) as exc:
+            LOGGER.warning("could not read installed state for %s: %s", game_dir, exc)
+            return frozenset()
+        return frozenset(str(package_id) for package_id in state["packages"])
 
     def prepare(
             self,
@@ -118,25 +142,119 @@ class ModManagerService:
     ) -> tuple[ResolutionPlan, list[str]]:
         LOGGER.info("install requested identifier=%s game_dir=%s", identifier, game_dir)
         # 入队时就把版本钉死了，所以这里按点名处理：队列不再因为环境变化改主意。
-        plan = self.resolve(identifier, version_range, pinned=True)
+        plan = self.resolve(
+            identifier,
+            version_range,
+            pinned=True,
+            installed=self._installed_ids(game_dir),
+        )
         prepared = self.prepare(plan, progress)
+        # 载荷取回之后才交还旧加载器：下载或校验失败时，已装的那份原样留在场上。
+        self.displace_conflicting_loaders(plan, game_dir)
+        installer = self._installer_for(game_dir)
         try:
-            warnings = self._installer_for(game_dir).apply(
+            warnings = installer.apply(
                 prepared,
                 game_dir,
                 progress=progress,
                 force_conflicts=force_conflicts,
             )
+            # 安装记录不再逐文件记账，所以"这次装了几个文件"由安装本身报出来，供加载器页提示。
+            self.last_install_files = installer.last_applied_files
             LOGGER.info("install completed identifier=%s warnings=%d", identifier, len(warnings))
             return plan, warnings
         finally:
             PlanPreparer.discard(prepared)
 
+    def capability_conflicts(self, package_id: str, installed: Iterable[str]) -> list[str]:
+        """装这个加载器会让哪些已装加载器不再唯一：基础运行时只能有一个，能力也不能重复。
+
+        两个基础运行时（`kind: modloader`）都往游戏根目录写引导代理，而游戏只读一个
+        `doorstop_config.ini`，后写的那份决定哪个运行时起来，所以同一时刻只能有一个。两个加载器
+        供给同一个能力也互相矛盾。BepInEx 与桥接各供给各的能力、也不是同一类，可以一起装。
+        非加载器不参与。
+        """
+        registry = self._require_registry()
+        package = registry.resolve_identifier(package_id)
+        if not package.is_loader:
+            return []
+        capabilities = set(package.capabilities())
+        installed_ids = {str(item) for item in installed}
+        return [
+            other.id
+            for other in registry.packages
+            if other.id != package.id
+            and other.is_loader
+            and other.id in installed_ids
+            and (
+                (package.is_modloader and other.is_modloader)
+                or capabilities & set(other.capabilities())
+            )
+        ]
+
+    def displace_conflicting_loaders(
+            self,
+            plan: ResolutionPlan,
+            game_dir: Path,
+        ) -> list[str]:
+        """落盘之前先交还供给同一能力、已经装着的加载器。
+
+        计划里的包不参与：它们是这次要装的，不是要被换掉的。被交还的加载器先把整棵树归档进
+        保留的备份区（与整体接管的归档同址、同保留份数），再按它自己声明的顶层条目交还。
+        """
+        root = plan.by_id().get(plan.root_id)
+        if root is None:
+            return []
+        installing = {item.package.id for item in plan.packages}
+        displaced = [
+            package_id
+            for package_id in self.capability_conflicts(
+                root.package.id, self._installed_ids(game_dir)
+            )
+            if package_id not in installing
+        ]
+        for package_id in displaced:
+            self._claim_and_archive_loader(package_id, game_dir)
+            self.remove(package_id, game_dir)
+            LOGGER.info("displaced conflicting loader package=%s", package_id)
+        return displaced
+
+    def _claim_and_archive_loader(self, package_id: str, game_dir: Path) -> None:
+        """把要交还的加载器登记下来，并把它的树归档进备份区。
+
+        只在磁盘上的加载器先认领：交还靠的是记录里那份顶层条目清单。归档先于交还发生，
+        用户改过的文件因此一定有可回退的一份。
+        """
+        self.claim_detected_loader(package_id, game_dir)
+        try:
+            state = StateStore(state_file_path(game_dir)).load(modloaders=self._modloader_ids())
+        except (ModManagerError, OSError, ValueError) as exc:
+            LOGGER.warning("could not read %s before displacing it: %s", package_id, exc)
+            return
+        record = state["packages"].get(package_id) or {}
+        root = Path(game_dir).expanduser()
+        for relative in record.get("directories") or ():
+            if not isinstance(relative, str) or not relative.strip():
+                continue
+            try:
+                target = (root / Path(*PurePosixPath(relative).parts)).resolve()
+                target.relative_to(root.resolve())
+            except (OSError, ValueError):
+                continue
+            if not target.is_dir():
+                continue
+            archive_replaced_directory(backups_dir(game_dir), package_id, target)
+
     def remove(self, identifier: str, game_dir: Path) -> tuple[list[str], list[str]]:
         LOGGER.info("remove requested identifier=%s game_dir=%s", identifier, game_dir)
         registry = self._require_registry()
         package = registry.resolve_identifier(identifier)
-        result = self._installer_for(game_dir).remove(package.id, game_dir)
+        if package.is_loader:
+            # 只在磁盘上的加载器也要能卸载：先按标识符登记它的顶层条目，交还才有依据。
+            self.claim_detected_loader(package.id, game_dir)
+        result = self._installer_for(game_dir).remove(
+            package.id, game_dir, modloaders=self._modloader_ids()
+        )
         LOGGER.info("remove completed package=%s removed=%d warnings=%d", package.id, len(result[0]), len(result[1]))
         return result
 
@@ -151,12 +269,46 @@ class ModManagerService:
         """
         installer = self._installer_for(game_dir)
         try:
-            installer.reconcile(game_dir)
+            installer.reconcile(game_dir, modloaders=self._modloader_ids())
         except (ModManagerError, OSError, ValueError) as exc:
             LOGGER.warning("could not reconcile install state with %s: %s", game_dir, exc)
         state = installer.state_store.load()
         self._annotate_integrity(state, game_dir, suppressed=suppressed)
         return state["packages"]
+
+    def modloader_status(self, game_dir: Path | None) -> dict[str, dict[str, Any]]:
+        """每个加载器包的状态：装没装、装的是哪版、能装的最新版。
+
+        「装没装」由 `runtime_states` 一处说了算：安装记录里有这个包，或磁盘上检测到它的运行时
+        （`installed()` 会先与磁盘对账）。`latest_version` 取 GitHub releases 缓存里第一个带可安装
+        资产的版本；某个包的 release 拉取失败时只把它的 `latest_version` 留空，不影响其他包。
+        """
+        if self.registry is None:
+            return {}
+        packages = self.installed(game_dir) if game_dir is not None else {}
+        states = runtime_states(
+            (package for package in self.registry.packages if package.is_loader),
+            packages,
+            detected_capabilities(game_dir),
+        )
+        status: dict[str, dict[str, Any]] = {}
+        for package in self.registry.modloaders():
+            present, version = states.get(package.id, (False, ""))
+            latest = ""
+            try:
+                for release in self.github.releases(package):
+                    if self.github.install_assets(package, release):
+                        latest = str(release.version)
+                        break
+            except (ModManagerError, OSError, RuntimeError, ValueError):
+                latest = ""
+            status[package.id] = {
+                "id": package.id,
+                "installed": present,
+                "version": version,
+                "latest_version": latest,
+            }
+        return status
 
     def stale_suppressions(self) -> list[str]:
         """上一次 `installed()` / `verify_installed()` 里**已失效**的抑制条目。
@@ -174,7 +326,7 @@ class ModManagerService:
         `missing` = 文件不在。三者是不同的事实，界面上应该分开表达。
         """
         installer = self._installer_for(game_dir)
-        installer.reconcile(game_dir)
+        installer.reconcile(game_dir, modloaders=self._modloader_ids())
         report = installer.verify(game_dir)
         state = installer.state_store.load()
         self._annotate_integrity(state, game_dir, suppressed=suppressed, hashes=report["hashes"])
@@ -215,6 +367,20 @@ class ModManagerService:
         registry = self._require_registry()
         installer = self._installer_for(game_dir)
         return ExistingModsAdopter(self.github, installer).adopt(registry, game_dir)
+
+    def claim_detected_loader(self, package_id: str, game_dir: Path) -> bool:
+        """把磁盘上已经在场、记录里没有的这一个加载器登记进来。
+
+        加载器只在磁盘上时 `runtime_states` 照样报它在场，加载器页因此会给出卸载；交还整棵树与
+        代理文件靠的是记录里的顶层条目清单，所以卸载前先认领这一次。
+        """
+        registry = self._require_registry()
+        installer = self._installer_for(game_dir)
+        return bool(
+            ExistingModsAdopter(self.github, installer).adopt_detected_loader(
+                registry, game_dir, package_id
+            )
+        )
 
     def rename_managed_file(
             self,

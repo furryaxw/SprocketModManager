@@ -100,6 +100,89 @@ class StateStoreTests(unittest.TestCase):
                     ):
                         store.load()
 
+    def test_load_normalises_a_modloader_file_list_away(self):
+        """基础运行时的记录只留版本与目录：加载时把逐文件清单摘掉，包记录本身留着。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.write_state(
+                Path(temporary),
+                {
+                    "schema_version": 2,
+                    "packages": {
+                        "lavagang.melonloader": {
+                            "name": "MelonLoader",
+                            "repository": "LavaGang/MelonLoader",
+                            "version": "0.7.3",
+                            "requested": True,
+                            "install_mode": "standard",
+                            "dependencies": [],
+                            "kind": "modloader",
+                            "directories": ["MelonLoader"],
+                            "payload_files": [{"path": "version.dll", "sha256": "def"}],
+                            "files": [
+                                {
+                                    "path": "MelonLoader/net6/MelonLoader.dll",
+                                    "sha256": "abc",
+                                    "disabled": False,
+                                }
+                            ],
+                        }
+                    },
+                    "unowned": {},
+                },
+            )
+
+            state = store.load()
+
+            self.assertEqual(state["packages"]["lavagang.melonloader"]["files"], [])
+            self.assertEqual(state["files"], {}, "逐文件条目在加载时就摘干净")
+            self.assertEqual(state["packages"]["lavagang.melonloader"]["version"], "0.7.3")
+            self.assertEqual(
+                state["packages"]["lavagang.melonloader"]["payload_files"],
+                [{"path": "version.dll", "sha256": "def"}],
+                "顶层文件条目保留",
+            )
+            store.save(state)
+            raw = store.path.read_text(encoding="utf-8")
+            self.assertIn("lavagang.melonloader", raw, "包记录必须活下来")
+            self.assertIn("version.dll", raw, "顶层文件条目要落盘")
+            self.assertNotIn("MelonLoader/net6/MelonLoader.dll", raw)
+
+    def test_load_normalises_a_modloader_record_that_has_no_kind_field(self):
+        """既有记录不带 `kind`：调用方按包 id 报出加载器时同样归一。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.write_state(
+                Path(temporary),
+                {
+                    "schema_version": 2,
+                    "packages": {
+                        "lavagang.melonloader": {
+                            "name": "MelonLoader",
+                            "repository": "LavaGang/MelonLoader",
+                            "version": "0.7.3",
+                            "requested": True,
+                            "install_mode": "standard",
+                            "dependencies": [],
+                            "directories": ["MelonLoader"],
+                            "files": [
+                                {
+                                    "path": "MelonLoader/net6/MelonLoader.dll",
+                                    "sha256": "abc",
+                                    "disabled": False,
+                                }
+                            ],
+                        }
+                    },
+                    "unowned": {},
+                },
+            )
+
+            state = store.load(modloaders={"lavagang.melonloader"})
+
+            record = state["packages"]["lavagang.melonloader"]
+            self.assertEqual(record["kind"], "modloader")
+            self.assertEqual(record["files"], [])
+            self.assertEqual(state["files"], {})
+
     def test_load_rejects_non_object_state_and_package_records(self):
         cases = (
             None,

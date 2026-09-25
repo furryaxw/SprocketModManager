@@ -87,9 +87,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 .sidebar {
-    display: grid;
-    grid-template-rows: auto 1fr auto;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
+    min-height: 0;
     padding: 28px 16px 18px;
     border-right: 1px solid var(--line);
     background: var(--sidebar);
@@ -99,6 +100,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex: 0 0 auto;
     padding: 0 10px 28px;
 }
 
@@ -127,6 +129,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     display: grid;
     align-content: start;
     gap: 4px;
+    /* 导航吃掉品牌与页脚之间的全部高度：窗口不够高时它自己滚，别把页脚顶出屏幕。 */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .nav-item {
@@ -179,11 +185,12 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .sidebar-footer {
     display: grid;
     gap: 17px;
+    flex: 0 0 auto;
     padding: 18px 8px 0;
     border-top: 1px solid var(--line-soft);
 }
 
-/* 左下角环境：本机 Sprocket / MelonLoader 版本（在界面语言之上） */
+/* 左下角环境：本机 Sprocket 与各加载器的版本（在界面语言之上） */
 .environment {
     display: grid;
     gap: 5px;
@@ -235,7 +242,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     line-height: 1.3;
 }
 
-/* 未安装 MelonLoader 时，那一行就是「点击安装 MelonLoader」的链接：按钮保留键盘可达，长成链接。 */
+/* 一个加载器都没装时，那一行就是「安装加载器」的链接：按钮保留键盘可达，长成链接。 */
 .environment-install {
     padding: 0;
     border: 0;
@@ -257,6 +264,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     cursor: default;
 }
 
+/* 每个已装加载器一行「名字 版本」；没有加载器时这一块是空的。 */
+/* 行数不设上限就会把页脚顶出屏幕：限高约 5 行，多出来的自己滚。 */
+.environment-loaders {
+    display: grid;
+    gap: 5px;
+    max-height: calc(1.125rem * 5);
+    overflow-y: auto;
+}
+
 .language-control {
     display: grid;
     gap: 7px;
@@ -270,6 +286,34 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .language-control select {
     width: 100%;
+}
+
+/* 侧栏「上传日志」对话框：一项来源一行，管理器日志恒在第一行。 */
+.log-picker-list {
+    display: grid;
+    gap: 4px;
+}
+
+.log-picker-item {
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--surface-high);
+    color: var(--text-soft);
+    font-size: 0.75rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.log-picker-item:hover, .log-picker-item:focus-visible {
+    color: var(--text);
+    background: var(--surface-hover);
+}
+
+.log-picker-empty {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.6875rem;
 }
 
 .registry-state {
@@ -855,36 +899,55 @@ select option {
     overflow-wrap: anywhere;
 }
 
-.detail-facts {
+/* 详情块：事实、依赖/推荐、兼容性共用一套 dt/dd 行。 */
+.detail-block {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 15px;
     margin: 22px 0 0;
     border-top: 1px solid var(--line-soft);
 }
 
-.detail-facts div {
+.detail-block .detail-row {
     min-width: 0;
     padding: 13px 0;
     border-bottom: 1px solid var(--line-soft);
 }
 
-.detail-facts div:nth-child(odd) {
-    padding-right: 15px;
+/* 分组标题占满整行，三段内容因此读起来是一整块。 */
+.detail-block .detail-group {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin-top: 8px;
+    padding: 10px 0 4px;
 }
 
-.detail-facts dt {
+.detail-block dt {
     margin-bottom: 4px;
     color: var(--muted);
     font-size: 0.625rem;
     font-weight: 700;
 }
 
-.detail-facts dd {
+.detail-block .detail-group dt {
+    color: var(--text);
+    letter-spacing: 0.04em;
+}
+
+.detail-block dd {
     margin: 0;
     color: var(--text-soft);
     font-size: 0.75rem;
     line-height: 1.0625rem;
     overflow-wrap: anywhere;
+}
+
+.detail-block dd.pass {
+    color: #9adeae;
+}
+
+.detail-block dd.fail {
+    color: #f0a08f;
 }
 
 .dependency-section {
@@ -1240,14 +1303,6 @@ select option {
     text-align: right;
 }
 
-.component-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 22px;
-    min-height: 58px;
-}
-
 .field-note {
     margin: 9px 0 0;
     color: var(--muted);
@@ -1398,14 +1453,6 @@ select option {
 .component-state.missing, .component-state.error {
     border-color: rgba(204, 91, 84, 0.58);
     color: var(--danger);
-}
-
-.component-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
 }
 
 .form-actions {
@@ -1646,9 +1693,35 @@ select option {
     background: rgba(203, 153, 82, 0.08);
 }
 
+.loader-displace-warning {
+    margin-top: 6px;
+    padding: 6px 10px;
+    border: 1px solid rgba(203, 153, 82, 0.55);
+    border-radius: 4px;
+    color: #e0bd83;
+    background: rgba(203, 153, 82, 0.08);
+}
+
 .detail-readme {
-    padding-top: 20px;
+    margin-top: 20px;
+    padding-top: 16px;
     border-top: 1px solid var(--line);
+}
+
+.detail-readme > summary {
+    color: var(--text);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+.detail-readme > summary:hover {
+    color: var(--text-soft);
+}
+
+.detail-readme .readme-body {
+    margin-top: 14px;
 }
 
 .readme-status {
@@ -1837,7 +1910,7 @@ select option {
     color: #f0a08f;
 }
 
-/* 依赖与推荐并排；每一节里的条目一行一个。 */
+/* 依赖与推荐并排；每一节里的条目一行一个。加载器卡片用这一套。 */
 .detail-sections {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1854,31 +1927,6 @@ select option {
     color: var(--muted);
     font: 0.6875rem/1 "Cascadia Mono", Consolas, monospace;
     text-decoration: line-through;
-}
-
-.compatibility-section > strong {
-    display: block;
-    margin-top: 22px;
-    color: var(--muted);
-    font-size: 0.625rem;
-}
-
-.compatibility-facts {
-    margin-top: 8px;
-}
-
-.compatibility-facts div:nth-child(odd),
-.compatibility-facts div:nth-child(even) {
-    padding-right: 0;
-    padding-left: 0;
-}
-
-.compatibility-facts dd.pass {
-    color: #9adeae;
-}
-
-.compatibility-facts dd.fail {
-    color: #f0a08f;
 }
 
 /* 窄屏 / 大字号下并排会挤，退回上下排。 */
@@ -2060,14 +2108,6 @@ html.large-text .catalog-tools {
     grid-template-columns: auto minmax(260px, 1fr) 150px 150px;
 }
 
-html.large-text .component-row {
-    grid-template-columns: minmax(0, 1fr);
-}
-
-html.large-text .component-actions {
-    justify-content: flex-start;
-}
-
 html.large-text .detail-heading {
     grid-template-columns: minmax(0, 1fr);
 }
@@ -2209,5 +2249,84 @@ html.large-text .queue-message {
 
     .global-github-login {
         grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* 加载器页：一张卡 = 一个加载器包（版本、状态、动作，外加依赖/推荐/提供三块）。 */
+.modloader-list {
+    display: grid;
+    gap: 14px;
+}
+
+.modloader-card {
+    display: grid;
+    padding: 16px 17px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface);
+}
+
+.modloader-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 22px;
+}
+
+.modloader-summary {
+    min-width: 0;
+}
+
+.modloader-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.modloader-title > strong {
+    font-size: 0.9375rem;
+}
+
+.modloader-versions {
+    display: block;
+    margin-top: 7px;
+    color: var(--muted);
+    font: 0.6875rem/1.0625rem "Cascadia Mono", Consolas, monospace;
+}
+
+.modloader-description {
+    margin: 9px 0 0;
+    color: var(--muted);
+    font-size: 0.75rem;
+    line-height: 1.125rem;
+}
+
+.modloader-files {
+    display: block;
+    margin-top: 7px;
+    color: var(--text-soft);
+    font: 0.6875rem/1rem "Cascadia Mono", Consolas, monospace;
+}
+
+.modloader-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+/* 「提供」那一块横跨整张卡：类型与安装目录是这一页的重点。 */
+.modloader-card > .dependency-section:last-child {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line-soft);
+}
+
+@media (max-width: 760px) {
+    .modloader-header {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .modloader-actions {
+        justify-content: flex-start;
     }
 }

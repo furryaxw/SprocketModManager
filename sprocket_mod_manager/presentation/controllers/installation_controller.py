@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable, Iterable, cast
 
 from .base import ApiController
 from ..api_support import GamePathRequiredError
@@ -10,11 +10,11 @@ from ...application.install_queue import ACTIVE_STATES, InstallQueueEntry
 from ...application.preparer import PlanPreparer
 from ...application.private_install import prepare_private_package
 from ...application.service import ModManagerService
-from ...domain.compatibility import COMPATIBLE, Environment, release_verdict
+from ...domain.compatibility import COMPATIBLE, CapabilityEnvironment, release_verdict
 from ...domain.errors import ModManagerError
 from ...domain.models import RegistryPackage, ResolutionPlan
+from ...domain.semver import Version
 from ...infrastructure.config import effective_game_path
-from ...infrastructure.melonloader import MelonLoaderInstallation, MelonLoaderRelease
 from ...utilities.processes import sprocket_is_running, terminate_sprocket
 
 LOGGER = logging.getLogger(__name__)
@@ -28,55 +28,38 @@ class InstallationController(ApiController):
             raise GamePathRequiredError("valid Sprocket game path is required")
         return path
 
-    @staticmethod
-    def _melonloader_data(
-            installation: MelonLoaderInstallation,
-            release: MelonLoaderRelease | None,
-    ) -> dict[str, Any]:
-        installed_version = str(installation.version) if installation.version else None
-        latest_version = str(release.version) if release else None
-        return {
-            "installed": installation.installed,
-            "installed_version": installed_version,
-            "latest_version": latest_version,
-            "update_available": bool(
-                installation.installed
-                and installation.version is not None
-                and release is not None
-                and installation.version < release.version
-            ),
-            "page_url": release.page_url if release else "",
-            "asset_name": release.asset.name if release else "",
-            "asset_size": release.asset.size if release else 0,
-        }
-
     def get_environment(self, include_latest: bool = False) -> dict[str, Any]:
         """本机环境 + 环境自洽判定，以及监听线程维护的 `revision`。
 
         `revision` 变了就说明游戏目录里的东西（版本文件、加载器、Mods 目录）动过，界面该重画。
 
-        `include_latest` 顺带查一次最新 MelonLoader（HTTP 有缓存）：没装加载器时拿它当环境值，
-        否则「还没装」的机器永远看不出加载器跟游戏版本对不上。
+        `loaders` 每个加载器一条：装的是哪版、能装的最新版、判定用的那版。`include_latest`
+        决定要不要现去查最新版（HTTP 有缓存）；不查就用监听缓存里上次记下的那份，没记过就是空。
         """
         try:
             snapshot = self.environment_snapshot()
-            latest_version = snapshot.get("latest_loader")
+            latest_loaders = dict(snapshot.get("latest_loaders") or {})
             if include_latest:
-                fetched = self._latest_melonloader_version()
+                fetched = self._latest_loader_versions()
                 if fetched:
-                    self._environment_monitor.note_latest_loader(fetched)
+                    self._environment_monitor.note_latest_loaders(fetched)
                     snapshot = self.environment_snapshot()
-                    latest_version = fetched
-            melonloader = dict(snapshot.get("melonloader") or {})
-            used_version = melonloader.get("version") or latest_version
+                    latest_loaders = fetched
+            installed_loaders = dict(snapshot.get("loaders") or {})
+            loaders: dict[str, dict[str, Any]] = {}
+            for loader_id in sorted(set(installed_loaders) | set(latest_loaders)):
+                info = installed_loaders.get(loader_id) or {}
+                version = str(info.get("version") or "")
+                latest = str(latest_loaders.get(loader_id) or "")
+                loaders[loader_id] = {
+                    "installed": bool(info.get("installed")),
+                    "version": version or None,
+                    "latest_version": latest or None,
+                    "used_version": (version or latest) or None,
+                }
             return self._success(
                 sprocket=dict(snapshot.get("sprocket") or {}),
-                melonloader={
-                    "installed": bool(melonloader.get("installed")),
-                    "version": melonloader.get("version"),
-                    "latest_version": latest_version,
-                    "used_version": used_version,
-                },
+                loaders=loaders,
                 environment=self.environment_payload(),
                 sprocket_running=sprocket_is_running(self._game_path_or_none()),
                 revision=int(snapshot.get("revision") or 0),
@@ -84,17 +67,20 @@ class InstallationController(ApiController):
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             return self._failure(exc, code="environment_failed")
 
-    def _latest_melonloader_version(self) -> str | None:
+    def _latest_loader_versions(self) -> dict[str, str]:
+        """每个加载器能装的最新版；拉不到就跳过那个包，不抛给调用方。"""
         try:
             game_path = self._valid_game_path()
-            _installation, release = self.melonloader.status(
-                game_path, include_latest=True, refresh=False
-            )
+            status = self._current_service().modloader_status(game_path)
         except (ModManagerError, OSError, RuntimeError, ValueError):
-            return None
-        return str(release.version) if release else None
+            return {}
+        return {
+            loader_id: str(info.get("latest_version") or "")
+            for loader_id, info in status.items()
+            if info.get("latest_version")
+        }
 
-    def _current_environment(self) -> Environment:
+    def _current_environment(self) -> CapabilityEnvironment:
         return self.current_environment()
 
     def preferred_version(self, service: ModManagerService, package: RegistryPackage) -> str:
@@ -119,70 +105,176 @@ class InstallationController(ApiController):
                 return str(release.version)
         return str(releases[0].version) if releases else ""
 
-    def get_melonloader_status(
-            self,
-            include_latest: bool = True,
-            refresh: bool = False,
-    ) -> dict[str, Any]:
+    def get_modloaders(self) -> dict[str, Any]:
+        """注册表里所有加载器包：装没装、能不能更新、在当前环境下能不能跑。"""
         try:
-            installation, release = self.melonloader.status(
-                self._valid_game_path(),
-                include_latest=bool(include_latest),
-                refresh=bool(refresh),
-            )
+            service = self._current_service()
             return self._success(
-                melonloader=self._melonloader_data(installation, release)
+                modloaders=self._modloader_items(service, self._game_path_or_none())
+            )
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            return self._failure(exc, code="modloaders_failed")
+
+    @staticmethod
+    def _is_newer(latest: str, version: str) -> bool:
+        if not latest or not version:
+            return False
+        try:
+            return Version.parse(latest) > Version.parse(version)
+        except ValueError:
+            return False
+
+    def _modloader_item(
+            self,
+            service: ModManagerService,
+            package: RegistryPackage,
+            status: dict[str, Any],
+            installed_info: dict[str, Any],
+            environment: CapabilityEnvironment,
+    ) -> dict[str, Any]:
+        # 「装没装 / 哪一版」只认 `modloader_status`（`runtime_states` 一处给出的口径）：记录在案的
+        # 包与磁盘上检测到的运行时都在场，卡片和侧栏因此不会各说各话。
+        version = str(status.get("version") or "")
+        latest = str(status.get("latest_version") or "")
+        installed = bool(status.get("installed"))
+        compatible = "unknown"
+        try:
+            for release in service.github.releases(package):
+                if service.github.install_assets(package, release):
+                    compatible = release_verdict(
+                        environment,
+                        category=package.category,
+                        dependencies=release.dependencies,
+                    )
+                    break
+        except (ModManagerError, OSError, RuntimeError, ValueError):
+            compatible = "unknown"
+        files = [item for item in (installed_info.get("files") or ()) if isinstance(item, str)]
+        return {
+            "id": package.id,
+            "name": package.name,
+            "display_name": dict(package.display_name),
+            "description": dict(package.description),
+            "repository": package.repository,
+            "page_url": f"https://github.com/{package.repository}",
+            "category": package.category,
+            "tags": list(package.tags),
+            "installed": installed,
+            "installed_version": version,
+            "latest_version": latest,
+            "update_available": installed and self._is_newer(latest, version),
+            "compatible": compatible,
+            "supply": [
+                {"type": file_type, "directory": target}
+                for file_type, target in package.supply.items()
+            ],
+            "dependencies": [dict(item) for item in package.dependencies],
+            "recommendations": list(package.recommendations),
+            "files": len(files),
+        }
+
+    def _modloader_items(
+            self,
+            service: ModManagerService,
+            game_path: Path | None,
+            package_ids: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        registry = service.registry
+        if registry is None:
+            return []
+        wanted = set(package_ids) if package_ids is not None else None
+        status = service.modloader_status(game_path)
+        installed = service.installed(game_path) if game_path is not None else {}
+        environment = service.environment or self._current_environment()
+        return [
+            self._modloader_item(
+                service,
+                package,
+                status.get(package.id, {}),
+                installed.get(package.id, {}),
+                environment,
+            )
+            for package in registry.modloaders()
+            if wanted is None or package.id in wanted
+        ]
+
+    def _resolve_modloader(self, service: ModManagerService, identifier: str) -> RegistryPackage:
+        if service.registry is None:
+            raise RuntimeError("catalog is not loaded")
+        package = service.registry.resolve_identifier(str(identifier))
+        if not package.is_modloader:
+            raise ModManagerError(f"{package.id} is not a modloader")
+        return package
+
+    def install_modloader(self, identifier: str, refresh: bool = False) -> dict[str, Any]:
+        """按普通包的路子装一个加载器：解析 → 准备 → 应用，版本在解析时就钉死。
+
+        `refresh` 让这次解析绕过 Release 缓存重新拉一遍，其余时候用缓存。
+        """
+        try:
+            game_path = self._valid_game_path()
+            service = self._current_service()
+            package = self._resolve_modloader(service, identifier)
+            if refresh:
+                service.github.releases(package, refresh=True)
+            with self._state_lock:
+                if not self._loader_idle.is_set():
+                    raise RuntimeError("a modloader installation is already running")
+                if any(entry.state in ACTIVE_STATES for entry in self.install_queue.snapshot()):
+                    raise RuntimeError("wait for the mod install queue to finish before changing modloaders")
+                if not self._mutation_lock.acquire(blocking=False):
+                    raise RuntimeError("another game-directory operation is already running")
+                self._loader_idle.clear()
+            try:
+                service.install(
+                    package.id,
+                    game_path,
+                    version_range=self._version_range(service, package, None),
+                    progress=None,
+                )
+            finally:
+                self._loader_idle.set()
+                self._mutation_lock.release()
+            self._environment_monitor.invalidate()
+            items = self._modloader_items(service, game_path, [package.id])
+            item = items[0] if items else {}
+            return self._success(
+                modloader=item,
+                # 加载器不逐文件记账，写入数由这次安装自己报出来。
+                files_installed=getattr(service, "last_install_files", 0),
             )
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"
                 if isinstance(exc, GamePathRequiredError)
-                else "melonloader_status_failed"
+                else "modloader_install_failed"
             )
             return self._failure(exc, code=code)
 
-    def install_melonloader(self, refresh: bool = False) -> dict[str, Any]:
-        operation_started = False
+    def remove_modloader(self, identifier: str) -> dict[str, Any]:
         try:
             game_path = self._valid_game_path()
+            service = self._current_service()
+            package = self._resolve_modloader(service, identifier)
             with self._state_lock:
-                if not self._melonloader_idle.is_set():
-                    raise RuntimeError("a MelonLoader installation is already running")
+                if not self._loader_idle.is_set():
+                    raise RuntimeError("a modloader installation is already running")
                 if any(entry.state in ACTIVE_STATES for entry in self.install_queue.snapshot()):
-                    raise RuntimeError("wait for the mod install queue to finish before changing MelonLoader")
+                    raise RuntimeError("wait for the mod install queue to finish before changing modloaders")
                 if not self._mutation_lock.acquire(blocking=False):
                     raise RuntimeError("another game-directory operation is already running")
-                self._melonloader_idle.clear()
-                operation_started = True
             try:
-                result = self.melonloader.install(game_path, refresh=bool(refresh))
+                service.remove(package.id, game_path)
             finally:
-                if operation_started:
-                    self._melonloader_idle.set()
-                    self._mutation_lock.release()
-                    operation_started = False
-            installation = self.melonloader.detect(game_path)
+                self._mutation_lock.release()
             self._environment_monitor.invalidate()
-            # 装完立刻按新的加载器版本查一遍表：跟不上这个游戏就明确告诉调用方（界面据此提示）。
-            environment = self.environment_payload()
-            if environment["state"] == "conflict":
-                LOGGER.warning(
-                    "installed MelonLoader %s does not support Sprocket %s",
-                    installation.version,
-                    environment["sprocket"],
-                )
-            return self._success(
-                melonloader=self._melonloader_data(installation, result.release),
-                compatibility=environment,
-                files_installed=result.files_installed,
-                sha256=result.sha256,
-                publisher_verified=result.publisher_verified,
-            )
+            items = self._modloader_items(service, game_path, [package.id])
+            return self._success(modloader=items[0] if items else {})
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"
                 if isinstance(exc, GamePathRequiredError)
-                else "melonloader_install_failed"
+                else "modloader_remove_failed"
             )
             return self._failure(exc, code=code)
 
@@ -191,6 +283,38 @@ class InstallationController(ApiController):
         if service.registry is None:
             raise RuntimeError("catalog is not loaded")
         return service.registry.get(package_id)
+
+    def _displaced_loaders(
+            self,
+            service: ModManagerService,
+            package: RegistryPackage,
+            plan: ResolutionPlan,
+            installed: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """装这个包会让哪些已装加载器被交还：确认框先把它们列出来。
+
+        计划里的包不算：它们是这次要装的。判定与落盘前那次交还用同一个口径
+        （`capability_conflicts`），确认框里说会卸载的就是实际会卸载的。
+        """
+        if service.registry is None:
+            return []
+        installing = {item.package.id for item in plan.packages}
+        entries: list[dict[str, Any]] = []
+        for package_id in service.capability_conflicts(package.id, installed):
+            if package_id in installing:
+                continue
+            try:
+                other = service.registry.get(package_id)
+            except ModManagerError:
+                continue
+            info = installed.get(package_id) or {}
+            entries.append({
+                "id": other.id,
+                "name": other.name,
+                "display_name": dict(other.display_name),
+                "version": str(info.get("version") or ""),
+            })
+        return entries
 
     @staticmethod
     def _plan_data(
@@ -203,7 +327,7 @@ class InstallationController(ApiController):
             "display_name": dict(package.display_name),
             "name": package.name,
             "replaces_autotranslator": any(
-                item.package.install.get("mode") == "xunity-translation"
+                "xunity:translation" in item.package.replace_types()
                 for item in plan.packages
             ),
             "packages": [
@@ -269,7 +393,9 @@ class InstallationController(ApiController):
                 try:
                     if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
                            self._developer_server_entries()):
-                        _client, plan, _downloaders = self._private_resolution(package_id)
+                        _client, plan, _downloaders = self._private_resolution(
+                            package_id, frozenset(installed)
+                        )
                         root = plan.by_id()[package_id]
                         if not include_installed and installed.get(package_id, {}).get("version") == str(root.release.version):
                             skipped.append(package_id)
@@ -282,12 +408,15 @@ class InstallationController(ApiController):
                         package.id,
                         self._version_range(service, package, requested.get(package_id)),
                         pinned=True,
+                        installed=frozenset(installed),
                     )
                     root = plan.by_id()[package.id]
                     if not include_installed and installed.get(package.id, {}).get("version") == str(root.release.version):
                         skipped.append(package.id)
                         continue
-                    plans.append(self._plan_data(service, package, plan))
+                    data = self._plan_data(service, package, plan)
+                    data["displaces"] = self._displaced_loaders(service, package, plan, installed)
+                    plans.append(data)
                     resolved_plans.append((package, plan))
                 except (ModManagerError, OSError, ValueError) as exc:
                     self._record_failure(failed, package_id, exc)
@@ -310,6 +439,7 @@ class InstallationController(ApiController):
                             recommended.id,
                             self._version_range(service, recommended, requested.get(recommendation_id)),
                             pinned=True,
+                            installed=frozenset(installed),
                         )
                     except ModManagerError:
                         continue
@@ -326,7 +456,6 @@ class InstallationController(ApiController):
                 recommendations=list(recommendations.values()),
                 skipped=skipped,
                 failed=failed,
-                melonloader_installed=self.melonloader.detect(game_path).installed,
             )
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
@@ -339,22 +468,13 @@ class InstallationController(ApiController):
     def enqueue_install(
             self,
             package_ids: list[str],
-            allow_without_melonloader: bool = False,
             force_conflicts: bool = False,
             versions: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         try:
             game_path = self._valid_game_path()
-            if not self._melonloader_idle.is_set():
-                raise RuntimeError("wait for the MelonLoader installation to finish")
-            if (
-                    not self.melonloader.detect(game_path).installed
-                    and not bool(allow_without_melonloader)
-            ):
-                return self._failure(
-                    RuntimeError("MelonLoader is not installed"),
-                    code="melonloader_required",
-                )
+            if not self._loader_idle.is_set():
+                raise RuntimeError("wait for the modloader installation to finish")
             service = self._current_service()
             requested = {str(key): str(value) for key, value in (versions or {}).items()}
             installed = service.installed(game_path)
@@ -371,7 +491,12 @@ class InstallationController(ApiController):
                         continue
                     package = self._package(service, package_id)
                     version_range = self._version_range(service, package, requested.get(package_id))
-                    plan = service.resolve(package.id, version_range, pinned=True)
+                    plan = service.resolve(
+                        package.id,
+                        version_range,
+                        pinned=True,
+                        installed=frozenset(installed),
+                    )
                     root = plan.by_id()[package.id]
                     if installed.get(package.id, {}).get("version") != str(root.release.version):
                         eligible.append(package.id)
@@ -381,8 +506,8 @@ class InstallationController(ApiController):
             if not eligible and failed:
                 raise ModManagerError(self._failure_message(failed))
             with self._state_lock:
-                if not self._melonloader_idle.is_set():
-                    raise RuntimeError("wait for the MelonLoader installation to finish")
+                if not self._loader_idle.is_set():
+                    raise RuntimeError("wait for the modloader installation to finish")
                 added = self.install_queue.enqueue(
                     eligible,
                     game_path,
@@ -399,19 +524,11 @@ class InstallationController(ApiController):
             )
             return self._failure(exc, code=code)
 
-    def update_all(self, allow_without_melonloader: bool = False) -> dict[str, Any]:
+    def update_all(self) -> dict[str, Any]:
         try:
             game_path = self._valid_game_path()
-            if not self._melonloader_idle.is_set():
-                raise RuntimeError("wait for the MelonLoader installation to finish")
-            if (
-                    not self.melonloader.detect(game_path).installed
-                    and not bool(allow_without_melonloader)
-            ):
-                return self._failure(
-                    RuntimeError("MelonLoader is not installed"),
-                    code="melonloader_required",
-                )
+            if not self._loader_idle.is_set():
+                raise RuntimeError("wait for the modloader installation to finish")
             service = self._current_service()
             installed = service.installed(game_path)
             updates: list[str] = []
@@ -429,7 +546,12 @@ class InstallationController(ApiController):
                         continue
                     package = self._package(service, package_id)
                     version_range = self._version_range(service, package, None)
-                    plan = service.resolve(package.id, version_range, pinned=True)
+                    plan = service.resolve(
+                        package.id,
+                        version_range,
+                        pinned=True,
+                        installed=frozenset(installed),
+                    )
                     latest = plan.by_id()[package_id].release.version
                     if info.get("version") != str(latest):
                         updates.append(package_id)
@@ -437,8 +559,8 @@ class InstallationController(ApiController):
                 except (ModManagerError, OSError, ValueError) as exc:
                     self._record_failure(failed, package_id, exc)
             with self._state_lock:
-                if not self._melonloader_idle.is_set():
-                    raise RuntimeError("wait for the MelonLoader installation to finish")
+                if not self._loader_idle.is_set():
+                    raise RuntimeError("wait for the modloader installation to finish")
                 added = self.install_queue.enqueue(
                     updates, game_path, context=service, version_ranges=ranges
                 )
@@ -454,8 +576,8 @@ class InstallationController(ApiController):
     def remove(self, package_id: str) -> dict[str, Any]:
         try:
             with self._state_lock:
-                if not self._melonloader_idle.is_set():
-                    raise RuntimeError("wait for the MelonLoader installation to finish")
+                if not self._loader_idle.is_set():
+                    raise RuntimeError("wait for the modloader installation to finish")
                 if any(entry.state in ACTIVE_STATES for entry in self.install_queue.snapshot()):
                     raise RuntimeError("wait for the install queue to finish before removing packages")
                 if not self._mutation_lock.acquire(blocking=False):
@@ -478,6 +600,8 @@ class InstallationController(ApiController):
                 else:
                     package = self._package(service, str(package_id))
                     removed, warnings = service.remove(package.id, game_path)
+                # 交还加载器的树会改掉加载器清单：环境读数必须重来一次，否则左下角留着旧读数。
+                self._environment_monitor.invalidate()
             finally:
                 self._mutation_lock.release()
             return self._success(removed=removed, warnings=warnings)
@@ -515,32 +639,36 @@ class InstallationController(ApiController):
             else self._current_service()
         )
         with self._mutation_lock:
-            if any(
-                    entry.package_id.startswith(str(item.get("server_id", "")) + ":")
-                    for item in self._developer_server_entries()
-            ):
-                self._install_private_package(
-                    entry.package_id,
-                    entry.game_path,
-                    progress,
-                    force_conflicts=entry.force_conflicts,
-                )
-                return
-            if entry.force_conflicts:
-                service.install(
-                    entry.package_id,
-                    entry.game_path,
-                    version_range=entry.version_range,
-                    progress=progress,
-                    force_conflicts=True,
-                )
-            else:
-                service.install(
-                    entry.package_id,
-                    entry.game_path,
-                    version_range=entry.version_range,
-                    progress=progress,
-                )
+            try:
+                if any(
+                        entry.package_id.startswith(str(item.get("server_id", "")) + ":")
+                        for item in self._developer_server_entries()
+                ):
+                    self._install_private_package(
+                        entry.package_id,
+                        entry.game_path,
+                        progress,
+                        force_conflicts=entry.force_conflicts,
+                    )
+                    return
+                if entry.force_conflicts:
+                    service.install(
+                        entry.package_id,
+                        entry.game_path,
+                        version_range=entry.version_range,
+                        progress=progress,
+                        force_conflicts=True,
+                    )
+                else:
+                    service.install(
+                        entry.package_id,
+                        entry.game_path,
+                        version_range=entry.version_range,
+                        progress=progress,
+                    )
+            finally:
+                # 队列装的可能就是加载器：装完环境读数必须重来一次。
+                self._environment_monitor.invalidate()
 
     def _install_private_package(
             self,
@@ -552,7 +680,9 @@ class InstallationController(ApiController):
     ) -> None:
         service = self._current_service()
         if service.registry is not None:
-            _client, plan, downloaders = self._private_resolution(package_id)
+            _client, plan, downloaders = self._private_resolution(
+                package_id, frozenset(service.installed(game_path))
+            )
             prepared = PlanPreparer(
                 self.config_store.app_dir,
                 service.http,

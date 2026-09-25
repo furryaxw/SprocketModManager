@@ -20,9 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sprocket_mod_manager.application.service import ModManagerService  # noqa: E402
 from sprocket_mod_manager.domain.registry import Registry  # noqa: E402
 from sprocket_mod_manager.infrastructure.config import ConfigStore  # noqa: E402
+from sprocket_mod_manager.infrastructure.state import StateStore  # noqa: E402
 from sprocket_mod_manager.presentation.web_gui import ClientApi  # noqa: E402
 
 from test_adoption import FIXTURE_MOD, package  # noqa: E402
+
+
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：扫描 `Mods` 之前得先检测到运行时。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
 
 
 class DiskTruthTests(unittest.TestCase):
@@ -33,6 +41,7 @@ class DiskTruthTests(unittest.TestCase):
         game = root / "game"
         (game / "Mods").mkdir(parents=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
         ConfigStore(app_dir).save({"language": "zh", "game_path": str(game), "index_url": ""})
         service = ModManagerService(app_dir)
@@ -162,6 +171,35 @@ class DiskTruthTests(unittest.TestCase):
                              "抑制状态存在**游戏目录**的 suppression.json 里，不进安装记录")
             listing = game / "SprocketModManager" / "suppression.json"
             self.assertTrue(listing.is_file(), "名单跟状态一起留在游戏目录（AppData 只放管理器自己的配置）")
+
+    def test_a_fileless_modloader_is_neither_corrupted_nor_missing(self) -> None:
+        """基础运行时不记逐文件哈希：完整性判定与 `verify` 都不许把它算成损坏或缺文件。"""
+        with tempfile.TemporaryDirectory() as directory:
+            api, game, _service = self._api(Path(directory))
+            try:
+                store = StateStore(game / "SprocketModManager" / "installed.json")
+                state = store.load()
+                state["packages"]["lavagang.melonloader"] = {
+                    "id": "lavagang.melonloader",
+                    "name": "MelonLoader",
+                    "version": "0.7.3",
+                    "requested": True,
+                    "kind": "modloader",
+                    "files": [],
+                    "directories": ["MelonLoader"],
+                }
+                store.save(state)
+
+                installed = api.get_installed()
+                verified = api.verify_installed()
+            finally:
+                api.install_queue.close()
+
+        loader = next(item for item in installed["installed"] if item["id"] == "lavagang.melonloader")
+        self.assertFalse(loader["corrupted"], "加载器没有逐文件哈希，不许报损坏")
+        self.assertEqual(loader["integrity"], "local")
+        self.assertEqual(verified["corrupted"], [])
+        self.assertEqual(verified["missing"], [])
 
     def test_suppression_survives_disable_and_enable(self) -> None:
         """抑制键跟着身份走，禁用/启用（`.dll` ↔ `.dll.disable`）不会丢。"""

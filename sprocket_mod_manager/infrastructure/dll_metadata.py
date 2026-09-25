@@ -223,6 +223,18 @@ def read_dll_metadata(path: str | os.PathLike[str]) -> DllMetadata:
                 close()
 
 
+def pe_file_version(path: str | os.PathLike[str]) -> str | None:
+    """PE 资源里的 `VS_FIXEDFILEINFO` 版本（`major.minor.patch`）；读不出来返回 `None`。
+
+    运行时检测只需要「这个 DLL 是哪版」，不需要完整解析程序集，所以单独开这一条读法；
+    修订号省掉，运行时的版本写法就是三段。
+    """
+    version = _read_fixed_file_version(Path(path), [])
+    if not version:
+        return None
+    return ".".join(version.split(".")[:3])
+
+
 def _open_pe(path: Path, errors: list[str]) -> object | None:
     try:
         return dnfile.dnPE(str(path))
@@ -254,7 +266,7 @@ def _read_assembly_identity(net: object, errors: list[str]) -> tuple[str | None,
 def _read_melon_kind(net: object, errors: list[str]) -> str | None:
     """按 TypeDef.Extends 继承链判断 MelonMod / MelonPlugin。
 
-    与 `scanner.classify_managed_dll` 的判据一致，但这里是独立实现：本模块不改 scanner，
+    与 `scanner.classify_dll_type` 的判据一致，但这里是独立实现：本模块不改 scanner，
     而且需要在已经打开的 PE 上复用（避免二次解析）。
     """
     table = getattr(getattr(net, "mdtables", None), "TypeDef", None)
@@ -952,6 +964,7 @@ __all__ = [
     "configure_metadata_cache",
     "flush_metadata_cache",
     "melon_info_description",
+    "pe_file_version",
     "read_cached_metadata",
     "read_dll_metadata",
 ]

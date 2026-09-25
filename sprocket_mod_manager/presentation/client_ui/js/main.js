@@ -40,12 +40,7 @@ function wireEvents() {
     $("#github-proxy-enabled").addEventListener("change", syncProxyControls);
     $("#add-developer-server").addEventListener("click", addDeveloperServer);
     $("#github-login-button").addEventListener("click", handleGithubAuth);
-    $("#melonloader-action").addEventListener("click", handleMelonLoaderAction);
-    $("#environment-install-melonloader").addEventListener("click", handleMelonLoaderAction);
-    $("#open-melonloader-release").addEventListener("click", () => {
-        openUrl(state.melonloader?.page_url || state.links.melonloader);
-    });
-    $("#upload-latest-log").addEventListener("click", uploadLatestLog);
+    $("#environment-install-loader").addEventListener("click", () => void showPage("modloaders"));
     $("#kill-sprocket").addEventListener("click", () => void killRunningSprocket());
     $("#text-scale").addEventListener("input", (event) => {
         applyTextScale(event.target.value);
@@ -62,7 +57,7 @@ function wireEvents() {
     $("#open-repository").addEventListener("click", () => openUrl(state.links.repository));
     $("#open-registry").addEventListener("click", () => openUrl(state.links.registry));
     $("#open-manager-directory").addEventListener("click", openManagerDirectory);
-    $("#upload-manager-log").addEventListener("click", uploadManagerLog);
+    $("#upload-logs").addEventListener("click", () => void openLogPicker());
     $("#modal-close").addEventListener("click", () => closeModal(false));
     $("#modal-cancel").addEventListener("click", () => closeModal(false));
     $("#modal-confirm").addEventListener("click", () => closeModal(true));
@@ -70,7 +65,8 @@ function wireEvents() {
         if (event.target === $("#modal-layer") && state.modalCloseOnBackdrop !== false) closeModal(false);
     });
     document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && !$("#modal-layer").hidden) closeModal(false);
+        if (event.key !== "Escape") return;
+        if (!$("#modal-layer").hidden) closeModal(false);
     });
 }
 
@@ -111,7 +107,9 @@ async function initialize() {
         await pollQueue(true);
         traceStartup("initial queue loaded");
         void detectGamePathPlaceholder();
-        void loadCatalog(false);
+        // 注册表随目录一起加载，加载器清单由它给出：目录回来后再读一次环境，左下角才不会
+        // 停在启动时那份「还没有注册表」的读数上。
+        void loadCatalog(false).then(() => refreshEnvironment(false));
         window.setTimeout(() => {
             void checkManagerUpdate(true);
         }, 350);

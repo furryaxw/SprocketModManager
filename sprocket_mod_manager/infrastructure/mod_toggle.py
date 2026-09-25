@@ -15,8 +15,9 @@ from ..domain.errors import ModToggleError
 DISABLE_SUFFIX = ".disable"
 DLL_SUFFIX = ".dll"
 
-# MelonLoader 只会把 Mods / Plugins 里的程序集当作模组加载；UserLibs 是可被引用的库，
-# 就地改名可能破坏依赖它的模组，所以切换只允许这两个根目录。
+# MelonLoader 在没有桥接加载器时把 Mods / Plugins 里的程序集当作模组加载；UserLibs 是可以被
+# 引用的库，就地改名可能破坏依赖它的模组。标识符激活后给出的目录（桥接加载器的 `MLLoader/Mods`
+# 等）取代这份默认名单，判据仍然是「标识符声明这个类型可切换」。
 TOGGLE_ROOTS = ("Mods", "Plugins")
 
 
@@ -76,11 +77,32 @@ def find_disabled_dlls(directory: Path) -> list[Path]:
     return sorted(found, key=lambda item: str(item).casefold())
 
 
+def directory_prefix(relative: str) -> tuple[str, ...]:
+    """相对路径里文件所在的目录（`Mods/X.dll` -> `("Mods",)`）。"""
+    parts = tuple(part for part in str(relative).replace("\\", "/").split("/") if part)
+    return parts[:-1]
+
+
+def is_in_roots(relative: str, roots: Sequence[str]) -> bool:
+    """`relative` 是否落在某个允许目录之下。
+
+    单段目录（`Mods`）覆盖它下面的所有层级，多段目录（`MLLoader/Mods`）按整段前缀匹配：
+    目录名单由标识符给出，桥接加载器的目录就在游戏根的下一层。
+    """
+    directory = directory_prefix(relative)
+    for root in roots:
+        root_parts = tuple(part for part in str(root).replace("\\", "/").split("/") if part)
+        if root_parts and directory[: len(root_parts)] == root_parts:
+            return True
+    return False
+
+
 def resolve_mod_path(game_path: Path, path: str, roots: Sequence[str] = TOGGLE_ROOTS) -> Path:
     """把 CLI/GUI 传来的相对路径解析成游戏目录内的 DLL 路径。
 
-    绝对路径、``..``、非 ``Mods`` / ``Plugins`` 根目录以及非 ``.dll`` / ``.dll.disable``
-    文件名一律抛 :class:`ModToggleError`。
+    绝对路径、``..``、不在允许目录下的路径以及非 ``.dll`` / ``.dll.disable`` 文件名一律抛
+    :class:`ModToggleError`。``roots`` 是允许的目录名单，默认是 MelonLoader 没有桥接时的
+    `Mods` / `Plugins`；调用方用标识符算出来的可切换目录替换它。
     """
     if not path or not str(path).strip():
         raise ModToggleError("缺少模组路径")
@@ -92,11 +114,11 @@ def resolve_mod_path(game_path: Path, path: str, roots: Sequence[str] = TOGGLE_R
 
     target = game_root / relative
     try:
-        parts = target.relative_to(game_root).parts
+        target.relative_to(game_root)
     except ValueError as exc:
         raise ModToggleError("模组路径越出游戏目录") from exc
-    if not parts or parts[0] not in roots:
-        raise ModToggleError("只能切换 Mods / Plugins 下的 DLL")
+    if not is_in_roots(relative.as_posix(), roots):
+        raise ModToggleError("只能切换受管目录下的 DLL")
     if not is_disabled_path(target) and not is_loadable_path(target):
         raise ModToggleError(f"只能切换 .dll 或 .dll.disable 文件：{target.name}")
     return target

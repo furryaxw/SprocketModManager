@@ -80,15 +80,12 @@ async function beginInstall(packageIds, presetVersions = null) {
         setStatus("", "ready");
         return;
     }
-    const loaderDecision = await ensureMelonLoader(Boolean(result.melonloader_installed));
-    if (!loaderDecision.proceed) return;
     const queued = await callApi(
         "enqueue_install",
         [
             ...planState.plans.map((plan) => plan.id),
             ...planState.recommendedSelection,
         ],
-        loaderDecision.allowWithout,
         false,
         planState.versions,
     );
@@ -586,18 +583,15 @@ function newVersionChip(version) {
 }
 
 /**
- * 「有更新但不兼容」那句话：按已知的轴拼出来 —— 只知道游戏就只说游戏，两个都知道才用「和」。
+ * 「有更新但不兼容」那句话：按已知的环境轴拼出来 —— 哪一轴有值就说哪一轴，
+ * 一轴都没有就退到不点名环境的说法。
  *
- * 拼法（与设计一致）：`有更新（{版本}），但不兼容你的 ` + `Sprocket {}` + `和` + `MelonLoader {}`。
+ * 拼法（与设计一致）：`有更新（{版本}），但不兼容你的 ` + `Sprocket {}` + `和` + 各个加载器。
  */
 function incompatibleUpdateText(version) {
-    const sprocket = state.environment?.sprocket?.version || state.environment?.sprocket?.raw || "";
-    const loader = state.environment?.melonloader?.used_version || "";
-    const parts = [];
-    if (sprocket) parts.push(tr("environmentAxisSprocket", {version: sprocket}));
-    if (loader) parts.push(tr("environmentAxisMelonLoader", {version: loader}));
-    if (!parts.length) return tr("incompatibleUpdateUnknown", {version});
-    return tr("incompatibleUpdateHead", {version}) + parts.join(tr("environmentAxisAnd"));
+    const axes = environmentAxesText();
+    if (!axes) return tr("incompatibleUpdateUnknown", {version});
+    return tr("incompatibleUpdateHead", {version}) + axes;
 }
 
 /**
@@ -859,9 +853,7 @@ async function updateSelectedMods() {
         setStatus("", "ready");
         return;
     }
-    const loaderDecision = await ensureMelonLoader(null);
-    if (!loaderDecision.proceed) return;
-    const result = await callApi("enqueue_install", ids, loaderDecision.allowWithout, false, versions);
+    const result = await callApi("enqueue_install", ids, false, versions);
     if (!result.ok) {
         resultError(result);
         return;
@@ -1006,7 +998,7 @@ function renderQueue() {
                     destructive: true,
                 });
                 if (!confirmed) return;
-                const result = await callApi("enqueue_install", [entry.package_id], true, true);
+                const result = await callApi("enqueue_install", [entry.package_id], true);
                 if (!result.ok) resultError(result);
                 await pollQueue(true);
             });
@@ -1018,7 +1010,7 @@ function renderQueue() {
             retry.textContent = tr("retry");
             retry.addEventListener("click", async () => {
                 retry.disabled = true;
-                const result = await callApi("enqueue_install", [entry.package_id], true);
+                const result = await callApi("enqueue_install", [entry.package_id]);
                 if (!result.ok) resultError(result);
                 await pollQueue(true);
             });
@@ -1044,7 +1036,7 @@ async function pollQueue(force = false) {
         const newlyCompleted = state.queue.some((entry) => entry.state === "completed" && previous.get(entry.task_id) !== "completed");
         const newlyFailed = state.queue.find((entry) => entry.state === "failed" && previous.get(entry.task_id) !== "failed");
         renderQueue();
-        renderMelonLoader();
+        renderModloaders();
         updatePageHeader();
         // 队列跑没跑完也是状态栏要看的活状态。
         renderStatusbar();

@@ -11,14 +11,15 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
+
+from .manager_paths import state_file_path
 
 LOGGER = logging.getLogger(__name__)
 
 GAME_VERSION_PATH = Path("Sprocket_Data") / "globalgamemanagers"
-LOADER_PROXY = "version.dll"
-LOADER_ROOT = "MelonLoader"
-MOD_DIRECTORIES = ("Mods", "Plugins", "UserLibs")
+# 没配好游戏路径或调用方没给目录名单时的兜底：几个运行时的传统根目录。
+MOD_DIRECTORIES = ("Mods", "Plugins", "UserLibs", "BepInEx")
 
 Fingerprint = tuple[Any, ...]
 
@@ -45,20 +46,26 @@ def mod_directory_signature(directory: Path) -> tuple[Any, ...]:
         return ()
 
 
-def game_environment_fingerprint(game_path: Path | None) -> Fingerprint:
-    """游戏目录里会影响环境的那些路径的指纹；没配好路径时是个空指纹。"""
+def game_environment_fingerprint(
+        game_path: Path | None,
+        directories: Sequence[str] = MOD_DIRECTORIES,
+) -> Fingerprint:
+    """游戏目录里会影响环境的那些路径的指纹；没配好路径时是个空指纹。
+
+    安装记录文件也在里面：加载器是否装上以那条记录为准，记录一变环境读数就要重来。
+    目录名单由调用方给出（活跃标识符的目录），桥接加载器的 `MLLoader/Mods` 也在其中，
+    所以那里出现一个模组会改动指纹。
+    """
     if game_path is None:
         return ()
     root = Path(game_path)
-    signature: list[Any] = [str(root), _stat_signature(root / GAME_VERSION_PATH), _stat_signature(root / LOADER_PROXY)]
-    loader_root = root / LOADER_ROOT
-    try:
-        cores = sorted(_stat_signature(path) for path in loader_root.glob("net*/MelonLoader.dll"))
-    except OSError:
-        cores = []
-    signature.append(tuple(cores))
+    signature: list[Any] = [
+        str(root),
+        _stat_signature(root / GAME_VERSION_PATH),
+        _stat_signature(state_file_path(root)),
+    ]
     signature.extend(
-        (name, mod_directory_signature(root / name)) for name in MOD_DIRECTORIES
+        (name, mod_directory_signature(root / name)) for name in directories
     )
     return tuple(signature)
 
@@ -80,7 +87,7 @@ class EnvironmentMonitor:
         self._silence = silence
         self._lock = threading.Lock()
         self._payload: dict[str, Any] | None = None
-        self._latest_loader: str | None = None
+        self._latest_loaders: dict[str, str] = {}
         self._revision = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -91,7 +98,7 @@ class EnvironmentMonitor:
                 self._payload = self._read_safely()
             return {
                 **self._payload,
-                "latest_loader": self._latest_loader,
+                "latest_loaders": dict(self._latest_loaders),
                 "revision": self._revision,
             }
 
@@ -101,12 +108,13 @@ class EnvironmentMonitor:
             self._payload = None
             self._revision += 1
 
-    def note_latest_loader(self, version: str) -> None:
-        """记下「最新可用的 MelonLoader 版本」，未安装时用它当环境值。"""
+    def note_latest_loaders(self, mapping: Mapping[str, str]) -> None:
+        """记下每个加载器最新可用的版本；未安装时用它当环境值。"""
+        cleaned = {str(key): str(value) for key, value in mapping.items() if value}
         with self._lock:
-            if self._latest_loader == version:
+            if self._latest_loaders == cleaned:
                 return
-            self._latest_loader = version
+            self._latest_loaders = cleaned
             self._revision += 1
 
     def start(self) -> None:
@@ -126,7 +134,7 @@ class EnvironmentMonitor:
             return self._read()
         except Exception:  # noqa: BLE001 - 监听线程和接口都不能因为一次读取失败而倒下
             LOGGER.exception("environment read failed")
-            return {"sprocket": {}, "melonloader": {"installed": False, "version": None}}
+            return {"sprocket": {}, "loaders": {}}
 
     def _safe_fingerprint(self) -> Fingerprint:
         try:

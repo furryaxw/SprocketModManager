@@ -21,6 +21,13 @@ from sprocket_mod_manager.presentation.web_gui import ClientApi  # noqa: E402
 from test_adoption import FIXTURE_MOD  # noqa: E402
 
 
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：`Mods` / `Plugins` / `UserLibs` 要被切换就得先检测到它。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
+
 class PackageWideToggleTests(unittest.TestCase):
     def _api(self, root: Path) -> tuple[ClientApi, Path]:
         app_dir = root / "app"
@@ -28,6 +35,7 @@ class PackageWideToggleTests(unittest.TestCase):
         for kind in ("Mods", "Plugins", "UserLibs"):
             (game / kind).mkdir(parents=True, exist_ok=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "Alpha.dll")
         shutil.copyfile(FIXTURE_MOD, game / "Plugins" / "Beta.dll")
         shutil.copyfile(FIXTURE_MOD, game / "UserLibs" / "Lib.dll")

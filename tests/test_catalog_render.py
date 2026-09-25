@@ -17,6 +17,27 @@ HARNESS = Path(__file__).resolve().parent / "fixtures" / "client_ui" / "render_c
 CLIENT_UI = Path(__file__).resolve().parent.parent / "sprocket_mod_manager" / "presentation" / "client_ui"
 NODE = shutil.which("node")
 
+LOADER_ID = "lavagang.melonloader"
+
+
+def loader_modloader() -> dict:
+    """加载器目录里的一条：逐轴标签要按这里给的本地化名字来显示。"""
+    return {
+        "id": LOADER_ID,
+        "name": "MelonLoader",
+        "display_name": {"en": "MelonLoader", "zh": "MelonLoader"},
+        "description": {"en": "Mod loader.", "zh": "模组加载器。"},
+        "installed": True,
+        "installed_version": "0.7.3",
+        "latest_version": "0.7.3",
+        "update_available": False,
+        "compatible": "compatible",
+        "supply": [{"type": "melonloader:core", "directory": "{Sprocket}"}],
+        "dependencies": [],
+        "recommendations": [],
+        "files": 131,
+    }
+
 
 def package(
         package_id: str,
@@ -25,7 +46,7 @@ def package(
         inherited_from: str = "",
         category: str = "utility",
         sprocket_range: str = "",
-        melonloader_range: str = "",
+        loader_range: str = "",
 ) -> dict:
     latest_version, latest_verdict = releases[0]
     return {
@@ -58,29 +79,29 @@ def package(
                 # 逐轴结果与两组声明区间只挂在最新那版上（详情页要用）。
                 "dependencies": [
                     *(
-                        [{"id": "environment.sprocket", "version": sprocket_range}]
+                        [{"id": "hamish.sprocket", "version": sprocket_range}]
                         if index == 0 and sprocket_range
                         else []
                     ),
                     *(
-                        [{"id": "environment.melonloader", "version": melonloader_range}]
-                        if index == 0 and melonloader_range
+                        [{"id": LOADER_ID, "version": loader_range}]
+                        if index == 0 and loader_range
                         else []
                     ),
                 ],
                 "axes": (
                     [
                         {
-                            "id": "environment.sprocket",
+                            "id": "hamish.sprocket",
                             "declared": sprocket_range,
                             "local": "0.2.53.2",
                             "satisfied": None if not sprocket_range else latest_verdict == "compatible",
                         },
                         {
-                            "id": "environment.melonloader",
-                            "declared": melonloader_range,
+                            "id": LOADER_ID,
+                            "declared": loader_range,
                             "local": "0.7.3",
-                            "satisfied": None if not melonloader_range else latest_verdict == "compatible",
+                            "satisfied": None if not loader_range else latest_verdict == "compatible",
                         },
                     ]
                     if index == 0
@@ -101,13 +122,22 @@ def environment(
 ) -> dict:
     return {
         "sprocket": {"state": state, "version": sprocket, "raw": sprocket, "detail": ""},
-        "melonloader": {
-            "installed": installed,
-            "version": "0.7.3" if installed else None,
-            "latest_version": "0.7.3",
-            "used_version": "0.7.3",
+        "loaders": {
+            LOADER_ID: {
+                "installed": installed,
+                "version": "0.7.3" if installed else None,
+                "latest_version": "0.7.3",
+                "used_version": "0.7.3",
+            },
         },
-        "environment": {"state": "conflict" if conflict else "ok", "entry": None, "table_source": "registry"},
+        "environment": {
+            "state": "conflict" if conflict else "ok",
+            "entry": None,
+            "loader": LOADER_ID if conflict else "",
+            "table_source": "registry",
+            "sprocket": sprocket,
+            "loaders": {LOADER_ID: "0.7.3"} if installed else {},
+        },
         "revision": 1,
     }
 
@@ -122,10 +152,18 @@ def _walk(node) -> list[dict]:
     return found
 
 
+def _detail_block(result: dict) -> dict:
+    """详情页那一块：事实、依赖/推荐、兼容性共用的容器。"""
+    return next(
+        child for child in result["detail"]["children"] if child["className"] == "detail-block"
+    )
+
+
 class CatalogRenderHarnessTests(unittest.TestCase):
     def _render(self, **payload) -> dict:
         payload.setdefault("packages", [])
         payload.setdefault("environment", environment())
+        payload.setdefault("modloaders", [loader_modloader()])
         with tempfile.TemporaryDirectory() as directory:
             payload_path = Path(directory) / "payload.json"
             payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -167,6 +205,20 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertFalse(result["notice"]["hidden"], "隐藏了东西就要说明")
         self.assertIn("1 mods hidden as incompatible", " ".join(self._texts(result["notice"])))
         self.assertEqual(result["toggle"]["text"], "Show incompatible")
+
+    def test_a_modloader_is_not_listed_in_the_mod_catalog(self) -> None:
+        """基础运行时归加载器页：模组目录不列它（桥接/翻译/补丁仍留在目录）。"""
+        result = self._render(
+            packages=[
+                package("test.mod", [("1.0.0", "compatible")]),
+                {**package("lavagang.melonloader", [("0.7.3", "compatible")]), "kind": "modloader"},
+            ],
+        )
+
+        self.assertEqual(result["count"], "1", "只算模组")
+        ids = " ".join(text for row in result["rows"] for text in self._texts(row))
+        self.assertIn("test.mod", ids)
+        self.assertNotIn("lavagang.melonloader", ids)
 
     def test_the_toggle_brings_the_hidden_package_back(self) -> None:
         result = self._render(
@@ -233,22 +285,22 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertIn("test.translation", visible)
         self.assertNotIn("test.dep", visible, "非翻译包不进翻译列表")
 
-    def test_the_detail_page_shows_the_concrete_compatibility_facts(self) -> None:
+    def test_the_detail_page_merges_the_facts_dependencies_and_compatibility(self) -> None:
         result = self._render(
             packages=[package(
                 "test.fine",
                 [("2.0.0", "compatible")],
                 sprocket_range=">=0.2.53.0 <0.2.54.0",
-                melonloader_range=">=0.7.3 <=0.7.3",
+                loader_range=">=0.7.3 <=0.7.3",
             )],
             selected="test.fine",
         )
 
-        sections = [child["className"] for child in result["detail"]["children"]]
-        self.assertEqual(sections[-1], "compatibility-section", "挂在依赖/推荐那一排下面")
-        self.assertIn("detail-sections", sections, "依赖与推荐并排")
-        section = result["detail"]["children"][-1]
-        text = " ".join(node["text"] or "" for node in _walk(section))
+        block = _detail_block(result)
+        text = " ".join(node["text"] or "" for node in _walk(block))
+        self.assertIn("MIT", text, "事实在块里")
+        self.assertIn("DEPENDENCIES", text)
+        self.assertIn("RECOMMENDED MODS", text)
         self.assertIn("COMPATIBILITY", text)
         self.assertIn("Sprocket", text)
         self.assertIn(">=0.2.53.0 <0.2.54.0", text, "声明原文要摆出来")
@@ -256,6 +308,45 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertIn("MelonLoader", text)
         self.assertIn("this machine: 0.7.3", text)
         self.assertNotIn("Compatible", text, "兼容是默认状态，不再单独写一行")
+
+    def test_the_detail_block_carries_fact_dependency_and_compatibility_rows(self) -> None:
+        source = package("test.source", [("1.0.0", "compatible")], sprocket_range="0.2.53.x")
+        source["dependencies"] = [{"id": "test.dep", "version": ">=1.0.0"}]
+        source["recommendations"] = ["test.dep"]
+        result = self._render(
+            packages=[source, package("test.dep", [("1.0.0", "compatible")])],
+            selected="test.source",
+        )
+
+        block = _detail_block(result)
+        rows = [
+            " ".join(node["text"] or "" for node in _walk(row))
+            for row in _walk(block)
+            if row["className"] == "detail-row"
+        ]
+        self.assertTrue(any("MIT" in row for row in rows), "事实自己占一行")
+        self.assertTrue(any(">=1.0.0" in row for row in rows), "依赖自己占一行")
+        self.assertTrue(any("0.2.53.x" in row for row in rows), "兼容性自己占一行")
+        groups = [
+            next(node["text"] for node in _walk(group) if node["tag"] == "dt")
+            for group in _walk(block)
+            if group["className"] == "detail-group"
+        ]
+        self.assertEqual(groups, ["DEPENDENCIES", "RECOMMENDED MODS", "COMPATIBILITY"], "三段的标签都在块里")
+
+    def test_the_readme_starts_collapsed_and_opens_on_demand(self) -> None:
+        packages = [package("test.fine", [("1.0.0", "compatible")])]
+        collapsed = self._render(packages=packages, selected="test.fine")
+
+        details = collapsed["readme"]["default"]
+        self.assertEqual(details["tag"], "details")
+        self.assertFalse(details["open"], "说明默认收起")
+        self.assertEqual(details["summary"], "README")
+        self.assertIn("Loading README", details["text"], "正文照常读取，只是收在 details 里")
+
+        opened = self._render(packages=packages, selected="test.fine", open_readme=True)
+        self.assertFalse(opened["readme"]["default"]["open"])
+        self.assertTrue(opened["readme"]["opened"]["open"], "展开只发生在用户点开那一下")
 
     def test_an_incompatible_release_says_so_in_the_facts(self) -> None:
         result = self._render(
@@ -266,9 +357,9 @@ class CatalogRenderHarnessTests(unittest.TestCase):
             show_incompatible=True,
         )
 
-        section = result["detail"]["children"][-1]
-        text = " ".join(node["text"] or "" for node in _walk(section))
-        tones = [node["className"] for node in _walk(section) if node["className"]]
+        block = _detail_block(result)
+        text = " ".join(node["text"] or "" for node in _walk(block))
+        tones = [node["className"] for node in _walk(block) if node["className"]]
         self.assertIn("Incompatible", text, "不兼容才把判定摆出来")
         self.assertIn("fail", tones)
 
@@ -278,18 +369,17 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         source["recommendations"] = ["test.unknown", "test.absent"]
         result = self._render(packages=[source, target], selected="test.source")
 
-        lines = [
-            node for node in _walk(result["detail"]) if node["className"] == "dependency-line"
+        block = _detail_block(result)
+        rows = [
+            " ".join(node["text"] or "" for node in _walk(row))
+            for row in _walk(block)
+            if row["className"] == "detail-row"
         ]
-        texts = [" ".join(child["text"] or "" for child in line["children"]) for line in lines]
-        self.assertIn("test.unknown", texts, "认得出来的包只写名称")
-        self.assertIn("test.absent", texts, "认不出来的包写 id")
-        for line in lines:
-            for name in ("test.unknown", "test.absent"):
-                if name not in texts[lines.index(line)]:
-                    continue
-                # 同一个 id 在一行里只出现一次。
-                self.assertEqual(texts[lines.index(line)].count(name), 1)
+        for name in ("test.unknown", "test.absent"):
+            matching = [row for row in rows if name in row]
+            self.assertEqual(len(matching), 1, name)
+            # 同一个 id 在一行里只出现一次。
+            self.assertEqual(matching[0].count(name), 1)
 
     def test_an_inherited_version_carries_a_star(self) -> None:
         result = self._render(
@@ -309,8 +399,8 @@ class CatalogRenderHarnessTests(unittest.TestCase):
             child for child in heading["children"] if child["className"] == "detail-version-group"
         )
         self.assertEqual(group["children"][-1]["text"], "2.0.0*", "沿用更早声明就缀一个星号")
-        section = result["detail"]["children"][-1]
-        text = " ".join(node["text"] or "" for node in _walk(section))
+        block = _detail_block(result)
+        text = " ".join(node["text"] or "" for node in _walk(block))
         self.assertIn("reuses the older compatibility declaration", text)
         self.assertNotIn("v1.0.0", text, "星号只说「沿用更早那份」，不再点名继承自哪个 tag")
 
@@ -493,14 +583,18 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         info = result["environment"]
 
         self.assertEqual(info["sprocket"]["text"], "Sprocket 0.2.53.2")
-        self.assertEqual(info["loader"]["text"], "MelonLoader 0.7.3")
+        self.assertEqual(
+            [line["text"] for line in info["loaders"]["children"]],
+            ["MelonLoader 0.7.3"],
+            "每个已装加载器一行「名字 版本」",
+        )
         self.assertTrue(info["note"]["hidden"], "没问题就不出那一行")
 
     def test_the_sidebar_shows_an_uninstalled_loader_as_a_link(self) -> None:
         result = self._render(environment=environment(installed=False))
         info = result["environment"]
 
-        self.assertTrue(info["loader"]["hidden"], "未装时那一行只留链接")
+        self.assertEqual(info["loaders"]["children"], [], "未装时那一块只留链接")
         self.assertEqual(info["sprocket"]["text"], "Sprocket 0.2.53.2")
         self.assertFalse(info["install"]["hidden"])
 

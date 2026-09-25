@@ -1246,7 +1246,7 @@ class PrivateServerTests(unittest.TestCase):
                     target = game / "Mods" / "PrivateMod.dll"
                     self.assertEqual(target.read_bytes(), dll)
                     DemoHandler.package_version = "1.1.0"
-                    updated = api.update_all(allow_without_melonloader=True)
+                    updated = api.update_all()
                     self.assertTrue(updated["ok"])
                     self.assertEqual(updated["count"], 1)
                     self.assertTrue(api.install_queue.wait_until_idle(2))

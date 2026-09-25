@@ -314,6 +314,33 @@ class AnnotateTests(unittest.TestCase):
         self.assertFalse(state["packages"][PACKAGE_ID]["corrupted"])
         self.assertTrue(state["packages"][PACKAGE_ID]["suppressed"])
 
+    def test_a_fileless_modloader_is_not_corrupted(self) -> None:
+        """基础运行时不记逐文件清单：没有可比的磁盘文件，判定是 `local` 而不是损坏。"""
+        loader_id = "lavagang.melonloader"
+        state = {
+            "files": {},
+            "packages": {
+                loader_id: {
+                    "kind": "modloader",
+                    "name": "MelonLoader",
+                    "version": "0.7.3",
+                    "files": [],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            annotate(
+                state,
+                game_dir=Path(directory),
+                published_by_package={loader_id: {"melonloader.x64.zip": {V1_HASH: "0.7.3"}}},
+                suppressed=(),
+                hash_provider=lambda _path: None,
+            )
+
+        loader = state["packages"][loader_id]
+        self.assertEqual(loader["integrity"], STATUS_LOCAL)
+        self.assertFalse(loader["corrupted"])
+
     def test_archive_only_package_falls_back_to_local_not_corrupted(self) -> None:
         """有的包发布的是压缩包（UnityExplorer 的 .zip）：解压出来的 DLL 无可比数据 → `local`。"""
         state = self._state()

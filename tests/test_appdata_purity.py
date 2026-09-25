@@ -22,6 +22,13 @@ from sprocket_mod_manager.presentation.web_gui import ClientApi  # noqa: E402
 
 from test_adoption import FIXTURE_MOD, package  # noqa: E402
 
+
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：扫描 `Mods` 之前得先检测到运行时。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
 # 这些名字一旦出现在 AppData 里就说明有游戏目录的东西被写错了地方。
 FORBIDDEN_IN_APPDATA = (
     "installed.json", "metadata-cache.json", "file-metadata.json", "transactions", "backups", "profiles",
@@ -34,6 +41,7 @@ class AppDataPurityTests(unittest.TestCase):
         game = root / "game"
         (game / "Mods").mkdir(parents=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
         ConfigStore(app_dir).save({"language": "zh", "game_path": str(game), "index_url": ""})
         service = ModManagerService(app_dir)

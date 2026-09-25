@@ -9,21 +9,22 @@ from urllib.parse import urlparse
 from .base import ApiController
 from ..api_support import release_data as _release_data, source_from_config as _source_from_config
 from ...application.catalog import load_catalog
+from ...application.identifiers import scan_targets, toggle_directories
 from ...application.integrity import suppression_key, suppression_key_of, suppression_keys
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
-from ...domain.compatibility import Environment, release_verdict
+from ...domain.compatibility import CapabilityEnvironment, release_verdict
 from ...domain.errors import ModManagerError, ModToggleError
 from ...domain.models import RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
 from ...infrastructure.desktop import reveal_in_file_manager
-from ...infrastructure.dll_metadata import flush_metadata_cache
+from ...infrastructure.dll_metadata import MELON_KIND_MODS, flush_metadata_cache
 from ...infrastructure.suppression_store import store_for
 from ...infrastructure.mod_toggle import (
-    TOGGLE_ROOTS,
     canonical_relative,
     direct_files,
     is_disabled_path,
+    is_in_roots,
     is_loadable_path,
     apply_enabled,
     resolve_mod_path,
@@ -51,6 +52,9 @@ class CatalogController(ApiController):
             with self._state_lock:
                 self.service = service
                 self.latest = latest
+            # 加载器清单来自注册表：注册表刚换过，环境读数必须重来一次，否则缓存里那份
+            # 还是「没有注册表」时读出来的空清单。
+            self._environment_monitor.invalidate()
             snapshot = self._snapshot(service)
             return self._success(
                 packages=self._catalog_data(service, latest, installed=snapshot["installed"]),
@@ -101,6 +105,7 @@ class CatalogController(ApiController):
                     "repository": package.repository,
                     "repository_url": f"https://github.com/{package.repository}",
                     "license": package.license,
+                    "kind": package.kind,
                     "category": package.category,
                     "tags": list(package.tags),
                     "dependencies": [dict(item) for item in package.dependencies],
@@ -118,7 +123,7 @@ class CatalogController(ApiController):
     def _release_verdicts(
             service: ModManagerService,
             package: RegistryPackage,
-            environment: Environment,
+            environment: CapabilityEnvironment,
     ) -> list[dict[str, Any]]:
         """该包每个可安装版本的三色判定（新到旧）：界面拿它决定隐藏、颜色和默认选中。"""
         if package.releases is not None:
@@ -144,7 +149,7 @@ class CatalogController(ApiController):
             if service.github.install_assets(package, release)
         ]
 
-    def _environment(self) -> Environment:
+    def _environment(self) -> CapabilityEnvironment:
         """判定用的环境：与左下角显示的是同一份（同一个监听缓存）。"""
         return self.current_environment()
 
@@ -254,9 +259,10 @@ class CatalogController(ApiController):
             return self._failure(exc, code="installed_load_failed")
 
     def adopt_existing(self) -> dict[str, Any]:
-        """把磁盘上已存在、且能对上 Registry 的模组登记进安装记录（会访问 GitHub Release）。
+        """把磁盘上已存在、且能对上 Registry 的模组与加载器登记进安装记录。
 
-        登记后它们和普通安装的模组没有区别。
+        模组会访问 GitHub Release 挑出该记的发布版本；磁盘上检测到、记录里没有的加载器只查索引
+        自带的发布数据。登记后它们和普通安装的没有区别。
         `changed` 只表示这次有没有改动安装记录，供前端决定是否重画列表。
         """
         try:
@@ -353,9 +359,10 @@ class CatalogController(ApiController):
         """
         try:
             game_path = self._resolved_game_path()
-            target = self._resolve_mod_path(game_path, str(path))
             service = self._current_service()
-            targets = self._package_toggle_targets(service, game_path, target)
+            roots = self._toggle_directories(service, game_path)
+            target = resolve_mod_path(game_path, str(path), roots)
+            targets = self._package_toggle_targets(service, game_path, target, roots)
             if not self._mutation_lock.acquire(blocking=False):
                 raise ModToggleError("另一个模组操作正在进行，请稍后再试")
             toggled: list[str] = []
@@ -399,19 +406,43 @@ class CatalogController(ApiController):
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="open_mod_location_failed")
 
+    def _installed_ids(self, service: ModManagerService | None, game_path: Path) -> tuple[str, ...]:
+        """安装记录里的包 id；读不出来就当作「什么都没装」，标识符退回自己的传统目录。"""
+        if service is None:
+            return ()
+        try:
+            return tuple(service.installed(game_path))
+        except (ModManagerError, OSError, ValueError) as exc:
+            LOGGER.warning("could not read install state for %s: %s", game_path, exc)
+            return ()
+
     @staticmethod
-    def _resolve_mod_path(game_path: Path, path: str) -> Path:
-        return resolve_mod_path(game_path, path)
+    def _capabilities(service: ModManagerService | None) -> dict[str, object]:
+        environment = getattr(service, "environment", None) if service is not None else None
+        capabilities = getattr(environment, "capabilities", None)
+        return dict(capabilities) if isinstance(capabilities, dict) else {}
+
+    def _toggle_directories(self, service: ModManagerService | None, game_path: Path) -> tuple[str, ...]:
+        """当前环境里可启用/禁用的目录：活跃标识符声明类型可切换的那些。"""
+        registry = service.registry if service is not None else None
+        packages = registry.packages if registry is not None else ()
+        return toggle_directories(
+            game_path,
+            packages,
+            self._installed_ids(service, game_path),
+            self._capabilities(service),
+        )
 
     def _package_toggle_targets(
         self,
         service: ModManagerService,
         game_path: Path,
         target: Path,
+        roots: tuple[str, ...],
     ) -> list[Path]:
-        """点一个文件要作用于哪些文件：属于某个包就作用到该包在 Mods/Plugins 下的全部可执行文件。
+        """点一个文件要作用于哪些文件：属于某个包就作用到该包在受管目录下的全部可执行文件。
 
-        找不到归属（仅本地模组）时只作用它自己。`UserLibs` 一律跳过——那是被别的模组引用的库。
+        找不到归属（仅本地模组）时只作用它自己。用户库一律跳过——那是被别的模组引用的库。
         """
         try:
             canonical = canonical_relative(target.relative_to(game_path).as_posix())
@@ -426,7 +457,7 @@ class CatalogController(ApiController):
                 continue
             resolved: list[Path] = []
             for relative in files:
-                if str(relative).split("/", 1)[0] not in TOGGLE_ROOTS:
+                if not is_in_roots(str(relative), roots):
                     continue
                 for candidate in (game_path / relative, game_path / (relative + ".disable")):
                     if candidate.is_file():
@@ -473,7 +504,14 @@ class CatalogController(ApiController):
         }
         registry = service.registry if service is not None else None
         packages = registry.packages if registry is not None else ()
-        local = scan_local_mods(game_path, managed, packages, compute_hashes=hashes)
+        local = scan_local_mods(
+            game_path,
+            managed,
+            packages,
+            installed=tuple(records),
+            capabilities=self._capabilities(service),
+            compute_hashes=hashes,
+        )
         # 扫描自己已经落盘缓存（`scan_local_mods` 末尾 flush）；这里再兜一次，覆盖"同一请求里先认领、
         # 后扫描"的顺序问题——认领也会新增缓存条目。
         flush_metadata_cache()
@@ -489,7 +527,7 @@ class CatalogController(ApiController):
         if not self._mutation_lock.acquire(blocking=False):
             return []
         try:
-            return [
+            adopted = [
                 {
                     "id": record.package_id,
                     "name": record.name,
@@ -498,30 +536,48 @@ class CatalogController(ApiController):
                 }
                 for record in service.adopt_existing(game_path)
             ]
+            if adopted:
+                # 认领会往记录里写加载器：加载器清单变了，环境读数必须重来一次。
+                self._environment_monitor.invalidate()
+            return adopted
         finally:
             self._mutation_lock.release()
 
     def _has_any_mods(self, local: dict[str, Any] | None = None) -> bool:
-        """`Mods` 目录 **1 层** 内是否存在可加载（或被禁用）的 DLL。
+        """环境里是否存在**模组**：模组目录下至少有一个可加载（或被禁用）的 DLL。
 
-        有扫描快照时直接用它——判据完全相同（同一套 `is_loadable_path`/`is_disabled_path`），
-        省掉一次目录遍历。没有快照（比如首次加载前的探测）才回退到走目录。
+        用户库与插件不算——「新安装推荐」的星标只在游戏还没有模组时出现。有扫描快照时直接用它
+        （判据完全相同：同一套 `is_loadable_path`/`is_disabled_path`，类别取自所在目录），
+        省掉一次目录遍历；没有快照（比如首次加载前的探测）才回退到走目录。
         """
         if local is not None:
-            return any(str(mod.get("kind")) == "Mods" for mod in local.get("mods", ()))
+            return any(
+                str(mod.get("kind")) == MELON_KIND_MODS for mod in local.get("mods", ())
+            )
         value = effective_game_path(self.config)
         if not value:
             return False
         game_path = Path(value).expanduser()
         if not (game_path / "Sprocket.exe").is_file():
             return False
-        mods_dir = game_path / "Mods"
-        if not mods_dir.is_dir():
-            return False
-        return any(
-            is_loadable_path(path) or is_disabled_path(path)
-            for path in direct_files(mods_dir)
+        service = self.service
+        registry = service.registry if service is not None else None
+        packages = registry.packages if registry is not None else ()
+        targets = scan_targets(
+            game_path,
+            packages,
+            self._installed_ids(service, game_path),
+            self._capabilities(service),
         )
+        for _identifier, directory in targets:
+            if directory.type.kind != MELON_KIND_MODS:
+                continue
+            if any(
+                is_loadable_path(path) or is_disabled_path(path)
+                for path in direct_files(game_path / directory.path)
+            ):
+                return True
+        return False
 
     def _unrecognized_mods(
             self,

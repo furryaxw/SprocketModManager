@@ -7,11 +7,40 @@ import time
 import unittest
 from pathlib import Path
 
+from sprocket_mod_manager.application.identifiers import mod_directory_paths
+from sprocket_mod_manager.domain.models import RegistryPackage
 from sprocket_mod_manager.infrastructure.environment_monitor import (
     EnvironmentMonitor,
     game_environment_fingerprint,
     mod_directory_signature,
 )
+
+BRIDGE_ID = "1499501762.bepinex-melonloader-loader"
+
+
+def bridge_package() -> RegistryPackage:
+    return RegistryPackage(
+        id=BRIDGE_ID,
+        name="BepInEx.MelonLoader.Loader",
+        authors=("1499501762",),
+        repository="1499501762/BepInEx.MelonLoader.Loader",
+        license="Apache-2.0",
+        display_name={"en": "MLLoader"},
+        description={"en": "bridge"},
+        release={},
+        dependencies=(),
+        install={},
+        category="utility",
+        tags=(),
+        kind="loaderbridge",
+        provides={"lavagang.melonloader": "0.7.3"},
+        supply={
+            "melonloader:core": "{Sprocket}/MLLoader/MelonLoader",
+            "melonloader:mod": "{Sprocket}/MLLoader/Mods",
+            "melonloader:plugin": "{Sprocket}/MLLoader/Plugins",
+            "melonloader:userlib": "{Sprocket}/MLLoader/UserLibs",
+        },
+    )
 
 
 def wait_for(predicate, timeout: float = 2.0) -> bool:
@@ -43,6 +72,19 @@ class FingerprintTests(unittest.TestCase):
     def test_a_missing_directory_is_not_an_error(self) -> None:
         self.assertEqual(mod_directory_signature(Path("nowhere")), ())
 
+    def test_a_bridge_mod_appearing_changes_the_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory) / "game"
+            (game / "MLLoader" / "Mods").mkdir(parents=True)
+            directories = mod_directory_paths(game, [bridge_package()], (BRIDGE_ID,))
+            self.assertIn("MLLoader/Mods", directories)
+
+            before = game_environment_fingerprint(game, directories)
+            (game / "MLLoader" / "Mods" / "Bridge.dll").write_bytes(b"x" * 8)
+            after = game_environment_fingerprint(game, directories)
+
+        self.assertNotEqual(before, after)
+
 
 class MonitorTests(unittest.TestCase):
     def test_the_snapshot_is_read_once_and_reused(self) -> None:
@@ -50,7 +92,7 @@ class MonitorTests(unittest.TestCase):
 
         def read() -> dict:
             calls.append(1)
-            return {"sprocket": {"state": "ok", "version": "0.2.53.2"}, "melonloader": {}}
+            return {"sprocket": {"state": "ok", "version": "0.2.53.2"}, "loaders": {}}
 
         monitor = EnvironmentMonitor(read, lambda: ())
         first = monitor.snapshot()
@@ -61,7 +103,7 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(first["revision"], 0)
 
     def test_invalidate_rereads_and_bumps_the_revision(self) -> None:
-        payload = {"sprocket": {"state": "ok", "version": "0.2.53.2"}, "melonloader": {}}
+        payload = {"sprocket": {"state": "ok", "version": "0.2.53.2"}, "loaders": {}}
         monitor = EnvironmentMonitor(lambda: dict(payload), lambda: ())
 
         monitor.snapshot()
@@ -71,14 +113,14 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(monitor.snapshot()["sprocket"]["version"], "0.2.54.2")
         self.assertEqual(monitor.snapshot()["revision"], 1)
 
-    def test_noting_the_latest_loader_bumps_the_revision_once(self) -> None:
-        monitor = EnvironmentMonitor(lambda: {"melonloader": {}}, lambda: ())
+    def test_noting_the_latest_loaders_bumps_the_revision_once(self) -> None:
+        monitor = EnvironmentMonitor(lambda: {"loaders": {}}, lambda: ())
 
-        monitor.note_latest_loader("0.7.3")
-        monitor.note_latest_loader("0.7.3")
+        monitor.note_latest_loaders({"lavagang.melonloader": "0.7.3"})
+        monitor.note_latest_loaders({"lavagang.melonloader": "0.7.3"})
 
         snapshot = monitor.snapshot()
-        self.assertEqual(snapshot["latest_loader"], "0.7.3")
+        self.assertEqual(snapshot["latest_loaders"], {"lavagang.melonloader": "0.7.3"})
         self.assertEqual(snapshot["revision"], 1)
 
     def test_a_failing_read_does_not_break_the_snapshot(self) -> None:
@@ -87,7 +129,8 @@ class MonitorTests(unittest.TestCase):
 
         monitor = EnvironmentMonitor(read, lambda: ())
 
-        self.assertEqual(monitor.snapshot()["melonloader"], {"installed": False, "version": None})
+        self.assertEqual(monitor.snapshot()["loaders"], {})
+        self.assertEqual(monitor.snapshot()["sprocket"], {})
 
     def test_the_thread_bumps_the_revision_when_the_fingerprint_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -95,7 +138,7 @@ class MonitorTests(unittest.TestCase):
             game.mkdir()
             state = {"fingerprint": (1,)}
             monitor = EnvironmentMonitor(
-                lambda: {"sprocket": {"state": "ok"}, "melonloader": {}},
+                lambda: {"sprocket": {"state": "ok"}, "loaders": {}},
                 lambda: state["fingerprint"],
                 interval=0.01,
                 silence=0.01,

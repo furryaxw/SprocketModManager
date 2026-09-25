@@ -70,6 +70,9 @@ class DiskMetadataCacheTests(unittest.TestCase):
             game = root / "game"
             (game / "Mods").mkdir(parents=True)
             (game / "Sprocket.exe").touch()
+            (game / "version.dll").touch()
+            (game / "MelonLoader" / "net6").mkdir(parents=True)
+            (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
             shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
             cache_path = root / "metadata-cache.json"
             module.configure_metadata_cache(cache_path)

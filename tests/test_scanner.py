@@ -1,14 +1,17 @@
 import tempfile
 import unittest
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sprocket_mod_manager.domain.errors import ScanError
 from sprocket_mod_manager.domain.models import RegistryPackage
 from sprocket_mod_manager.infrastructure.scanner import PackageScanner
 
+TRANSLATION_RULE = {"match": "**", "type": "xunity:translation", "layout": "tree"}
+
 
 def package(*, translation=False):
+    file_rules = (TRANSLATION_RULE,) if translation else ()
     return RegistryPackage(
         id="test.mod",
         name="TestMod",
@@ -23,15 +26,25 @@ def package(*, translation=False):
             "scan_dlls": not translation,
             "exclude": [],
             "overrides": [],
-            **({"mode": "xunity-translation"} if translation else {}),
+            **(
+                {"mode": "patch", "files": [dict(TRANSLATION_RULE)]}
+                if translation
+                else {}
+            ),
         },
         category="translation" if translation else "utility",
         tags=(),
+        file_rules=file_rules,
+        schema_version=2 if translation else 1,
     )
 
 
+def translation_scanner() -> PackageScanner:
+    return PackageScanner({"xunity:translation": PurePosixPath("AutoTranslator")})
+
+
 class ScannerTests(unittest.TestCase):
-    def test_xunity_translation_zip_preserves_all_relative_paths(self):
+    def test_a_type_rule_installs_the_tree_into_its_supply_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             archive = root / "zh_cn.zip"
@@ -39,7 +52,9 @@ class ScannerTests(unittest.TestCase):
                 output.writestr("Config.ini", b"language=zh-CN")
                 output.writestr("Translation/zh-CN/Text/Translations.txt", "Hello=你好")
 
-            files, ignored = PackageScanner().scan(package(translation=True), archive, root / "out")
+            files, ignored = translation_scanner().scan(
+                package(translation=True), archive, root / "out"
+            )
 
             self.assertEqual(
                 [item.target for item in files],
@@ -50,13 +65,13 @@ class ScannerTests(unittest.TestCase):
             )
             self.assertEqual(ignored, [])
 
-    def test_xunity_translation_rejects_non_zip_asset(self):
+    def test_an_unsupported_asset_type_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             asset = root / "Translations.txt"
             asset.write_text("Hello=你好", encoding="utf-8")
-            with self.assertRaisesRegex(ScanError, "must use a ZIP"):
-                PackageScanner().scan(package(translation=True), asset, root / "out")
+            with self.assertRaisesRegex(ScanError, "unsupported Release asset type"):
+                translation_scanner().scan(package(translation=True), asset, root / "out")
 
     def test_rejects_zip_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -4,7 +4,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from .base import ApiController
 from ..api_support import release_data as _release_data, startup_trace as _startup_trace
@@ -723,6 +723,7 @@ class PrivateDistributionController(ApiController):
     def _private_resolution(
             self,
             package_id: str,
+            installed: Iterable[str] = (),
     ) -> tuple[DeveloperServerClient, ResolutionPlan, dict[
         str, Callable[[ReleaseAsset, Path, ProgressCallback | None], Path]]]:
         entry, _client, _manifest = self._private_package_source(package_id)
@@ -735,7 +736,9 @@ class PrivateDistributionController(ApiController):
         service = self._current_service()
         public_packages = list(service.registry.packages) if service.registry is not None else []
         registry = Registry(public_packages + private_packages)
-        plan = DependencySolver(registry, service.github).resolve(package_id)
+        plan = DependencySolver(
+            registry, service.github, installed=frozenset(installed)
+        ).resolve(package_id)
         def download_private(
                 asset: ReleaseAsset,
                 destination: Path,

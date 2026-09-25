@@ -25,6 +25,13 @@ from sprocket_mod_manager.presentation.web_gui import ClientApi  # noqa: E402
 from test_adoption import package  # noqa: E402  (复用带内嵌 release 的包构造器)
 
 
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：认领与扫描 `Mods` 之前得先检测到运行时。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
+
 def unresolvable_package() -> RegistryPackage:
     """依赖一个 Registry 里根本没有的版本：解析必然失败，且失败点明确。"""
     broken = package("test.broken", "Broken.dll", b"broken")
@@ -37,6 +44,7 @@ class BatchInstallTests(unittest.TestCase):
         game = root / "game"
         (game / "Mods").mkdir(parents=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         ConfigStore(app_dir).save({"language": "zh", "game_path": str(game), "index_url": ""})
         service = ModManagerService(app_dir)
         service.registry = Registry(packages)
@@ -121,7 +129,6 @@ class BatchInstallTests(unittest.TestCase):
                 with patch.object(api.install_queue, "enqueue", return_value=()) as enqueue:
                     result = api.enqueue_install(
                         ["test.broken", "test.good"],
-                        allow_without_melonloader=True,
                     )
             finally:
                 api.install_queue.close()
@@ -138,7 +145,7 @@ class BatchInstallTests(unittest.TestCase):
                 package("test.lib", "Lib.dll", b"lib", versions=("1.0.0",)),
             ])
             try:
-                result = api.enqueue_install(["test.broken"], allow_without_melonloader=True)
+                result = api.enqueue_install(["test.broken"])
             finally:
                 api.install_queue.close()
 

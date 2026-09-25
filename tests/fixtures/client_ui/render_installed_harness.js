@@ -120,6 +120,8 @@ const sandbox = {
         installedFilter: payload.filter || "all",
         installedSelection: new Set(),
         environment: payload.environment || null,
+        modloaders: payload.modloaders || [],
+        modloadersRequested: true,
     },
     localized: (values, fallback = "") => {
         if (!values || typeof values !== "object") return fallback;
@@ -199,7 +201,7 @@ const sandbox = {
             incompatibleUpdateHead: `Update to ${values.version} is available, but it does not support your `,
             incompatibleUpdateUnknown: `Update to ${values.version} is available, but this environment cannot run it`,
             environmentAxisSprocket: `Sprocket ${values.version}`,
-            environmentAxisMelonLoader: `MelonLoader ${values.version}`,
+            environmentAxisLoader: `${values.loader} ${values.version}`,
             environmentAxisAnd: " and ",
         };
         return table[key] !== undefined ? table[key] : key;
@@ -218,7 +220,6 @@ const sandbox = {
     showPage: async () => {},
     pollQueue: async () => {},
     showModal: async () => true,
-    ensureMelonLoader: async () => ({ proceed: true, allowWithout: false }),
     updatePageHeader: () => {},
     renderGithubLogin: () => {},
     applyTextScale: () => {},
@@ -235,9 +236,9 @@ sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 
 const context = vm.createContext(sandbox);
-// `compatibility.js` 与 `installs.js` 合成一个脚本再执行：页面上它们是分开的两个
+// `compatibility.js`、`modloaders.js` 与 `installs.js` 合成一个脚本再执行：页面上它们是分开的
 // `<script>`，但顶层的 `const`（三色常量）不跨脚本共享，合成后才与页面里的可见性一致。
-const source = ["compatibility.js", "installs.js"]
+const source = ["compatibility.js", "modloaders.js", "installs.js"]
     .map((name) => fs.readFileSync(path.join(clientUiDir, "js", name), "utf8"))
     .join("\n");
 vm.runInContext(source, context, { filename: "installs.js" });

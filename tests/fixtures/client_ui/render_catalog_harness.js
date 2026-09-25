@@ -2,8 +2,8 @@
 //
 // 用法：node render_catalog_harness.js <client_ui_dir> <payload.json>
 //
-// 覆盖三件契约：兼容性隐藏与「显示不兼容」开关、版本号颜色、左下角（未安装=链接、
-// 环境矛盾=标红并写清原因）。加载的是仓库里未修改的 i18n/core/compatibility/catalog/melonloader
+// 覆盖三件契约：兼容性隐藏与「显示不兼容」开关、版本号颜色、左下角（未装加载器=链接、
+// 环境矛盾=标红并写清原因）。加载的是仓库里未修改的 i18n/core/compatibility/catalog/modloaders
 // 五个文件（合成一个脚本 —— 页面里它们是分开的 `<script>`，但顶层 `const` 不跨脚本共享），
 // 所以文案也来自真实的 i18n 表。
 "use strict";
@@ -126,13 +126,13 @@ function selectionBar(scope) {
     anchor.append(bar);
     return anchor;
 }
-const TAGS = {"#environment-install-melonloader": "button"};
+const TAGS = {"#environment-install-loader": "button"};
 for (const selector of [
     "#catalog-search", "#category-select", "#sort-select", "#translation-search", "#translation-sort",
     "#package-list", "#translation-list", "#catalog-count", "#translation-count", "#catalog-notice",
     "#detail-panel", "#translation-detail",
-    "#environment", "#environment-sprocket", "#environment-melonloader-text",
-    "#environment-install-melonloader", "#environment-note", "#toast-region",
+    "#environment", "#environment-sprocket", "#environment-loaders",
+    "#environment-install-loader", "#environment-note", "#toast-region",
     "#status-text", ".status-mark",
 ]) {
     elements[selector] = new FakeElement(TAGS[selector] || (selector.includes("list") ? "section" : "div"));
@@ -198,6 +198,8 @@ const injected = {
     showIncompatible: Boolean(payload.show_incompatible),
     environment: payload.environment || null,
     environmentRevision: 1,
+    modloaders: payload.modloaders || [],
+    modloadersRequested: true,
 };
 const source = [
     fs.readFileSync(path.join(clientUiDir, "js", "i18n.js"), "utf8"),
@@ -205,7 +207,7 @@ const source = [
     `Object.assign(state, ${JSON.stringify(injected)});`,
     fs.readFileSync(path.join(clientUiDir, "js", "compatibility.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "catalog.js"), "utf8"),
-    fs.readFileSync(path.join(clientUiDir, "js", "melonloader.js"), "utf8"),
+    fs.readFileSync(path.join(clientUiDir, "js", "modloaders.js"), "utf8"),
     // `state` 是 core.js 脚本内的 `const`，脚本外面看不见：拷一份到全局，方便断言开关状态。
     "globalThis.__state = state;",
 ].join("\n");
@@ -253,6 +255,7 @@ function serialize(element) {
         className: element.className,
         text: element.textContent,
         hidden: Boolean(element.hidden),
+        open: Boolean(element.open),
         disabled: Boolean(element.disabled),
         checked: Boolean(element.checked),
         children: element.children.map(serialize).filter(Boolean),
@@ -321,6 +324,24 @@ if (payload.selection_action) {
 }
 const selectionAfterAction = selectionState();
 
+// 说明区：默认收起，`open_readme` 直接给 details 加 open，等价于用户点开那一下。
+const detailElement = elements[detailSelector];
+const detailSnapshot = serialize(detailElement);
+const readmeDetails = findIn(detailElement, ".detail-readme") || null;
+const readmeText = () => flatten(readmeDetails).map((item) => item.text).join(" ");
+const readme = readmeDetails ? {
+    tag: readmeDetails.tagName,
+    open: Boolean(readmeDetails.open),
+    summary: readmeDetails.children.find((child) => child.tagName === "summary")?.textContent || "",
+    text: readmeText(),
+} : null;
+if (readmeDetails && payload.open_readme) readmeDetails.open = true;
+const readmeOpened = readmeDetails ? {
+    tag: readmeDetails.tagName,
+    open: Boolean(readmeDetails.open),
+    text: readmeText(),
+} : null;
+
 setImmediate(() => {
     process.stdout.write(JSON.stringify({
         rows: firstRender.rows,
@@ -335,14 +356,15 @@ setImmediate(() => {
         selectionAfterAction,
         environment: {
             sprocket: serialize(elements["#environment-sprocket"]),
-            loader: serialize(elements["#environment-melonloader-text"]),
-            install: serialize(elements["#environment-install-melonloader"]),
+            loaders: serialize(elements["#environment-loaders"]),
+            install: serialize(elements["#environment-install-loader"]),
             note: serialize(elements["#environment-note"]),
         },
         statusbar: {
             text: elements["#status-text"].textContent,
             mark: elements[".status-mark"].className,
         },
-        detail: serialize(elements[detailSelector]),
+        detail: detailSnapshot,
+        readme: {default: readme, opened: readmeOpened},
     }));
 });
