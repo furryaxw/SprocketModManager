@@ -191,6 +191,25 @@ function localModFor(item) {
 }
 
 async function toggleLocalMod(path, enabled) {
+    const row = installedItems().find((item) => installedRowPath(item) === path);
+    const dependents = !enabled && row ? enabledDependentsClosure([row]) : [];
+    if (dependents.length) {
+        // 依赖者还开着的时候后端不准先动库本身：先问一句，确认后从最外层往里关。
+        const confirmed = await showModal({
+            kicker: tr("disableMod"),
+            title: tr("confirmDisableDependents"),
+            body: tr("disableDependentsMessage", {
+                count: dependents.length,
+                names: dependents.map(installedRowLabel).join(", "),
+            }),
+            confirmText: tr("disableMod"),
+            destructive: true,
+        });
+        if (!confirmed) return;
+        for (const dependent of orderedForDisable(dependents)) {
+            await callApi("toggle_mod", installedRowPath(dependent), false);
+        }
+    }
     const result = await callApi("toggle_mod", path, Boolean(enabled));
     if (!result.ok) {
         resultError(result);
@@ -263,9 +282,69 @@ function installedRowDisabled(item) {
     return item.fromScan ? Boolean(item.disabled) : Boolean(localModFor(item)?.disabled);
 }
 
-/** 只有 `Mods` / `Plugins` 下的 DLL 能就地改名；`UserLibs` 是被别的模组引用的库。 */
+/** 能不能就地改名：由依赖链当场解析，不落库。
+ *
+ * 行是扫描来的（只走加载器供给的模组目录），所以只剩三条：不是加载器自己的文件、
+ * 自身不是库、没有别的行依赖它 —— 改掉被依赖的库会连累依赖者。
+ */
+/** 能不能就地改名：只要磁盘上有这个文件就给开关。
+ *
+ * 唯一拦人的是依赖链，而且拦的不是"按钮"：还开着的依赖者要先一起处理（见 `toggleLocalMod`）。
+ */
 function installedRowToggleable(item) {
-    return /^(Mods|Plugins)\//i.test(installedRowPath(item).replace(/\\/g, "/"));
+    const mod = item.fromScan ? item : localModFor(item);
+    return Boolean(mod?.path);
+}
+
+/** 提示文案里的行名：显示名优先，退回文件名。 */
+function installedRowLabel(item) {
+    const mod = item.fromScan ? item : localModFor(item);
+    return String(mod?.display_name || mod?.name || installedRowPath(item) || "");
+}
+
+/** 还开着、并且依赖这个文件的模组行：动它之前要先把这些一起处理掉，否则它们会坏。 */
+function enabledDependentsOf(item) {
+    const mod = item.fromScan ? item : localModFor(item);
+    const name = String(mod?.assembly_name || "").toLowerCase();
+    if (!name) return [];
+    return installedItems().filter(
+        (other) => other !== mod
+            && !installedRowDisabled(other)
+            && (other.required_dependencies || []).some((dep) => String(dep).toLowerCase() === name),
+    );
+}
+
+/** 上面那串的传递闭包：隔了两三层的依赖者也要一起禁，否则中间那层会被后端拦下。 */
+function enabledDependentsClosure(rows) {
+    const found = [];
+    const seen = new Set(rows.map(installedRowPath));
+    const queue = [...rows];
+    while (queue.length) {
+        for (const dependent of enabledDependentsOf(queue.shift())) {
+            const path = installedRowPath(dependent);
+            if (!path || seen.has(path)) continue;
+            seen.add(path);
+            found.push(dependent);
+            queue.push(dependent);
+        }
+    }
+    return found;
+}
+
+/** 定序：依赖别人的排在前面。后端不许"依赖者还开着"时动被依赖的那个，先后错了整批会半途失败。 */
+function orderedForDisable(rows) {
+    const pending = [...rows];
+    const ordered = [];
+    const placed = new Set();
+    while (pending.length) {
+        const index = pending.findIndex((item) => enabledDependentsOf(item).every(
+            (other) => placed.has(installedRowPath(other)),
+        ));
+        if (index < 0) break;   // 互相依赖：剩下的原样交给后端各自的判断
+        placed.add(installedRowPath(pending[index]));
+        ordered.push(...pending.splice(index, 1));
+    }
+    return [...ordered, ...pending];
 }
 
 /** 该行对应的包 id：没有安装记录归属的纯本地模组为空（既不能更新也不能卸载）。 */
@@ -709,8 +788,7 @@ function renderScannedModRow(mod) {
         actions.append(kind);
     }
 
-    // 只有 Mods / Plugins 下的 DLL 能切换（UserLibs 是被引用的库，就地改名会连累依赖它的模组）。
-    const toggleable = /^(Mods|Plugins)\//i.test(String(mod.path || "").replace(/\\/g, "/"));
+    const toggleable = installedRowToggleable(mod);
     if (toggleable) {
         const toggle = document.createElement("button");
         toggle.className = mod.disabled ? "secondary-button" : "danger-button";
@@ -788,7 +866,7 @@ function renderLegacyModRow(item) {
         if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
     }
     actions.append(...updateChips(item));
-    if (local?.path) {
+    if (installedRowToggleable(item)) {
         const toggle = document.createElement("button");
         toggle.className = local.disabled ? "secondary-button" : "danger-button";
         toggle.type = "button";
@@ -891,21 +969,32 @@ async function updateSelectedMods() {
     await showPage("downloads");
 }
 
-/** 选中项里需要改名的路径：只作用于 `Mods`/`Plugins`，已处于目标状态的不重复调用。 */
-function selectedTogglePaths(enabled) {
-    const rows = selectedInstalledItems().filter(
-        (item) => installedRowToggleable(item) && installedRowDisabled(item) === Boolean(enabled),
-    );
-    return [...new Set(rows.map(installedRowPath).filter(Boolean))];
-}
-
 async function toggleSelectedMods(enabled) {
     if (queueActive()) return;
-    const paths = selectedTogglePaths(enabled);
-    if (!paths.length) {
+    const selected = selectedInstalledItems().filter(
+        (item) => installedRowToggleable(item) && installedRowDisabled(item) === Boolean(enabled),
+    );
+    if (!selected.length) {
         toast(tr("selectionNotApplicable"));
         return;
     }
+    // 禁用时把还开着的依赖者整串带上（不止一层），再定序：先关依赖别人的。
+    const extra = enabled ? [] : enabledDependentsClosure(selected);
+    if (extra.length) {
+        const confirmed = await showModal({
+            kicker: tr("disableMod"),
+            title: tr("confirmDisableDependents"),
+            body: tr("disableDependentsMessage", {
+                count: extra.length,
+                names: extra.map(installedRowLabel).join(", "),
+            }),
+            confirmText: tr("disableMod"),
+            destructive: true,
+        });
+        if (!confirmed) return;
+    }
+    const rows = enabled ? selected : orderedForDisable([...extra, ...selected]);
+    const paths = [...new Set(rows.map(installedRowPath).filter(Boolean))];
     const failed = [];
     for (const path of paths) {
         const result = await callApi("toggle_mod", path, Boolean(enabled));

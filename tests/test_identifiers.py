@@ -111,7 +111,7 @@ class DirectoryResolutionTests(unittest.TestCase):
                 mod_directory_paths(game, []),
                 ("Mods", "Plugins", "UserLibs"),
             )
-            self.assertEqual(toggle_directories(game, []), ("Mods", "Plugins"))
+            self.assertEqual(toggle_directories(game, []), ("Mods", "Plugins", "UserLibs"))
 
     def test_a_detected_bridge_reads_the_mlloader_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -122,8 +122,7 @@ class DirectoryResolutionTests(unittest.TestCase):
             )
             self.assertEqual(
                 toggle_directories(game, []),
-                ("MLLoader/Mods", "MLLoader/Plugins"),
-                "用户库不参与启用/禁用",
+                ("MLLoader/Mods", "MLLoader/Plugins", "MLLoader/UserLibs"),
             )
 
     def test_an_installed_bridge_supply_moves_the_directories(self) -> None:
@@ -264,10 +263,9 @@ class IdentifyTests(unittest.TestCase):
     def test_a_directory_carries_its_type(self) -> None:
         directory = ModDirectory(
             "MLLoader/Mods",
-            ModType(id="melonloader:mod", directory="Mods", kind="Mods", toggleable=True),
+            ModType(id="melonloader:mod", directory="Mods", kind="Mods"),
         )
         self.assertEqual(directory.type.kind, "Mods")
-        self.assertTrue(directory.type.toggleable)
 
 
 if __name__ == "__main__":
