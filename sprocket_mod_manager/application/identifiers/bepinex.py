@@ -31,13 +31,11 @@ class BepInExIdentifier(ModIdentifier):
             id="bepinex:plugin",
             directory="BepInEx/plugins",
             kind="BepInEx plugins",
-            toggleable=False,
         ),
         ModType(
             id="bepinex:patchers",
             directory="BepInEx/patchers",
             kind="BepInEx patchers",
-            toggleable=False,
         ),
     )
 

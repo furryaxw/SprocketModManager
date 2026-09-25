@@ -34,10 +34,9 @@ class MelonLoaderIdentifier(ModIdentifier):
     namespace = MELONLOADER_NAMESPACE
     capability = MELONLOADER_CAPABILITY
     types = (
-        ModType(id="melonloader:mod", directory="Mods", kind=MELON_KIND_MODS, toggleable=True),
-        ModType(id="melonloader:plugin", directory="Plugins", kind=MELON_KIND_PLUGINS, toggleable=True),
-        # 用户库是被别的模组引用的库，就地改名会连累依赖者，所以不参与启用/禁用。
-        ModType(id="melonloader:userlib", directory="UserLibs", kind=USERLIB_KIND, toggleable=False),
+        ModType(id="melonloader:mod", directory="Mods", kind=MELON_KIND_MODS),
+        ModType(id="melonloader:plugin", directory="Plugins", kind=MELON_KIND_PLUGINS),
+        ModType(id="melonloader:userlib", directory="UserLibs", kind=USERLIB_KIND),
     )
 
     def detect(self, game_path: Path) -> DetectedRuntime | None:

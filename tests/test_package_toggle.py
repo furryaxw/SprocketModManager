@@ -1,7 +1,6 @@
-"""禁用/启用按**包**生效：该包在 `Mods`/`Plugins` 下的全部可执行文件一起切换，`UserLibs` 不动。
+"""禁用/启用按**包**生效：该包在受管目录下的全部可执行文件一起切换。
 
-禁用 = 禁用属于这个 package 的所有可执行文件。
-`UserLibs` 是别的模组引用的库，就地改名会连累依赖者，所以明确排除。
+被别的模组依赖的文件跳过：改名会连累依赖它的那个模组。
 """
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ class PackageWideToggleTests(unittest.TestCase):
         api = ClientApi("0.4.2", app_dir=app_dir, service_factory=lambda _app_dir: service)
         return api, game
 
-    def test_disable_toggles_mods_and_plugins_but_leaves_userlibs(self) -> None:
+    def test_disable_toggles_every_file_of_the_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, game = self._api(Path(directory))
             try:
@@ -66,13 +65,12 @@ class PackageWideToggleTests(unittest.TestCase):
 
             self.assertTrue(result["ok"], result)
             self.assertEqual(sorted(result["toggled_paths"]),
-                             ["Mods/Alpha.dll.disable", "Plugins/Beta.dll.disable"],
-                             "同一个包在 Mods 与 Plugins 下的文件都要禁用")
+                             ["Mods/Alpha.dll.disable", "Plugins/Beta.dll.disable",
+                              "UserLibs/Lib.dll.disable"],
+                             "这个包里没有被别人依赖的文件，三个都跟着禁用")
             self.assertTrue((game / "Mods" / "Alpha.dll.disable").is_file())
             self.assertTrue((game / "Plugins" / "Beta.dll.disable").is_file())
-            self.assertTrue((game / "UserLibs" / "Lib.dll").is_file(),
-                            "UserLibs 是被引用的库，禁用包不许动它")
-            self.assertFalse((game / "UserLibs" / "Lib.dll.disable").exists())
+            self.assertTrue((game / "UserLibs" / "Lib.dll.disable").is_file())
 
     def test_enable_restores_every_file_of_the_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

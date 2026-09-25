@@ -424,8 +424,8 @@ class CatalogController(ApiController):
     def toggle_mod(self, path: str, enabled: bool = True) -> dict[str, Any]:
         """启用/禁用模组（重命名，重启生效）。
 
-        **按包生效**：如果这个文件属于某个已记录的包，禁用/启用会作用于**该包在 `Mods`/`Plugins` 下的
-        全部可执行文件**，`UserLibs` 不动（那是被别人引用的库，改名会连累依赖者）。
+        **按包生效**：如果这个文件属于某个已记录的包，禁用/启用会作用于**该包在受管目录下的
+        全部可执行文件**；被别的模组依赖的文件跳过（改名会连累依赖它的那个模组）。
         """
         try:
             game_path = self._resolved_game_path()
@@ -433,13 +433,22 @@ class CatalogController(ApiController):
             roots = self._toggle_directories(service, game_path)
             target = resolve_mod_path(game_path, str(path), roots)
             targets = self._package_toggle_targets(service, game_path, target, roots)
+            if not targets:
+                raise ModToggleError("还有开着的模组依赖这个文件，先把它们一起禁用")
+            if enabled:
+                targets = self._with_required_libraries(game_path, targets, roots)
             if not self._mutation_lock.acquire(blocking=False):
                 raise ModToggleError("另一个模组操作正在进行，请稍后再试")
             toggled: list[str] = []
+            clicked = ""
+            wanted = canonical_relative(target.relative_to(game_path).as_posix()).casefold()
             try:
                 for item in targets:
                     moved = apply_enabled(item, bool(enabled))
-                    toggled.append(moved.relative_to(game_path).as_posix())
+                    relative = moved.relative_to(game_path).as_posix()
+                    toggled.append(relative)
+                    if canonical_relative(item.relative_to(game_path).as_posix()).casefold() == wanted:
+                        clicked = relative
                     # 同步安装记录：状态记规范路径，改名只翻 disabled（`.dll`/`.dll.disable` 同一逻辑文件）。
                     try:
                         service.rename_managed_file(
@@ -455,7 +464,7 @@ class CatalogController(ApiController):
             # 改名换的是「已安装」那份读数（扫描行与安装记录一起翻）—— 让数据层自己重算。
             self.data_changed(KEY_INSTALLED)
             return self._success(
-                toggled=toggled[-1] if toggled else target.relative_to(game_path).as_posix(),
+                toggled=clicked or (toggled[-1] if toggled else target.relative_to(game_path).as_posix()),
                 toggled_paths=toggled,
                 restart_required=True,
             )
@@ -512,7 +521,7 @@ class CatalogController(ApiController):
     ) -> list[Path]:
         """点一个文件要作用于哪些文件：属于某个包就作用到该包在受管目录下的全部可执行文件。
 
-        找不到归属（仅本地模组）时只作用它自己。用户库一律跳过——那是被别的模组引用的库。
+        找不到归属（仅本地模组）时只作用它自己；被别的模组依赖的文件跳过——改名会连累依赖它的那个模组。
         """
         try:
             canonical = canonical_relative(target.relative_to(game_path).as_posix())
@@ -521,6 +530,7 @@ class CatalogController(ApiController):
             LOGGER.warning("could not read install state while toggling %s: %s", target, exc)
             return [target]
 
+        blocked = self._depended_files()
         for package in packages.values():
             files = [item for item in package.get("files", ()) if isinstance(item, str)]
             if canonical.casefold() not in {item.casefold() for item in files}:
@@ -529,12 +539,96 @@ class CatalogController(ApiController):
             for relative in files:
                 if not is_in_roots(str(relative), roots):
                     continue
+                if canonical_relative(str(relative)).casefold() in blocked:
+                    continue
                 for candidate in (game_path / relative, game_path / (relative + ".disable")):
                     if candidate.is_file():
                         resolved.append(candidate)
                         break
+            if not resolved and canonical.casefold() in blocked:
+                return []
             return resolved or [target]
         return [target]
+
+    def _installed_reading(self) -> dict:
+        """扫描出来的「已安装」读数；读不出来就当空的（依赖解析不到东西）。"""
+        try:
+            reading = self.data.refresh_now(KEY_INSTALLED)
+        except (ModManagerError, OSError, ValueError) as exc:
+            LOGGER.warning("could not read installed state for dependency resolution: %s", exc)
+            return {}
+        return reading if isinstance(reading, dict) else {}
+
+    def _with_required_libraries(
+        self,
+        game_path: Path,
+        targets: list[Path],
+        roots: tuple[str, ...],
+    ) -> list[Path]:
+        """启用时把还关着的依赖库一起带上：库没开，模组加载不起来。
+
+        依赖关系从扫描读数里解出来（assembly 名互相对上），闭包一路展开到没有新的为止。
+        """
+        mods = self._installed_reading().get("local_mods")
+        rows = [mod for mod in mods or () if isinstance(mod, dict)]
+        by_name: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            name = str(row.get("assembly_name") or "").casefold()
+            if name:
+                by_name.setdefault(name, row)
+        known = {
+            canonical_relative(item.relative_to(game_path).as_posix()).casefold()
+            for item in targets
+        }
+        pending = [
+            str(row.get("assembly_name") or "")
+            for row in rows
+            if canonical_relative(str(row.get("path") or "")).casefold() in known
+        ]
+        extra: list[Path] = []
+        seen: set[str] = set()
+        while pending:
+            name = pending.pop().casefold()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            row = by_name.get(name)
+            if row is None:
+                continue
+            # 链一直往下走：库里可能还有它自己的库。
+            pending.extend(str(item) for item in row.get("required_dependencies") or ())
+            if not row.get("disabled"):
+                continue
+            relative = str(row.get("path") or "")
+            if not relative or not is_in_roots(relative, roots):
+                continue
+            canonical = canonical_relative(relative).casefold()
+            if canonical in known:
+                continue
+            known.add(canonical)
+            candidate = game_path / relative
+            if candidate.is_file():
+                extra.append(candidate)
+        return targets + extra
+
+    def _depended_files(self) -> set[str]:
+        """还被开着的模组依赖的文件（相对路径，已规范化）：这些不许先动。
+
+        依赖关系是扫描出来的读数，不额外记录：库自己声明的是 assembly 名，同一次扫描里
+        有别的模组点名要它、而且那个模组还开着，禁用这个库就会把它带坏。
+        """
+        reading = self._installed_reading()
+        mods = reading.get("local_mods") if reading else None
+        needed = set()
+        for mod in mods or ():
+            if mod.get("disabled"):
+                continue
+            needed.update(str(item).casefold() for item in mod.get("required_dependencies") or ())
+        return {
+            str(mod.get("path") or "").casefold()
+            for mod in mods or ()
+            if str(mod.get("assembly_name") or "").casefold() in needed
+        }
 
     def _resolved_game_path(self) -> Path:
         value = effective_game_path(self.config)

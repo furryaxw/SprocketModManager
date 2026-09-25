@@ -294,20 +294,42 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
     def test_toggle_buttons_call_the_api_with_the_right_target_state(self) -> None:
         result = self._render()
-        self.assertEqual(result["clickedButtons"], ["Disable", "Enable"],
-            "the enabled row offers Disable and the disabled row offers Enable")
+        self.assertEqual(result["clickedButtons"], ["Disable", "Enable", "Disable"],
+            "every row whose files nothing depends on offers its own switch")
         toggles = [entry["args"] for entry in result["apiCalls"] if entry["kind"] == "call" and entry["args"][0] == "toggle_mod"]
         self.assertEqual(
             toggles,
             [
                 ["toggle_mod", "Mods/SprocketLaserRangefinder.dll", False],
                 ["toggle_mod", "Mods/CannonSoundPoolFix.dll.disable", True],
+                ["toggle_mod", "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll", False],
             ],
             "each button must pass its own path and the inverted target state",
         )
         self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
 
-    def test_batch_buttons_stay_disabled_without_a_selection(self) -> None:
+    def test_a_loader_scoped_mod_directory_stays_toggleable(self) -> None:
+        """加载器把模组安家到 `MLLoader/Mods`：能不能切换看目录声明的类型，不是路径前缀。"""
+        rows = [dict(row) for row in payload()["local_mods"]]
+        rows[0]["path"] = "MLLoader/Mods/SprocketLaserRangefinder.dll"
+        result = self._render(local_mods=rows)
+        self.assertIn("Disable", result["clickedButtons"])
+
+    def test_disabling_a_dependency_takes_its_enabled_dependents_along(self) -> None:
+        """被别的行依赖也照样有开关；动它时先关还开着的依赖者，再关它自己。"""
+        rows = [dict(row) for row in payload()["local_mods"]]
+        rows[0]["required_dependencies"] = []
+        rows[1]["required_dependencies"] = ["SprocketLaserRangefinder"]
+        rows[1]["disabled"] = False
+        result = self._render(local_mods=rows)
+        toggles = [entry["args"] for entry in result["apiCalls"] if entry["kind"] == "call" and entry["args"][0] == "toggle_mod"]
+        paths = [entry[1] for entry in toggles]
+        self.assertIn("Mods/SprocketLaserRangefinder.dll", paths,
+                      "被依赖的那一行自己有开关")
+        self.assertIn("Mods/CannonSoundPoolFix.dll.disable", paths,
+                      "还开着的依赖者跟着一起关")
+        self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
+
         toolbar = self._render()["toolbar"]
         self.assertEqual(toolbar["selection"], "")
         self.assertTrue(toolbar["barHidden"], "没选东西时底部操作栏不出现")
@@ -545,11 +567,11 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             "已启用的行只能再禁用；启用按钮没有活可干",
         )
 
-        # `UserLibs` 的库既不能改名也没有归属：批量按钮都不该亮（工具栏只剩禁用的按钮）。
+        # `UserLibs` 里没人依赖的库照样可以就地改名：批量按钮该亮的都亮。
         library = self._render(selection=["UserLibs/UniverseLib.ML.IL2CPP.Interop.dll"])
         self.assertEqual(
             library["toolbar"]["buttons"],
-            {"update-selected": True, "disable-selected": True, "enable-selected": True, "remove-selected": True},
+            {"update-selected": True, "disable-selected": False, "enable-selected": True, "remove-selected": True},
         )
 
         # 被禁用的模组反过来只能启用。

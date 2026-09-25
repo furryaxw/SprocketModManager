@@ -34,14 +34,12 @@ class ModType:
     """一个标识符认识的一种模组类型。
 
     `id` 是供给表里的类型（`melonloader:mod`）；`directory` 是没有已装供给者时的目录；
-    `kind` 是本地清单里显示的类别；`toggleable` 决定这个目录里的文件能不能启用/禁用。
+    `kind` 是本地清单里显示的类别。
     """
 
     id: str
     directory: str
     kind: str
-    toggleable: bool
-
 
 @dataclass(frozen=True)
 class ModDirectory:
@@ -321,11 +319,14 @@ def toggle_directories(
         installed_ids: Iterable[str] = (),
         capabilities: Mapping[str, object] | Iterable[str] = (),
 ) -> tuple[str, ...]:
-    """可启用/禁用的目录：标识符声明为可切换的类型所在的那些。"""
+    """可启用/禁用的目录：加载器供给的那些模组目录。
+
+    目录能不能改名不在这份名单上判：拦住的是"被别的模组依赖"（依赖链）与"加载器自己的文件"，
+    所以 `UserLibs` 这种目录照样在名单里。
+    """
     return tuple(
         directory.path
         for _identifier, directory in scan_targets(game_path, packages, installed_ids, capabilities)
-        if directory.type.toggleable
     )
 
 
