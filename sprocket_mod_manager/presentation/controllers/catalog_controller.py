@@ -126,6 +126,9 @@ class CatalogController(ApiController):
                     "dependencies": [dict(item) for item in package.dependencies],
                     "recommendations": list(package.recommendations),
                     "featured": package.featured,
+                    # 兼容性那一行的轴名要按供给关系反查：能力 id 常常不是包 id（`bepinex.bepinex`
+                    # 由 `bepinex.bepinex-be` 供给），界面只拿到包就认不出这根轴。
+                    "provides": dict(package.provides),
                     "release": release_data,
                     "releases": self._release_verdicts(service, package, environment),
                     "install_assets": [asset.name for asset in selected_assets],

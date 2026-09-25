@@ -416,6 +416,29 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         ]
         self.assertEqual(groups, ["DEPENDENCIES", "RECOMMENDED MODS", "COMPATIBILITY"], "三段的标签都在块里")
 
+    def test_a_capability_axis_is_named_after_the_package_that_supplies_it(self) -> None:
+        """`bepinex.bepinex` 不是包 id，是 `bepinex.bepinex-be` 供给的能力：轴名借供给者的 `name`。"""
+        provider = package("bepinex.bepinex-be", [("6.0.0", "compatible")])
+        provider["name"] = "BepInEx"
+        provider["display_name"] = {"en": "BepInEx (Bleeding Edge)", "zh": "BepInEx（Bleeding Edge）"}
+        provider["provides"] = {"bepinex.bepinex": "{version}"}
+        mod = package("test.mod", [("1.0.0", "compatible")])
+        mod["releases"][0]["axes"] = [
+            {
+                "id": "bepinex.bepinex",
+                "declared": ">=6.0.0",
+                "local": "6.0.0-be.788",
+                "satisfied": True,
+            },
+        ]
+
+        block = _detail_block(self._render(packages=[provider, mod], selected="test.mod"))
+        text = " ".join(node["text"] or "" for node in _walk(block))
+        self.assertIn("BepInEx", text, "轴名取供给包的 name")
+        self.assertIn(">=6.0.0", text)
+        self.assertNotIn("bepinex.bepinex", text, "认得出供给者就不该露能力 id")
+        self.assertNotIn("Bleeding Edge", text, "供给包的 display_name 不是能力名")
+
     def test_the_readme_starts_collapsed_and_opens_on_demand(self) -> None:
         packages = [package("test.fine", [("1.0.0", "compatible")])]
         collapsed = self._render(packages=packages, selected="test.fine")

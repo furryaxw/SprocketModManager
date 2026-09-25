@@ -196,6 +196,31 @@ class ModloadersRenderHarnessTests(unittest.TestCase):
         )
         self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
 
+    def test_reinstalling_a_loader_asks_for_a_plan_with_the_installed_version_included(self) -> None:
+        """只有一个可安装版本的加载器（BepInEx）也要能重装：确认框不能被「版本多于一个」挡住。"""
+        result = self._render(
+            modloaders=[
+                modloader(
+                    "bepinex.bepinex-be",
+                    installed=True,
+                    installed_version="6.0.0-be.788",
+                    latest_version="6.0.0-be.788",
+                )
+            ],
+            click_primary=0,
+        )
+
+        entries = [
+            entry
+            for entry in result["apiCalls"]
+            if entry.get("kind") == "call" and entry["args"][:1] == ["beginInstall"]
+        ]
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(
+            entries[0]["includeInstalled"],
+            "页面点安装时就要带 include_installed，后端才不会把「已装同一版」跳过",
+        )
+
     def test_remove_confirms_then_calls_the_api(self) -> None:
         result = self._render(modloaders=[modloader(installed=True, installed_version="0.7.3")], click_remove=0)
 
