@@ -43,16 +43,23 @@ function environmentAxesText() {
     return parts.join(tr("environmentAxisAnd"));
 }
 
-/** 环境自身矛盾（某个加载器跟不上游戏版本）那一句；不是矛盾就返回空串。 */
+/**
+ * 环境自身矛盾那一句；不是矛盾就返回空串。
+ *
+ * 矛盾有两种：装了跑不起来的加载器（后端点名了，就写它），以及一个加载器都没装时表里没有
+ * 一行覆盖本机游戏版本（没名字可点，只说这个版本不兼容）。
+ */
 function environmentConflictText() {
     const environment = state.environment;
     if (environment?.environment?.state !== "conflict") return "";
+    const sprocket = environment.sprocket?.version || environment.sprocket?.raw || "-";
     const loaderId = environment.environment.loader || "";
-    const version = loaderId ? ((environment.environment.loaders || {})[loaderId] || "") : "";
+    if (!loaderId) return tr("environmentConflictNoLoader", {sprocket});
+    const version = (environment.environment.loaders || {})[loaderId] || "";
     return tr("environmentConflict", {
-        loader: loaderId ? loaderLabel(loaderId) : tr("versionUnknown"),
+        loader: loaderLabel(loaderId),
         version: version || tr("versionUnknown"),
-        sprocket: environment.sprocket?.version || environment.sprocket?.raw || "-",
+        sprocket,
     });
 }
 

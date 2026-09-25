@@ -34,9 +34,13 @@ class LocalModsClientUiTests(unittest.TestCase):
 
     def test_adoption_never_blocks_the_list(self) -> None:
         # 认领必须在 renderInstalled() 之后异步触发，而不是等它返回再渲染。
-        render = self.business.index("renderInstalled();")
-        claim = self.business.index("void claimExistingMods();")
-        self.assertLess(render, claim, "the list renders before the network-bound claim starts")
+        catalog = (CLIENT_UI / "js" / "catalog.js").read_text(encoding="utf-8")
+        finish = catalog.split("function finishCatalogLoad")[1].split("\n}")[0]
+        self.assertLess(
+            finish.index("renderInstalled();"),
+            finish.index("void claimExistingMods();"),
+            "the list renders before the network-bound claim starts",
+        )
         self.assertIn('callApi("adopt_existing")', self.installs)
         self.assertIn("let claimInFlight = false;", self.installs, "claims must not stack up")
 

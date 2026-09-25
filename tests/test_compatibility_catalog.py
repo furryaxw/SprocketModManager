@@ -189,6 +189,42 @@ class CatalogVerdictTests(unittest.TestCase):
         )
         self.assertEqual(package["releases"][1]["compatibility"], {"source": "declared"})
 
+    def test_a_local_index_file_is_loaded_from_disk(self) -> None:
+        """索引可以填本地文件路径：读文件、读到的包进数据层。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api = self._api(root)
+            try:
+                result = api.load_catalog()
+                packages = catalog_packages(api)
+            finally:
+                self._close(api)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["count"], len(packages))
+        self.assertTrue(packages)
+
+    def test_a_broken_index_reports_a_failure_and_leaves_the_reading_alone(self) -> None:
+        """索引读不出来时要**报错**：只回 ack 的那条路上没人会推送，界面只能靠这个失败说话。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = game_dir(root)
+            missing = root / "no-such-index.json"
+            ConfigStore(app_dir).save(
+                {"language": "zh", "game_path": str(game), "index_url": str(missing)}
+            )
+            api = ClientApi("test", app_dir=app_dir, service_factory=lambda _p: ModManagerService(_p))
+            try:
+                result = api.load_catalog()
+                reading = api.data.get("catalog")
+            finally:
+                self._close(api)
+
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["code"], "catalog_load_failed")
+        self.assertIsNone(reading, "读不出来就不许往数据层写半份读数")
+
     def test_the_detail_axes_agree_with_the_sidebar(self) -> None:
         """详情各轴里的「本机」值必须能在侧栏那份读数里找到出处：两边读的是同一份环境。
 

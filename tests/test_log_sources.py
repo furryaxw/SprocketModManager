@@ -129,7 +129,12 @@ class LogSourceTests(unittest.TestCase):
         self.assertEqual(available, {"manager", "bepinex"})
 
     def test_without_a_configured_game_only_the_manager_log_is_listed(self) -> None:
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory, patch(
+            # 配置里没写游戏路径时后端会去自动探测；这台机器上装着游戏也一样，
+            # 所以这一条要把探测按住，测的才是「没有游戏」。
+            "sprocket_mod_manager.presentation.web_gui.effective_game_path",
+            return_value="",
+        ):
             root = Path(directory)
             game = sprocket_game(root)
             api = self._api(root, game, configured=False)

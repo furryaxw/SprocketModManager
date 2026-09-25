@@ -126,7 +126,10 @@ function selectionBar(scope) {
     anchor.append(bar);
     return anchor;
 }
-const TAGS = {"#environment-install-loader": "button"};
+const TAGS = {
+    "#environment-install-loader": "button",
+    "#refresh-catalog": "button",
+};
 for (const selector of [
     "#catalog-search", "#category-select", "#sort-select", "#translation-search", "#translation-sort",
     "#package-list", "#translation-list", "#catalog-count", "#translation-count", "#catalog-notice",
@@ -134,6 +137,7 @@ for (const selector of [
     "#environment", "#environment-sprocket", "#environment-loaders",
     "#environment-install-loader", "#environment-note", "#toast-region",
     "#status-text", ".status-mark",
+    "#refresh-catalog", "#registry-state", "#registry-state-text",
 ]) {
     elements[selector] = new FakeElement(TAGS[selector] || (selector.includes("list") ? "section" : "div"));
 }
@@ -168,6 +172,10 @@ const sandbox = {
     reportClientLog: () => {},
     toast: () => {},
     setStatus: () => {},
+    // 认领、已安装页的渲染、私有服务器那一块都在别的文件里：这个 harness 只管目录页那一段。
+    renderInstalled: () => {},
+    claimExistingMods: async () => {},
+    loadDeveloperServers: async () => {},
     resultError: () => {},
     loadPackageReadme: async () => {},
     confirmRemove: () => {},
@@ -179,6 +187,12 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
+// `core.js` 自己声明了 `callApi`（走 `window.pywebview.api`），所以真调用要有假桥。
+sandbox.pywebview = {
+    api: {
+        load_catalog: async () => ({ok: true, source: "test-index", count: 1}),
+    },
+};
 
 // core.js 里的 `state` 是脚本内的 `const`，所以 payload 必须在同一个脚本里并进去。
 const injected = {
@@ -306,6 +320,19 @@ if (noticeButton) {
     };
 }
 
+// 目录加载：`load_catalog` 只回 ack，界面必须靠这次 ack 收尾 ——
+// 目录没变的时候不会有推送，等推送就会永远停在「正在连接」。
+let catalogLoad = null;
+let catalogLoadPending = null;
+if (payload.action === "load_catalog") {
+    catalogLoadPending = Promise.resolve(
+        vm.runInContext("loadCatalog(false)", context),
+    ).then(() => ({
+        state: elements["#registry-state-text"].textContent,
+        loading: Boolean(sandbox.__state.catalogLoading),
+    }));
+}
+
 // 多选：右键行＝快速勾选（左键仍留给详情面板），然后可选地跑一个批量动作。
 for (const index of payload.select_rows || []) rightClickRow(index);
 const selectionAfterRows = selectionState();
@@ -341,8 +368,7 @@ const readmeOpened = readmeDetails ? {
     text: readmeText(),
 } : null;
 
-setImmediate(() => {
-    process.stdout.write(JSON.stringify({
+const report = () => process.stdout.write(JSON.stringify({
         rows: firstRender.rows,
         emptyState: firstRender.emptyState,
         count: firstRender.count,
@@ -350,6 +376,7 @@ setImmediate(() => {
         toggle: firstRender.toggle,
         diagnostics: firstRender.diagnostics,
         afterToggle,
+        catalogLoad,
         selectionAfterRows,
         selectionAfterCheck,
         selectionAfterAction,
@@ -365,5 +392,14 @@ setImmediate(() => {
         },
         detail: detailSnapshot,
         readme: {default: readme, opened: readmeOpened},
-    }));
-});
+}));
+if (catalogLoadPending) {
+    catalogLoadPending
+        .catch((error) => ({error: String((error && error.stack) || error)}))
+        .then((value) => {
+            catalogLoad = value;
+            setImmediate(report);
+        });
+} else {
+    setImmediate(report);
+}

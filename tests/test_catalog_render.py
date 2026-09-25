@@ -149,7 +149,8 @@ def environment(
         "environment": {
             "state": "conflict" if conflict else "ok",
             "entry": None,
-            "loader": LOADER_ID if conflict else "",
+            # 装了加载器才点得出名字；一个都没装时报的是「这个游戏版本谁都还没支持」。
+            "loader": LOADER_ID if (conflict and installed) else "",
             "table_source": "registry",
             "sprocket": sprocket,
             "loaders": {LOADER_ID: "0.7.3"} if installed else {},
@@ -200,6 +201,19 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         for child in node.get("children") or []:
             found.extend(CatalogRenderHarnessTests._texts(child))
         return found
+
+    def test_a_catalog_load_finishes_on_its_ack(self) -> None:
+        """目录加载不能在推送上来之前一直停在「正在连接」：目录没变时根本不会有推送。"""
+        result = self._render(
+            packages=[package("test.mod", [("1.0.0", "compatible")])],
+            action="load_catalog",
+        )
+
+        load = result["catalogLoad"]
+        self.assertNotIn("error", load, load)
+        self.assertIn("loading", load, load)
+        self.assertFalse(load["loading"], "「连接中」要收掉")
+        self.assertIn("connected", load["state"].lower(), load)
 
     def test_a_package_with_only_incompatible_releases_is_hidden(self) -> None:
         payload = {
@@ -263,6 +277,58 @@ class CatalogRenderHarnessTests(unittest.TestCase):
 
         self.assertEqual(len(result["rows"]), 1)
         self.assertTrue(result["notice"]["hidden"], "没有隐藏就不出说明")
+
+    def test_a_package_with_only_unknown_releases_stays_visible(self) -> None:
+        """一版都没判过的包照常显示：还不知道能不能用，不等于不能用。"""
+        result = self._render(
+            packages=[package("test.quiet", [
+                ("3.0.0", "unknown"), ("2.0.0", "unknown"), ("1.0.0", "unknown"),
+            ])],
+        )
+
+        self.assertEqual(result["diagnostics"]["hidden"], [])
+        self.assertEqual(len(result["rows"]), 1)
+        self.assertTrue(result["notice"]["hidden"], "没有隐藏就不出说明")
+
+    def test_an_older_compatible_release_keeps_the_package_visible(self) -> None:
+        result = self._render(
+            packages=[package("test.mixed", [
+                ("3.0.0", "unknown"), ("2.0.0", "compatible"), ("1.0.0", "unknown"),
+            ])],
+        )
+
+        self.assertEqual(result["diagnostics"]["hidden"], [])
+        self.assertEqual(len(result["rows"]), 1)
+
+    def test_a_package_with_no_compatible_release_is_hidden_even_between_unknowns(self) -> None:
+        """判过、又一个兼容版本都没有 → 不兼容：藏起来，开关打开时标成不兼容。"""
+        result = self._render(
+            packages=[package("test.broken", [
+                ("3.0.0", "unknown"), ("2.0.0", "incompatible"), ("1.0.0", "unknown"),
+            ])],
+            show_incompatible=True,
+            selected="test.broken",
+        )
+
+        self.assertEqual(result["diagnostics"]["hidden"], ["test.broken"])
+        self.assertEqual(len(result["rows"]), 1)
+        number = next(
+            child for child in result["rows"][0]["children"] if child["className"].startswith("package-version")
+        )["children"][0]
+        self.assertIn("incompatible", number["className"], "版本号按包判：这一版装下去也跑不起来")
+        chips = [
+            node["text"] for node in _walk(result["detail"])
+            if node["className"].startswith("state-chip")
+        ]
+        self.assertIn("Incompatible", chips)
+
+    def test_a_package_whose_verdicts_are_unknown_and_incompatible_is_hidden(self) -> None:
+        result = self._render(
+            packages=[package("test.broken", [("2.0.0", "unknown"), ("1.0.0", "incompatible")])],
+        )
+
+        self.assertEqual(result["diagnostics"]["hidden"], ["test.broken"])
+        self.assertEqual(len(result["rows"]), 0)
 
     def test_a_translation_package_is_shown_without_a_verdict_mark(self) -> None:
         """翻译包不参与环境判定：不隐藏、不标色、不挂 chip（它的依赖各自在目录里有颜色）。"""
@@ -623,10 +689,20 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertIn("error", info["sprocket"]["className"])
         self.assertFalse(info["note"]["hidden"])
         self.assertIn("error", info["note"]["className"])
-        self.assertIn(
-            "does not support Sprocket 0.2.54.2",
-            " ".join(self._texts(info["note"])),
+        text = " ".join(self._texts(info["note"]))
+        self.assertIn("MelonLoader 0.7.3", text, "装了加载器就点名")
+        self.assertIn("does not support Sprocket 0.2.54.2", text)
+
+    def test_a_conflict_without_an_installed_loader_names_nobody(self) -> None:
+        result = self._render(
+            environment=environment(installed=False, sprocket="0.2.54.2", conflict=True)
         )
+        info = result["environment"]
+
+        self.assertFalse(info["note"]["hidden"])
+        text = " ".join(self._texts(info["note"]))
+        self.assertIn("No loader supports Sprocket 0.2.54.2", text)
+        self.assertNotIn("MelonLoader", text, "一个都没装就没有名字可点")
 
     def test_an_unreadable_game_version_is_shown_raw_and_red(self) -> None:
         result = self._render(environment=environment(sprocket="0.127", state="legacy"))

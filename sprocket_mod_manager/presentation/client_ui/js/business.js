@@ -76,23 +76,11 @@ function watchLoadersData() {
     });
 }
 
-/** 注册表目录变了：收尾这次加载的界面状态，并顺手认领磁盘上已有的模组。 */
+/** 注册表目录变了：按新读数收尾（推送只说明"变了"，收尾口径与 ack 那条路同一处）。 */
 function watchCatalogData() {
     dataWatch(["catalog"], () => {
         if (!state.ready) return;
-        state.catalogLoading = false;
-        state.batch.clear();
-        if (!state.packages.some((pkg) => pkg.id === state.selectedId)) state.selectedId = null;
-        setRegistryState("ready", tr("connected"));
-        setStatus(
-            tr("ready", {count: state.packages.length}),
-            "ready",
-            dataValue("catalog")?.source || "",
-        );
-        renderCatalog();
-        renderInstalled();
-        // 目录回来了才谈得上认领：磁盘上已有的模组要能对上注册表里的包。
-        void claimExistingMods();
+        finishCatalogLoad({source: dataValue("catalog")?.source || ""});
     });
 }
 

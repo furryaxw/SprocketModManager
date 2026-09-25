@@ -169,7 +169,8 @@ class ClientApi:
 
         每个加载器包取「在用版本」：装了就是装的那版，没装就用已知的最新版。能力版本由
         加载器包的 `provides` 给出（`{version}` 按在用版本替换）—— 包版本与它提供的能力
-        版本可以不同，这正是桥接加载器能供给另一个加载器能力的原因。
+        版本可以不同，这正是桥接加载器能供给另一个加载器能力的原因。真正装上的那些另外记一份
+        （`installed_loaders`）：环境矛盾按「装了什么」决定怎么报。
         """
         snapshot = self.environment_snapshot()
         sprocket = dict(snapshot.get("sprocket") or {})
@@ -178,11 +179,14 @@ class ClientApi:
         table, _source = self.providers_table()
         registry = self.service.registry if self.service is not None else None
         loaders: dict[str, str] = {}
+        installed_loaders: set[str] = set()
         for loader_id in set(states) | set(latest_loaders):
             info = states.get(loader_id) or {}
             version = str(info.get("version") or latest_loaders.get(loader_id) or "")
             if version:
                 loaders[loader_id] = version
+            if info.get("installed"):
+                installed_loaders.add(loader_id)
         capabilities: dict[str, str] = {}
         recorded: set[str] = set()
         if registry is not None:
@@ -215,6 +219,7 @@ class ClientApi:
             sprocket_state=str(sprocket.get("state") or "unconfigured"),
             capabilities=capabilities,
             loaders=loaders,
+            installed_loaders=frozenset(installed_loaders),
             table=table,
         )
 

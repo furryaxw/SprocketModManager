@@ -1054,6 +1054,45 @@ class EnvironmentApiTests(unittest.TestCase):
             {"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"},
         )
 
+    def test_without_an_installed_loader_a_covering_row_silences_the_conflict(self) -> None:
+        """一个加载器都没装：表里有一行覆盖本机游戏版本就不报，哪怕那一行的加载器没装。"""
+        with tempfile.TemporaryDirectory() as directory:
+            game = game_dir_with_version(Path(directory), unity_payload("0.2.54.2"))
+            api = self._api(Path(directory), game)
+            api.service.registry = Registry(
+                [loader_package()],
+                {"entries": [
+                    {"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"},
+                    {
+                        "loader": "bepinex.bepinex-be",
+                        "version": ">=6.0.0-be.785",
+                        "sprocket": ">=0.2.54.0",
+                    },
+                ]},
+            )
+            try:
+                result = api.get_environment()
+            finally:
+                self._close(api)
+
+        self.assertEqual(result["environment"]["state"], "ok")
+        self.assertEqual(result["environment"]["loader"], "")
+
+    def test_without_an_installed_loader_an_uncovered_game_version_is_a_conflict(self) -> None:
+        """表里一行都覆盖不了本机游戏版本：报不兼容，但不指名任何加载器。"""
+        with tempfile.TemporaryDirectory() as directory:
+            game = game_dir_with_version(Path(directory), unity_payload("0.2.54.2"))
+            api = self._api(Path(directory), game)
+            api.service.registry = Registry([loader_package()], _loader_table())
+            try:
+                result = api.get_environment()
+            finally:
+                self._close(api)
+
+        self.assertEqual(result["environment"]["state"], "conflict")
+        self.assertEqual(result["environment"]["loader"], "")
+        self.assertIsNone(result["environment"]["entry"])
+
     def test_the_table_from_the_index_is_cached_and_reused_without_a_registry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1176,6 +1215,7 @@ class EnvironmentUiTests(unittest.TestCase):
         self.assertIn("Sprocket ${sprocketText}", modloaders, "版本号照旧")
         self.assertIn("function environmentConflictText()", modloaders)
         self.assertIn('tr("environmentConflict"', modloaders)
+        self.assertIn('tr("environmentConflictNoLoader"', modloaders, "没装加载器时只说版本不支持，不点名")
         self.assertIn("environmentUnusable", modloaders)
         self.assertIn('id="environment-note"', self.html, "原因仍写在左下角这一行")
         self.assertIn(".environment-line.error", css)
