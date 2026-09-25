@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .adoption import AdoptionRecord, ExistingModsAdopter
@@ -11,7 +11,7 @@ from .integrity import BROKEN_STATUSES
 from .preparer import PlanPreparer
 from .solver import DependencySolver
 from ..domain.compatibility import CapabilityEnvironment
-from ..domain.errors import ModManagerError, RegistryError
+from ..domain.errors import ModManagerError, RegistryError, ScanError
 from ..infrastructure.mod_toggle import canonical_relative
 from ..domain.models import PreparedPlan, ProgressCallback, ResolutionPlan
 from ..domain.registry import Registry
@@ -23,10 +23,10 @@ from ..infrastructure.http_client import HttpClient
 from ..infrastructure.installer import Installer
 from ..infrastructure.profiles import InstallerProfiles
 from ..infrastructure.file_metadata import FileMetadataStore
-from ..infrastructure.manager_paths import STATE_FILE_NAME, backups_dir, file_metadata_path, manager_state_dir, state_file_path
+from ..infrastructure.manager_paths import STATE_FILE_NAME, file_metadata_path, manager_state_dir, state_file_path
 from ..infrastructure.state import StateStore
 from ..infrastructure.registry_source import RegistrySourceLoader
-from ..infrastructure.xunity_backup import archive_replaced_directory
+from ..utilities.package_paths import validate_supply_target
 
 LOGGER = logging.getLogger(__name__)
 
@@ -201,8 +201,7 @@ class ModManagerService:
 
         加载器是被依赖带进来的时候也要交还（模组依赖 BepInEx 就会顶掉官方 MelonLoader），所以看的是
         **计划里的每个加载器**，不只是用户点的那个包。计划里的包不参与：它们是这次要装的，不是要被换
-        掉的。被交还的加载器先把整棵树归档进保留的备份区（与整体接管的归档同址、同保留份数），再按
-        它自己声明的顶层条目交还。
+        掉的。交还之前先按标识符认领：只在磁盘上、记录里没有的加载器，交还靠的就是这份顶层条目清单。
         """
         installing = {item.package.id for item in plan.packages}
         installed = self._installed_ids(game_dir)
@@ -214,49 +213,49 @@ class ModManagerService:
                 if package_id not in installing and package_id not in displaced:
                     displaced.append(package_id)
         for package_id in displaced:
-            self._claim_and_archive_loader(package_id, game_dir)
+            self.claim_detected_loader(package_id, game_dir)
             self.remove(package_id, game_dir)
             LOGGER.info("displaced conflicting loader package=%s", package_id)
         return displaced
-
-    def _claim_and_archive_loader(self, package_id: str, game_dir: Path) -> None:
-        """把要交还的加载器登记下来，并把它的树归档进备份区。
-
-        只在磁盘上的加载器先认领：交还靠的是记录里那份顶层条目清单。归档先于交还发生，
-        用户改过的文件因此一定有可回退的一份。
-        """
-        self.claim_detected_loader(package_id, game_dir)
-        try:
-            state = StateStore(state_file_path(game_dir)).load(modloaders=self._modloader_ids())
-        except (ModManagerError, OSError, ValueError) as exc:
-            LOGGER.warning("could not read %s before displacing it: %s", package_id, exc)
-            return
-        record = state["packages"].get(package_id) or {}
-        root = Path(game_dir).expanduser()
-        for relative in record.get("directories") or ():
-            if not isinstance(relative, str) or not relative.strip():
-                continue
-            try:
-                target = (root / Path(*PurePosixPath(relative).parts)).resolve()
-                target.relative_to(root.resolve())
-            except (OSError, ValueError):
-                continue
-            if not target.is_dir():
-                continue
-            archive_replaced_directory(backups_dir(game_dir), package_id, target)
 
     def remove(self, identifier: str, game_dir: Path) -> tuple[list[str], list[str]]:
         LOGGER.info("remove requested identifier=%s game_dir=%s", identifier, game_dir)
         registry = self._require_registry()
         package = registry.resolve_identifier(identifier)
         if package.is_loader:
-            # 只在磁盘上的加载器也要能卸载：先按标识符登记它的顶层条目，交还才有依据。
+            # 只在磁盘上的加载器也要能卸载：先按标识符登记它的顶层条目，搬进备份区才有依据。
             self.claim_detected_loader(package.id, game_dir)
         result = self._installer_for(game_dir).remove(
-            package.id, game_dir, modloaders=self._modloader_ids()
+            package.id,
+            game_dir,
+            modloaders=self._modloader_ids(),
+            loader_supply=self.loader_supply(),
         )
         LOGGER.info("remove completed package=%s removed=%d warnings=%d", package.id, len(result[0]), len(result[1]))
         return result
+
+    def loader_supply(self) -> dict[str, tuple[str, ...]]:
+        """注册表里每个加载器**供给别人**的目录（游戏目录相对路径）。
+
+        卸载加载器时要连这些目录一起搬进备份区：里面躺着别的包的模组，而它们的类型在加载器走后
+        没有任何供给者。注册表没加载时返回空表 —— 那时只剩记录里自己声明的顶层条目可搬。
+        """
+        if self.registry is None:
+            return {}
+        table: dict[str, tuple[str, ...]] = {}
+        for package in self.registry.packages:
+            if not package.is_loader or not package.supply:
+                continue
+            directories: list[str] = []
+            for target in package.supply.values():
+                try:
+                    resolved = validate_supply_target(str(target)).as_posix()
+                except ScanError:
+                    continue
+                if resolved and resolved != ".":
+                    directories.append(resolved)
+            table[package.id] = tuple(directories)
+        return table
 
     def installed(self, game_dir: Path, *, suppressed: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
         """已安装包（磁盘优先），带**实时**的完整性判定。
