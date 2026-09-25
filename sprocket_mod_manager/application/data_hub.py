@@ -183,6 +183,13 @@ class DataHub:
 
     def request(self, key: str, **args: Any) -> dict[str, Any]:
         """刷新命令：排进队列立刻回 ack，刷新出来的数据由 `publish()` 广播给订阅者。"""
+        result = self._enqueue(key, args)
+        if result["ok"]:
+            LOGGER.debug("data hub requested key=%s", key)
+        return result
+
+    def _enqueue(self, key: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """把一次刷新排进队列。周期任务走这里 —— 每 0.4 秒问一次的轮询不该往日志里写字。"""
         with self._lock:
             if key not in self._refreshers:
                 return {"ok": False, "key": key, "code": "unknown_key"}
@@ -190,7 +197,6 @@ class DataHub:
             self._ensure_worker()
             revision = self._revisions.get(key, 0)
         self._wake.set()
-        LOGGER.debug("data hub requested key=%s", key)
         return {"ok": True, "key": key, "revision": revision}
 
     def refresh_now(self, key: str, **args: Any) -> Any:
@@ -246,7 +252,7 @@ class DataHub:
                 continue
             token = current
             for key in keys:
-                self.request(key)
+                self._enqueue(key, {})
 
     @staticmethod
     def _guard_token(guard: Callable[[], Any] | None) -> Any:
@@ -293,8 +299,13 @@ class DataHub:
                     continue
                 try:
                     value = self._refresher(key)(**args)
-                except Exception:  # noqa: BLE001 - 一个 key 刷不出来不影响别的
-                    LOGGER.exception("data hub refresh failed key=%s", key)
+                except Exception as exc:  # noqa: BLE001 - 一个 key 刷不出来不影响别的
+                    if getattr(exc, "code", ""):
+                        # 带 code 的领域错误是「这一轮算不出来」（例如同一份目录正在别处加载）：
+                        # 值留上一次那份，等下一轮；这不是要看的栈。
+                        LOGGER.debug("data hub refresh skipped key=%s error=%s", key, exc)
+                    else:
+                        LOGGER.exception("data hub refresh failed key=%s", key)
                     continue
                 # 刷新期间可能刚被作废（换目录）：结果一律丢掉，不让旧目录的读数回来。
                 if self._stale(epoch):
