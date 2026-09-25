@@ -495,7 +495,7 @@ class EnvironmentApiTests(unittest.TestCase):
                 self.assertTrue(self._wait_for_push(pushed), "订阅之后数据层自己去刷")
                 reading = pushed[-1]["value"]
                 ack = api.data_request("queue")
-                cleared = api.clear_finished()
+                cleared = api.clear_completed()
             finally:
                 self._close(api)
 
