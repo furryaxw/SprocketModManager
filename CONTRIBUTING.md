@@ -224,8 +224,8 @@ BepInEx/MelonLoader 桥接。桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 CI 会检查：
 
 - meta 符合 `schemas/sprocket-mod.schema.json`，目录名与 `id` 一致，且不含版本号或下载地址；
-- GitHub 仓库公开、未归档，并具有 GitHub 可识别的 SPDX 开源许可证；
-- 仓库包含 `LICENSE`/`COPYING` 和实际源文件；
+- GitHub 仓库公开、未归档；
+- 仓库包含 `LICENSE`/`COPYING` 和实际源文件；许可证以条目的 SPDX 标识为准，GitHub 认不出该文件时也算通过；
 - 至少一个非草稿 Release 的 tag 可解析为 SemVer；
 - 至少一个 Release 资产匹配 meta 的 include/exclude 规则；
 - 每个依赖 id 都是已注册的包或一个能力，真实包之间的依赖图无环；

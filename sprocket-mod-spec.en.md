@@ -532,7 +532,8 @@ Submissions are made by Pull Request to the Registry repository. CI verifies at
 least that:
 
 - the GitHub repository is public;
-- the repository contains an SPDX open-source license and a LICENSE file;
+- the repository contains a LICENSE/COPYING file, and the license is the SPDX identifier
+  the entry declares;
 - the repository contains source or project files rather than DLLs only;
 - a Release tag is parseable and at least one scannable asset exists;
 - every dependency id is a registered package or a capability, and real packages contain no cycles;
