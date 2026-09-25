@@ -156,13 +156,13 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
     return errors
 
 
-def validate_environment(index_module) -> list[str]:
-    """The loader/game compatibility table: a platform fact, so a bad entry fails here
+def validate_providers(index_module, loader_ids) -> list[str]:
+    """The loader-package/game compatibility table: a platform fact, so a bad entry fails here
     instead of silently narrowing what the client can filter."""
-    path = index_module.ENVIRONMENT_FILE
+    path = index_module.PROVIDERS_FILE
     if not path.is_file():
         return [f"{path.name} is missing"]
-    table, warnings = index_module.load_environment_table(path)
+    table, warnings = index_module.load_providers_table(path, loader_ids)
     errors = list(warnings)
     if not table["entries"]:
         errors.append(f"{path.name} has no usable entry")
@@ -181,7 +181,15 @@ def main() -> int:
         print(f"registry error: {exc}", file=sys.stderr)
         return 1
     failures: list[str] = [
-        f"environment: {error}" for error in validate_environment(index_module)
+        f"providers: {error}"
+        for error in validate_providers(
+            index_module,
+            {
+                package["id"]
+                for package in packages
+                if index_module.is_loader_kind(package.get("kind"))
+            },
+        )
     ]
     if args.offline:
         if failures:

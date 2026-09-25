@@ -1,0 +1,48 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 2,
+  "id": "hans21223.sprocket-mod-loader",
+  "name": "SprocketModLoader",
+  "authors": ["Hans21223"],
+  "repository": "Hans21223/Sprocket-Mod-Loader",
+  "license": "LGPL-3.0-only",
+  "display_name": {
+    "en": "Sprocket Mod Loader",
+    "zh": "Sprocket 模组加载器补丁"
+  },
+  "description": {
+    "en": "Compatibility patch for the BepInEx Il2Cpp bridge: replaces the bridge runtime with a build carrying verified native offsets for a pinned Sprocket build.",
+    "zh": "BepInEx Il2Cpp 桥的兼容补丁：用带已验证原生偏移的桥运行时替换现有实现，对应固定的 Sprocket 构建。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["Sprocket-Mod-Loader-*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "kind": "patch",
+  "install": {
+    "mode": "patch",
+    "files": [
+      {
+        "match": "Patch/BepInEx/core/*.dll",
+        "type": "bepinex:core"
+      }
+    ],
+    "scan_dlls": false,
+    "exclude": []
+  },
+  "category": "utility",
+  "tags": ["modloader", "patch", "bepinex"]
+}

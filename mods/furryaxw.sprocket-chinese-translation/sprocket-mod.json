@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "furryaxw.sprocket-chinese-translation",
   "name": "SprocketChineseTranslation",
   "authors": ["furryAxw"],
@@ -36,11 +36,19 @@
   ],
   "recommendations": [],
   "featured": false,
+  "kind": "patch",
   "install": {
-    "mode": "xunity-translation",
+    "mode": "patch",
+    "files": [
+      {
+        "match": "**",
+        "type": "xunity:translation",
+        "layout": "tree"
+      }
+    ],
+    "replace": ["xunity:translation"],
     "scan_dlls": false,
-    "exclude": [],
-    "overrides": []
+    "exclude": []
   },
   "category": "translation",
   "tags": ["translation", "localization", "chinese", "xunity"]

@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "furryaxw.cannon-smoke-suppressor",
   "name": "CannonSmokeSuppressor",
   "authors": ["furryAxw"],
@@ -26,9 +26,14 @@
   "recommendations": [],
   "featured": true,
   "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "melonloader:*"
+      }
+    ],
     "scan_dlls": true,
-    "exclude": [],
-    "overrides": []
+    "exclude": []
   },
   "category": "visual",
   "tags": ["effects", "smoke", "cannon", "performance"]

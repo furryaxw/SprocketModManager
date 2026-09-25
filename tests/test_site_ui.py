@@ -79,42 +79,18 @@ class SiteUiTests(unittest.TestCase):
 
         self.assertEqual(cname, "sprocketmods.furryaxw.top\n")
 
-    def test_language_pickers_use_the_sort_select_structure_without_inputs(self):
-        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
-
-        self.assertEqual(html.count('class="language-picker select-control"'), 2)
-        self.assertEqual(html.count('data-lucide="chevron-down" aria-hidden="true"'), 3)
-
-    def test_language_picker_options_are_data_driven(self):
-        script = site_javascript()
-
-        self.assertIn("const SUBMISSION_LANGUAGES = [", script)
-        self.assertIn("populateLanguageOptions(languageSelect);", script)
-
-    def test_localized_fields_match_catalog_tool_font_size(self):
-        styles = (SITE_ROOT / "styles.css").read_text(encoding="utf-8")
-
-        self.assertRegex(
-            styles,
-            r"\.localized-row input, \.localized-row textarea, \.localized-row select\s*\{\s*font-size:\s*13px;\s*\}",
-        )
-
-    def test_submission_and_details_support_recommendations(self):
+    def test_details_show_recommendations(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
         script = site_javascript()
 
-        self.assertIn('name="recommendations"', html)
         self.assertIn('id="detail-recommendations"', html)
-        self.assertIn('data.get("recommendations")', script)
         self.assertIn("pkg.recommendations || []", script)
 
     def test_featured_packages_are_pinned_and_labeled(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
         script = site_javascript()
 
-        self.assertIn('name="featured" type="checkbox"', html)
         self.assertIn('id="detail-featured" hidden', html)
-        self.assertIn('data.has("featured")', script)
         self.assertIn("if (featured) return featured", script)
         self.assertIn('class="featured-star"', script)
         self.assertIn('tr("starterRecommended")', script)

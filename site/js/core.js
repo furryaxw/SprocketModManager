@@ -8,13 +8,10 @@ const state = {
     sort: "name",
     language: readInitialLanguage(),
     registryStatus: {key: "loadingRegistry", values: {}},
-    currentStep: 0,
-    maxStep: 0,
     selectedPackageId: null,
 };
 
 const elements = {};
-const LANGUAGE_TAG_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|[xX](?:-[A-Za-z0-9]{1,8})+)$/;
 
 document.addEventListener("DOMContentLoaded", () => {
     Object.assign(elements, {
@@ -30,28 +27,10 @@ document.addEventListener("DOMContentLoaded", () => {
         categories: document.querySelector("#category-filter"),
         refresh: document.querySelector("#refresh"),
         detail: document.querySelector("#mod-detail"),
-        submit: document.querySelector("#submit-dialog"),
-        form: document.querySelector("#submit-form"),
-        steps: [...document.querySelectorAll("[data-step]")],
-        stepButtons: [...document.querySelectorAll("[data-step-target]")],
-        previousStep: document.querySelector("#previous-step"),
-        nextStep: document.querySelector("#next-step"),
-        submitGithub: document.querySelector("#submit-github"),
-        dependencyRows: document.querySelector("#dependency-rows"),
-        dependencyTemplate: document.querySelector("#dependency-template"),
-        dependencyEmpty: document.querySelector("#dependency-empty"),
-        displayNameRows: document.querySelector("#display-name-rows"),
-        descriptionRows: document.querySelector("#description-rows"),
-        displayNameTemplate: document.querySelector("#display-name-template"),
-        descriptionTemplate: document.querySelector("#description-template"),
-        preview: document.querySelector("#meta-preview"),
-        output: document.querySelector("#meta-output"),
     });
 
     bindEvents();
-    addLocalizedRow("display_name", {language: state.language});
     applyLanguage();
-    showStep(0);
     refreshIcons();
     loadRegistry(false);
 });
@@ -76,35 +55,8 @@ function bindEvents() {
         renderPackages();
     });
     elements.refresh.addEventListener("click", () => loadRegistry(true));
-    document.querySelector("#open-submit").addEventListener("click", () => {
-        showStep(0);
-        elements.submit.showModal();
-    });
     document.querySelectorAll(".close-dialog").forEach((button) => {
         button.addEventListener("click", () => button.closest("dialog").close());
-    });
-    document.querySelector("#add-dependency").addEventListener("click", addDependencyRow);
-    document.querySelector("#add-display-name").addEventListener("click", () => addLocalizedRow("display_name"));
-    document.querySelector("#add-description").addEventListener("click", () => addLocalizedRow("description"));
-    document.querySelector("#preview-meta").addEventListener("click", previewMeta);
-    document.querySelector("#copy-meta").addEventListener("click", copyMeta);
-    elements.previousStep.addEventListener("click", () => showStep(state.currentStep - 1));
-    elements.nextStep.addEventListener("click", () => {
-        if (!validateStep(state.currentStep)) return;
-        state.maxStep = Math.max(state.maxStep, state.currentStep + 1);
-        showStep(state.currentStep + 1);
-    });
-    elements.stepButtons.forEach((button) => {
-        button.addEventListener("click", () => {
-            const target = Number(button.dataset.stepTarget);
-            if (target <= state.maxStep) showStep(target);
-        });
-    });
-    elements.form.addEventListener("submit", openPullRequest);
-    elements.form.addEventListener("input", (event) => {
-        if (event.target.matches(".localized-row [data-field='language']")) {
-            validateLocalizedLanguages(event.target.closest(".localized-editor"));
-        }
     });
     elements.grid.addEventListener("click", (event) => {
         const card = event.target.closest("[data-package-id]");
@@ -165,7 +117,6 @@ function applyLanguage() {
     elements.status.textContent = tr(state.registryStatus.key, state.registryStatus.values);
     renderPackages();
     if (state.selectedPackageId && elements.detail.open) renderDetails(state.selectedPackageId);
-    validateLocalizedLanguages(elements.form);
     refreshIcons();
 }
 

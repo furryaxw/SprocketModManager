@@ -1,0 +1,47 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 2,
+  "id": "lavagang.melonloader",
+  "name": "MelonLoader",
+  "authors": ["LavaGang"],
+  "repository": "LavaGang/MelonLoader",
+  "license": "Apache-2.0",
+  "display_name": {
+    "en": "MelonLoader",
+    "zh": "MelonLoader"
+  },
+  "description": {
+    "en": "MelonLoader runtime for Sprocket: the Il2Cpp mod loader that hosts Mods, Plugins and UserLibs.",
+    "zh": "Sprocket 的 MelonLoader 运行时：承载 Mods、Plugins 与 UserLibs 的 Il2Cpp 模组加载器。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["MelonLoader.x64.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "kind": "modloader",
+  "supply": {
+    "melonloader:core": "{Sprocket}/MelonLoader",
+    "melonloader:mod": "{Sprocket}/Mods",
+    "melonloader:plugin": "{Sprocket}/Plugins",
+    "melonloader:userlib": "{Sprocket}/UserLibs"
+  },
+  "install": {
+    "payload": [
+      {
+        "match": "**",
+        "target": "{Sprocket}",
+        "layout": "tree"
+      }
+    ],
+    "exclude": []
+  },
+  "category": "utility",
+  "tags": ["modloader", "runtime"]
+}

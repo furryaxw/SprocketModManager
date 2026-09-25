@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "furryaxw.sprocket-mod-api",
   "name": "SprocketModAPI",
   "authors": ["furryAxw"],
@@ -23,10 +23,15 @@
   "recommendations": [],
   "featured": false,
   "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "melonloader:*"
+      }
+    ],
     "scan_dlls": true,
-    "exclude": [],
-    "overrides": []
+    "exclude": []
   },
-  "category": "utility",
+  "category": "library",
   "tags": ["api", "input", "keybindings"]
 }

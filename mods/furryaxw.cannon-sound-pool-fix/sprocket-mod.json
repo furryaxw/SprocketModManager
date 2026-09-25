@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "furryaxw.cannon-sound-pool-fix",
   "name": "CannonSoundPoolFix",
   "authors": ["furryAxw"],
@@ -26,9 +26,14 @@
   "recommendations": [],
   "featured": true,
   "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "melonloader:*"
+      }
+    ],
     "scan_dlls": true,
-    "exclude": [],
-    "overrides": []
+    "exclude": []
   },
   "category": "audio",
   "tags": ["audio", "cannon", "performance", "sound-pool"]
