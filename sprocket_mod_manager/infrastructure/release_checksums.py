@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .http_client import HttpClient
+from .http_client import GITHUB_ASSET_HOSTS, HttpClient
 from ..domain.errors import DownloadError
 from ..domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
 from ..utilities.checksums import SHA256_PATTERN, parse_checksum_text
@@ -39,7 +39,7 @@ def publisher_checksum(
                 sidecar.download_url,
                 timeout=30,
                 max_bytes=1024 * 1024,
-                allowed_hosts=set(package.asset_hosts()),
+                allowed_hosts=GITHUB_ASSET_HOSTS | set(package.asset_hosts()),
             ).decode("utf-8-sig")
         except (DownloadError, UnicodeDecodeError):
             continue

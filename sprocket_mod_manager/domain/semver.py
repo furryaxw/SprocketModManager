@@ -21,6 +21,7 @@ _VERSION_RE = re.compile(
     r"^(0|[1-9]\d*)\."
     r"(0|[1-9]\d*)\."
     r"(0|[1-9]\d*)"
+    r"(?:\.(0|[1-9]\d*))?"
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
@@ -28,24 +29,39 @@ _VERSION_RE = re.compile(
 
 @dataclass(frozen=True)
 class Version:
+    """三段式 SemVer，外加可选的第四段。
+
+    程序集自报的版本常常是四段（`0.2.2.0`），而发布 tag 是三段（`0.2.2`）：两边的第四段缺省
+    按 0 读，所以 `0.2.2.0` 与 `0.2.2` 是同一个版本；第四段非 0（`1.2.3.4`）才是另一个版本。
+    """
+
     major: int
     minor: int
     patch: int
     prerelease: tuple[str, ...] = ()
+    revision: int = 0
 
     @classmethod
     def parse(cls, value: str) -> "Version":
         match = _VERSION_RE.fullmatch(value.strip())
         if not match:
             raise ValueError(f"invalid SemVer: {value!r}")
-        prerelease = tuple(match.group(4).split(".")) if match.group(4) else ()
+        prerelease = tuple(match.group(5).split(".")) if match.group(5) else ()
         for part in prerelease:
             if part.isdigit() and len(part) > 1 and part.startswith("0"):
                 raise ValueError(f"invalid numeric prerelease identifier: {value!r}")
-        return cls(int(match.group(1)), int(match.group(2)), int(match.group(3)), prerelease)
+        return cls(
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+            prerelease,
+            int(match.group(4)) if match.group(4) else 0,
+        )
 
     def __str__(self) -> str:
         base = f"{self.major}.{self.minor}.{self.patch}"
+        if self.revision:
+            base += f".{self.revision}"
         return base if not self.prerelease else base + "-" + ".".join(self.prerelease)
 
     def _prerelease_rank(self) -> int:
@@ -60,8 +76,8 @@ class Version:
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Version):
             return NotImplemented
-        left = (self.major, self.minor, self.patch)
-        right = (other.major, other.minor, other.patch)
+        left = (self.major, self.minor, self.patch, self.revision)
+        right = (other.major, other.minor, other.patch, other.revision)
         if left != right:
             return left < right
         self_rank = self._prerelease_rank()

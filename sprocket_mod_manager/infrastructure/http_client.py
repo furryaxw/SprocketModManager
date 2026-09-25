@@ -201,7 +201,9 @@ class HttpClient:
             hosts: set[str] | None = None,
     ) -> Path:
         LOGGER.info("asset download started name=%s size=%d", asset.name, asset.size)
-        allowed_hosts = {host.casefold() for host in (hosts or GITHUB_ASSET_HOSTS)}
+        # 允许的主机 = 这个包声明的来源 + GitHub 自己的资产 CDN：`github.com/<owner>/<repo>/releases/download/...`
+        # 会 302 到 `release-assets.githubusercontent.com`，重定向后的地址同样要能过校验。
+        allowed_hosts = {host.casefold() for host in (hosts or ())} | GITHUB_ASSET_HOSTS
         if asset.size < 0 or asset.size > MAX_ASSET_BYTES:
             raise DownloadError(f"asset size is outside the allowed range: {asset.name}")
         # 没有声明大小的资产（例如外部来源只给了摘要）按全局上限读，不能用 0 反推成一个更小的上限。

@@ -56,6 +56,19 @@ class GitHubDownloadTests(unittest.TestCase):
             HttpClient(self.root / "cache").download(self.asset, destination)
         self.assertEqual(destination.read_bytes(), b"test")
 
+    def test_declared_hosts_keep_the_github_asset_cdn_allowed(self):
+        """包自己声明的来源只是「额外」，GitHub 自己的资产 CDN 不能被它顶掉。"""
+        response = FakeResponse(
+            b"test",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/test",
+        )
+        destination = self.root / "TestMod.dll"
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", return_value=response):
+            HttpClient(self.root / "cache").download(
+                self.asset, destination, hosts={"github.com"}
+            )
+        self.assertEqual(destination.read_bytes(), b"test")
+
     def test_unexpected_release_redirect_host_is_rejected(self):
         response = FakeResponse(b"test", "https://downloads.example.com/TestMod.dll")
         with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", return_value=response):
