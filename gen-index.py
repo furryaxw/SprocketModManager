@@ -298,8 +298,8 @@ def _compat_bound_text(version: tuple[int, ...], *, lower: bool) -> str:
     return (">=" if lower else "<=") + ".".join(str(part) for part in version)
 
 
-def canonical_compat_range(items: list[str], parts: int) -> str:
-    """把作者写的一组区间项规范成一条 `>=a <=b`（多段用 `||` 连接）。"""
+def _compat_numbered_range(items: list[str], parts: int) -> str:
+    """数字段写法 -> 一条 `>=a <=b`（多段用 `||`）：合并重叠与相接的段，按段号排序。"""
     # 4 段及以上必须写全段数（少一段有歧义）；段数少的轴允许省略（0.8 按 0.8.0 补齐）
     strict = parts >= 4
     ranges = [_compat_item_range(item, parts, strict) for item in items]
@@ -336,6 +336,30 @@ def canonical_compat_range(items: list[str], parts: int) -> str:
             clauses.append(
                 f"{_compat_bound_text(lower, lower=True)} {_compat_bound_text(upper, lower=False)}"
             )
+    return " || ".join(clauses)
+
+
+def _compat_is_prerelease(item: str) -> bool:
+    """这一项带预发布段（`6.0.0-be.788`）：它不是整数区间，不能按段号合并。"""
+    return "-" in item
+
+
+def canonical_compat_range(items: list[str], parts: int) -> str:
+    """把作者写的一组区间项规范成一条 `>=a <=b`（多段用 `||` 连接）。
+
+    带预发布段的项按 `domain.semver` 校验后原样保留成单独一段：加载器版本就长这样
+    （`6.0.0-be.788`），后缀本身就是版本的一部分，砍掉就把两个构建说成同一个了。
+    """
+    prerelease = [item.strip() for item in items if _compat_is_prerelease(item)]
+    numbered = [item for item in items if not _compat_is_prerelease(item)]
+
+    clauses: list[str] = [_compat_numbered_range(numbered, parts)] if numbered else []
+    for item in prerelease:
+        try:
+            validate_range(item)
+        except ValueError as exc:
+            raise CompatibilityError(f"{item!r} 不是合法版本区间：{exc}") from exc
+        clauses.append(item)
     return " || ".join(clauses)
 
 

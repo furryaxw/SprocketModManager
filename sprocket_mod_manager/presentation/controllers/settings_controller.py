@@ -139,6 +139,7 @@ class SettingsController(ApiController):
             if language not in {"auto", "zh", "en"}:
                 raise ValueError("unsupported interface language")
             previous_game_path = str(self.config.get("game_path", "") or "")
+            previous_index_url = str(self.config.get("index_url", "") or "")
             self.config = {
                 "debug": values.get("debug") is True,
                 "language": language,
@@ -165,6 +166,9 @@ class SettingsController(ApiController):
                     KEY_INSTALLED, KEY_ENVIRONMENT, KEY_CATALOG, KEY_SERVERS, KEY_LOADERS,
                 ])
                 self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS)
+            if previous_index_url != self.config["index_url"]:
+                # 换了索引就是另一份目录：让数据层按新来源重算。
+                self.data_changed(KEY_CATALOG)
             set_logging_level(self._debug_override or self.config["debug"])
             LOGGER.info(
                 "debug configuration saved configured=%s override=%s active=%s",

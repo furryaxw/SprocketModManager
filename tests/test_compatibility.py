@@ -71,6 +71,16 @@ class RangeTests(unittest.TestCase):
         self.assertFalse(range_allows("0.7.3", "^0.7.3"), "规范形式里没有 caret，不猜")
         self.assertFalse(range_allows("0.7.3", ">=nonsense"))
 
+    def test_a_prerelease_version_keeps_its_suffix(self) -> None:
+        """`6.0.0-be.788` 是 `6.0.0` 加预发布段：段号比较看不出后缀，得按 `Version` 读。"""
+        self.assertTrue(range_allows("6.0.0-be.788", "6.0.0-be.788"))
+        self.assertFalse(range_allows("6.0.0-be.790", "6.0.0-be.788"), "换一个构建不是同一个版本")
+        self.assertTrue(range_allows("6.0.0-be.788", ">=6.0.0"), "预发布段排在基准版本之后")
+        self.assertFalse(range_allows("6.0.0", ">=6.0.0-be.785"), "基准版本不是那个构建")
+        self.assertTrue(range_allows("6.0.0-be.790", ">=6.0.0-be.785 <=6.1.0"))
+        self.assertFalse(range_allows("6.0.0-rc.1", ">=6.0.0"), "rc 排在基准版本之前")
+        self.assertTrue(range_allows("6.0.0-be.788", "6.0.x"), "通配照旧")
+
 
 class ProvidersTableTests(unittest.TestCase):
     def test_a_valid_table_is_kept(self) -> None:
@@ -126,6 +136,20 @@ class VerdictTests(unittest.TestCase):
             {"id": LOADER_ID, "version": ">=0.6.0 <0.7.0"},
         ]
         self.assertEqual(environment.verdict(outside), INCOMPATIBLE)
+
+    def test_a_loader_capability_can_be_pinned_to_a_prerelease_build(self) -> None:
+        """加载器能力可以声明到具体构建：本机那份 `6.0.0-be.788` 要能顶住这根轴。"""
+        environment = self.environment(
+            capabilities={LOADER_ID: "0.7.3", "bepinex.bepinex": "6.0.0-be.788"},
+        )
+        pinned = [{"id": "bepinex.bepinex", "version": "6.0.0-be.788"}]
+
+        self.assertEqual(environment.verdict(pinned), COMPATIBLE)
+        axes = {axis["id"]: axis for axis in environment.axes(pinned)}
+        self.assertIs(axes["bepinex.bepinex"]["satisfied"], True)
+
+        another_build = [{"id": "bepinex.bepinex", "version": "6.0.0-be.790"}]
+        self.assertEqual(environment.verdict(another_build), INCOMPATIBLE)
 
     def test_a_capability_nobody_supplies_decides_nothing(self) -> None:
         environment = self.environment(capabilities={}, loaders={})
@@ -215,11 +239,13 @@ class ConsistencyTests(unittest.TestCase):
     TABLE = {"entries": [{"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"}]}
 
     def environment(self, sprocket: str, loader: str | None, table: dict | None = None) -> CapabilityEnvironment:
+        loaders = {} if loader is None else {LOADER_ID: loader}
         return CapabilityEnvironment(
             game_id=GAME,
             sprocket=sprocket,
             sprocket_state="ok",
-            loaders={} if loader is None else {LOADER_ID: loader},
+            loaders=loaders,
+            installed_loaders=frozenset(loaders),
             table=self.TABLE if table is None else table,
         )
 
@@ -239,14 +265,38 @@ class ConsistencyTests(unittest.TestCase):
         self.assertEqual(environment.consistency()["entry"], None)
         self.assertIsNone(environment.loader_row(LOADER_ID))
 
-    def test_without_a_loader_version_nothing_is_claimed(self) -> None:
-        self.assertEqual(self.environment("0.2.54.2", None).consistency()["state"], "unknown")
+    def test_without_an_installed_loader_a_covering_row_is_enough(self) -> None:
+        # 一个加载器都没装：看表里有没有哪一行覆盖本机游戏版本，有就不报，也不点名。
+        environment = self.environment(
+            "0.2.54.2",
+            None,
+            table={"entries": [
+                {"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"},
+                {"loader": "bepinex.bepinex-be", "version": ">=6.0.0-be.785", "sprocket": ">=0.2.54.0"},
+            ]},
+        )
+
+        state = environment.consistency()
+        self.assertEqual(state["state"], "ok")
+        self.assertEqual(state["loader"], "")
+
+    def test_without_an_installed_loader_the_table_still_leaves_nothing(self) -> None:
+        state = self.environment("0.2.54.2", None).consistency()
+
+        self.assertEqual(state["state"], "conflict")
+        self.assertEqual(state["loader"], "", "没点名：这个游戏版本谁都还没支持")
+        self.assertIsNone(state["entry"])
 
     def test_without_a_table_nothing_is_claimed(self) -> None:
         environment = self.environment("0.2.54.2", "0.7.3", table={})
         self.assertEqual(environment.consistency()["state"], "ok")
         self.assertIsNone(environment.consistency()["entry"])
         self.assertIsNone(environment.loader_row(LOADER_ID))
+
+    def test_without_an_installed_loader_and_without_a_table_nothing_is_claimed(self) -> None:
+        environment = self.environment("0.2.54.2", None, table={})
+
+        self.assertEqual(environment.consistency()["state"], "unknown")
 
     def test_the_table_is_used_as_given(self) -> None:
         environment = self.environment(
@@ -279,6 +329,7 @@ class OverlappingRowsTests(unittest.TestCase):
             sprocket=sprocket,
             sprocket_state="ok",
             loaders={LOADER_ID: loader},
+            installed_loaders=frozenset({LOADER_ID}),
             table=self.TABLE,
         )
 
@@ -303,6 +354,7 @@ class OverlappingRowsTests(unittest.TestCase):
             sprocket="0.2.54.2",
             sprocket_state="ok",
             loaders={LOADER_ID: "0.7.3"},
+            installed_loaders=frozenset({LOADER_ID}),
             table={
                 "entries": [
                     {"loader": LOADER_ID, "version": "*", "sprocket": "<0.2.54.0"},
@@ -319,6 +371,7 @@ class OverlappingRowsTests(unittest.TestCase):
             sprocket="0.2.54.2",
             sprocket_state="ok",
             loaders={LOADER_ID: "0.7.3"},
+            installed_loaders=frozenset({LOADER_ID}),
             table={
                 "entries": [
                     {"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"},
@@ -390,6 +443,7 @@ class BridgeCapabilityTests(unittest.TestCase):
             sprocket_state="ok",
             capabilities=bridge.capabilities(),
             loaders={bridge.id: "2.3.9"},
+            installed_loaders=frozenset({bridge.id}),
             table={
                 "entries": [
                     {"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"},
@@ -414,6 +468,7 @@ class BridgeCapabilityTests(unittest.TestCase):
             sprocket="0.2.54.2",
             sprocket_state="ok",
             loaders={"bepinex.bepinex-be": "6.0.0-be.788"},
+            installed_loaders=frozenset({"bepinex.bepinex-be"}),
             table={
                 "entries": [
                     {
@@ -436,6 +491,7 @@ class BridgeCapabilityTests(unittest.TestCase):
             sprocket="0.2.54.2",
             sprocket_state="ok",
             loaders={"test.unlisted-loader": "6.0.0-pre.2"},
+            installed_loaders=frozenset({"test.unlisted-loader"}),
             table={"entries": [{"loader": LOADER_ID, "version": ">=0.7.0", "sprocket": "<0.2.54.0"}]},
         )
 

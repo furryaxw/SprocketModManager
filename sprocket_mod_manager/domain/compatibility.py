@@ -85,12 +85,28 @@ def _token_allows(candidate: tuple[int, ...], token: str) -> bool:
     return order == 0
 
 
+def _has_prerelease(text: str) -> bool:
+    """这段版本文字带预发布段（`6.0.0-be.788`）。"""
+    return "-" in text
+
+
 def range_allows(version: Any, range_spec: Any) -> bool:
-    """版本是否落在区间里。区间写法就是索引里的规范形式（`>=a <=b`，多段用 `||`）。"""
+    """版本是否落在区间里。区间写法就是索引里的规范形式（`>=a <=b`，多段用 `||`）。
+
+    带预发布段的版本按 `domain.semver` 读：`Version` 给预发布段排序（`be.788` 是 `6.0.0`
+    之后的构建），段号比较看不出这个后缀。其余写法照旧按段比较 —— 规范形式里没有的
+    caret/波浪号仍然不猜。
+    """
+    expression = str(range_spec or "*").strip()
+    candidate_text = str(version or "").strip()
+    if _has_prerelease(candidate_text) or _has_prerelease(expression):
+        try:
+            return satisfies(candidate_text, expression)
+        except ValueError:
+            return False
     candidate = version_parts(version)
     if candidate is None:
         return False
-    expression = str(range_spec or "*").strip()
     if not expression or expression == "*":
         return True
     for branch in expression.split("||"):
@@ -209,6 +225,8 @@ class CapabilityEnvironment:
     加载器包的 `provides`（`{version}` 按实际发布版本替换）。`loaders` 是加载器**包** id ->
     在用的版本，只用来对上 `providers.json` 那张表 —— 表和能力是两个层次，包版本与它提供的
     能力版本可以不同（桥接包给 `lavagang.melonloader` 一个版本，自己的包版本是另一个）。
+    `loaders` 里也带着「没装、但知道最新版」的包，`installed_loaders` 才是真正装上的那些；
+    装没装决定环境矛盾怎么报（见 `consistency()`）。
     """
 
     game_id: str = DEFAULT_GAME_CAPABILITY
@@ -216,11 +234,13 @@ class CapabilityEnvironment:
     sprocket_state: str = "unconfigured"
     capabilities: Mapping[str, str] = field(default_factory=dict)
     loaders: Mapping[str, str] = field(default_factory=dict)
+    installed_loaders: frozenset[str] = frozenset()
     table: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "table", providers_table(self.table))
         object.__setattr__(self, "loaders", dict(self.loaders or {}))
+        object.__setattr__(self, "installed_loaders", frozenset(self.installed_loaders or ()))
         object.__setattr__(self, "capabilities", dict(self.capabilities or {}))
 
     def capability_version(self, capability_id: str) -> str | None:
@@ -284,16 +304,29 @@ class CapabilityEnvironment:
         return max(matches, key=priority)[1]
 
     def consistency(self) -> dict[str, Any]:
-        """这个组合是否自洽：表里说这段加载器只支持到某个游戏版本之前，而本机更晚。"""
-        if self.sprocket is None or self.sprocket_state != "ok" or not self.loaders:
+        """本机这个组合是否自洽，以及该不该点名某个加载器。
+
+        装了加载器时只看装着的那些：哪个加载器版本命中哪一行、那一行支不支持本机游戏版本 ——
+        矛盾就指名那个加载器；没装的加载器不参与，装哪个是用户的选择。
+        一个加载器都没装时没有「具体是谁」可指，就扫整张表：表里一行都覆盖不了本机游戏版本，
+        说明这个游戏版本谁都还没支持 —— 这时只报不兼容当前版本，不点名。
+        """
+        if self.sprocket is None or self.sprocket_state != "ok":
             return {"state": UNKNOWN, "entry": None, "loader": ""}
-        for loader_id in sorted(self.loaders):
-            row = self.loader_row(loader_id)
-            if row is None:
-                continue
-            if not range_allows(self.sprocket, row.get("sprocket")):
-                return {"state": "conflict", "entry": dict(row), "loader": loader_id}
-        return {"state": "ok", "entry": None, "loader": ""}
+        if self.installed_loaders:
+            for loader_id in sorted(self.installed_loaders):
+                row = self.loader_row(loader_id)
+                if row is None:
+                    continue
+                if not range_allows(self.sprocket, row.get("sprocket")):
+                    return {"state": "conflict", "entry": dict(row), "loader": loader_id}
+            return {"state": "ok", "entry": None, "loader": ""}
+        rows = [entry for entry in self.table.get("entries", ()) if isinstance(entry, dict)]
+        if not rows:
+            return {"state": UNKNOWN, "entry": None, "loader": ""}
+        if any(range_allows(self.sprocket, row.get("sprocket")) for row in rows):
+            return {"state": "ok", "entry": None, "loader": ""}
+        return {"state": "conflict", "entry": None, "loader": ""}
 
     def axes(self, dependencies: Iterable[dict[str, Any]] | None) -> list[dict[str, Any]]:
         """逐轴结果：声明了什么、本机是什么、这一轴过没过。

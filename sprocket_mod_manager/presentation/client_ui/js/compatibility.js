@@ -26,27 +26,33 @@ function packageReleases(pkg) {
     return Array.isArray(pkg?.releases) ? pkg.releases : [];
 }
 
-/** 最新那个可安装版本的判定：目录页那一行的颜色用它。判定缺失时按「未知」，不当成兼容。 */
+/**
+ * 包这一层的判定：界面拿它决定标什么、藏不藏。
+ *
+ * 有版本兼容就是兼容；一版兼容都没有、但至少判过一版不兼容才算不兼容；其余（一版都没判过）
+ * 是未知 —— 未知的包照常显示，还不知道能不能用不等于不能用。
+ */
 function packageVerdict(pkg) {
-    if (pkg?.release?.verdict) return pkg.release.verdict;
     const releases = packageReleases(pkg);
-    const verdict = releases.length ? releases[0].verdict : "";
-    return verdict || VERDICT_UNKNOWN;
+    if (releases.some((release) => release.verdict === VERDICT_COMPATIBLE)) return VERDICT_COMPATIBLE;
+    if (releases.some((release) => release.verdict === VERDICT_INCOMPATIBLE)) return VERDICT_INCOMPATIBLE;
+    return pkg?.release?.verdict || releases[0]?.verdict || VERDICT_UNKNOWN;
 }
 
 /** 「点安装会装的那个版本」的判定：列表里那个版本号用它上色。 */
 function targetVerdict(pkg) {
+    // 包整体一个兼容版本都没有时，装哪版都一样跑不起来 —— 跟着包判，别让那一版自己的「未知」把话说软。
+    if (packageVerdict(pkg) === VERDICT_INCOMPATIBLE) return VERDICT_INCOMPATIBLE;
     const target = preferredVersion(pkg);
     if (!target) return VERDICT_UNKNOWN;
     const release = packageReleases(pkg).find((entry) => entry.version === target);
     return release?.verdict || packageVerdict(pkg);
 }
 
-/** 一个版本都不兼容才会从目录里消失：有兼容或未知的就留着。 */
+/** 从目录里消失的包：判过、且一个兼容版本都没有。一版都没判过的照常显示。 */
 function packageHidden(pkg) {
-    const releases = packageReleases(pkg);
-    if (!releases.length) return false;
-    return releases.every((release) => release.verdict === VERDICT_INCOMPATIBLE);
+    if (!packageReleases(pkg).length) return false;
+    return packageVerdict(pkg) === VERDICT_INCOMPATIBLE;
 }
 
 /** 默认要装的版本：兼容的里面最高的；没有兼容的就最新的。 */

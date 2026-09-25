@@ -379,6 +379,30 @@ class ReleaseCompatibilityTests(unittest.TestCase):
         self.assertEqual(entry["compatibility"], {"source": "declared"})
         self.assertNotIn("compat_declared", entry, "内部字段不该留在索引里")
 
+    def test_a_prerelease_item_survives_as_written(self) -> None:
+        """`6.0.0-be.788` 的后缀是版本的一部分：不合并、也不补齐成段号。"""
+        capabilities = {**CAPABILITIES, "bepinex.bepinex": GEN_INDEX.LOADER_VERSION_SEGMENTS}
+        body = (
+            f'<!-- sp-compat {{"{GAME_CAPABILITY}": ["0.2.53.x", "0.2.55.5"], '
+            '"bepinex.bepinex": "6.0.0-be.788"} -->'
+        )
+
+        declared, warnings = GEN_INDEX.parse_compat_block(body, capabilities)
+
+        self.assertEqual(declared["bepinex.bepinex"], "6.0.0-be.788")
+        self.assertEqual(declared[GAME_CAPABILITY], ">=0.2.53.0 <0.2.54.0 || >=0.2.55.5 <=0.2.55.5")
+        self.assertEqual(warnings, [])
+
+    def test_an_unusable_prerelease_item_makes_the_whole_block_invalid(self) -> None:
+        capabilities = {**CAPABILITIES, "bepinex.bepinex": GEN_INDEX.LOADER_VERSION_SEGMENTS}
+        body = (
+            f'<!-- sp-compat {{"{GAME_CAPABILITY}": ["0.2.55.5"], '
+            '"bepinex.bepinex": "6.0.0-be.788+"} -->'
+        )
+
+        with self.assertRaises(GEN_INDEX.CompatibilityError):
+            GEN_INDEX.parse_compat_block(body, capabilities)
+
     def test_a_release_without_a_block_inherits_the_nearest_older_declaration(self) -> None:
         body = f'<!-- sp-compat {{"{GAME_CAPABILITY}": ["0.2.53.1"]}} -->'
         releases = GEN_INDEX.apply_release_compatibility([

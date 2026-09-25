@@ -496,8 +496,9 @@ function renderDetail() {
 /**
  * 拉目录并重画。
  *
- * 读数归数据层（`catalog` 那个 key），这条只是**刷新命令**；怎么画在 `business.js` 里。
- * `catalogLoading` 只是这次操作期间的界面状态。
+ * 读数归数据层（`catalog` 那个 key）：后端算完写进数据层，读数由推送过来。
+ * 这里只负责**这次操作的界面状态** —— 连接中 / 连接失败 / 连上了，**不能等推送来收尾**：
+ * 目录没变（或这次没读出来）的时候根本不会有推送，那就永远停在「正在连接」。
  */
 async function loadCatalog(refresh = false) {
     const button = $("#refresh-catalog");
@@ -508,16 +509,18 @@ async function loadCatalog(refresh = false) {
     setRegistryState("loading", tr("connecting"));
     setStatus(tr("loading"));
     try {
-        // 显式刷新让后端现去拉索引；其余场合让数据层按缓存重算。两条都只回 ack。
-        const result = refresh
-            ? await callApi("load_catalog", true)
-            : await callApi("data_request", "catalog");
+        // 显式刷新让后端现去拉索引；其余场合用缓存那份。两条都会把读数写进数据层。
+        const result = await callApi("load_catalog", refresh);
         if (!result.ok) {
+            // 另一条加载还在路上：这次的收尾交给它，别把界面判成失败。
+            if (result.code === "catalog_busy") return;
             state.catalogLoading = false;
             renderCatalog();
             setRegistryState("error", tr("connectionFailed"));
             resultError(result, "catalogError");
+            return;
         }
+        finishCatalogLoad(result);
     } catch (error) {
         state.catalogLoading = false;
         renderCatalog();
@@ -527,6 +530,23 @@ async function loadCatalog(refresh = false) {
         await privateRefresh;
         button.disabled = false;
     }
+}
+
+/** 目录这次加载收尾：收掉「连接中」、置好注册表状态，并认领磁盘上已有的模组。 */
+function finishCatalogLoad(result) {
+    state.catalogLoading = false;
+    state.batch.clear();
+    if (!state.packages.some((pkg) => pkg.id === state.selectedId)) state.selectedId = null;
+    setRegistryState("ready", tr("connected"));
+    setStatus(
+        tr("ready", {count: state.packages.length}),
+        "ready",
+        result?.source || dataValue("catalog")?.source || "",
+    );
+    renderCatalog();
+    renderInstalled();
+    // 目录回来了才谈得上认领：磁盘上已有的模组要能对上注册表里的包。
+    void claimExistingMods();
 }
 
 /** 计划里「某个包有哪些版本可挑」：索引里带来的全部可安装版本（新到旧）。 */

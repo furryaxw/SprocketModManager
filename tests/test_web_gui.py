@@ -587,7 +587,11 @@ class WebGuiTests(unittest.TestCase):
         )
         self.assertNotIn("state.packages = ", catalog)
         self.assertNotIn("state.packages = ", servers)
-        self.assertIn('callApi("data_request", "catalog")', catalog, "目录读数由数据层刷")
+        self.assertIn(
+            'callApi("load_catalog", refresh)',
+            catalog,
+            "目录读数由数据层刷（这条命令只回执）",
+        )
         self.assertIn("function watchCatalogData()", business, "页面按推送重画")
 
     def test_default_entry_and_assets_do_not_depend_on_tk(self):
