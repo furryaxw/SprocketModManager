@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "example.sprocket-mod",
   "name": "ExampleSprocketMod",
   "authors": [
@@ -30,9 +30,14 @@
   "recommendations": [],
   "featured": false,
   "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "melonloader:mod"
+      }
+    ],
     "scan_dlls": true,
-    "exclude": [],
-    "overrides": []
+    "exclude": []
   },
   "category": "gameplay",
   "tags": [

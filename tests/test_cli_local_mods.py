@@ -18,6 +18,13 @@ FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "d
 FIXTURE_MOD = FIXTURE_DIR / "FixtureMod.dll"
 
 
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：扫描 `Mods` 之前得先检测到运行时。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
+
 def make_package(package_id: str, name: str, authors: tuple[str, ...] = ("Fixture Author",)) -> RegistryPackage:
     return RegistryPackage(
         id=package_id,
@@ -42,6 +49,7 @@ class CliLocalModsTests(unittest.TestCase):
         game = root / "game"
         (game / "Mods").mkdir(parents=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
         index = root / "index.json"
         index.write_text(json.dumps({"schema_version": 1, "packages": []}), encoding="utf-8")
@@ -240,6 +248,7 @@ class ScanWithRegistryTests(unittest.TestCase):
             game = Path(directory) / "game"
             (game / "Mods").mkdir(parents=True)
             (game / "Sprocket.exe").touch()
+            install_melonloader(game)
             shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
             packages = [make_package("fixture.sprocket-mod", "FixtureMod")]
             mods = scan_local_mods(game, {}, packages)

@@ -7,8 +7,8 @@ Sprocket 模组注册表、GitHub Pages 目录与 Windows GUI 客户端。
 仓库只人工维护模组级基础 meta。GitHub Actions 每小时从每个模组仓库读取一次 Release，
 把规范化的版本、tag 与资产写入 Pages `index.json`；网页和默认客户端不直接消耗匿名
 GitHub API 配额。二进制仍始终来自模组自己的 GitHub Release。客户端使用快照求解依赖、
-验证可用的发布者 SHA-256、静态扫描 DLL，再将文件事务式安装到 `Mods`、`Plugins`、
-`UserLibs` 或受控的 `UserData` 路径。
+验证可用的发布者 SHA-256、按安装规则与 PE 元数据判断文件类型，再将文件事务式安装到供给
+该类型的加载器声明的目录（`{Sprocket}/Mods`、`{Sprocket}/BepInEx/plugins` 等）。
 
 ## 当前纵向场景
 
@@ -28,19 +28,31 @@ furryaxw.sprocket-laser-rangefinder
 客户端会静态读取已安装 DLL 的 `MelonInfo` 与 `Sprocket.Mod.*` 程序集元数据，
 把它们与 Registry 条目和安装记录对齐。
 
-细节见 [`local-mod-identification.md`](local-mod-identification.md)。
+读哪些目录由**运行时标识符**按当前环境决定：标识符声明的能力在场时才激活，判据是已装的
+同命名空间供给者、环境里的能力，或**磁盘上检测到运行时**（管理器之外装上的加载器同样算数）。
+目录来自已装供给者的 `supply` 表——桥接加载器（`provides: lavagang.melonloader`）把模组安家到
+`MLLoader/Mods` 时，清单、认领与启用/禁用都跟着走；没有已装供给者时用检测到的布局。三者都
+不成立时这个运行时的目录不读，也不会凭空列出文件。MelonLoader 的检测是游戏根目录的
+`version.dll` 代理加 `MelonLoader/net*/MelonLoader.dll`（桥接布局是 `MLLoader/`），版本取运行时
+DLL 的 PE 版本信息；BepInEx 的标识符检测 `winhttp.dll` / `doorstop_config.ini` 加
+`BepInEx/core/BepInEx*.dll`，只声明 `BepInEx/plugins` 与 `BepInEx/patchers` 两个目录，不认任何
+身份：那里的文件只会作为本地未知条目出现，没有名字、版本或声明 ID。
 
-## MelonLoader 管理
+细节见 [`docs/architecture.md`](docs/architecture.md)。
 
-客户端设置页会检测当前 Sprocket 目录中的 MelonLoader 及其版本，并读取
-`LavaGang/MelonLoader` 的最新正式 GitHub Release。安装或更新时，管理器只选择官方
-`MelonLoader.x64.zip`，验证 Release 提供的 SHA-256，然后安全解压到 Sprocket 根目录。
-覆盖操作带有回滚保护，并保留 `MelonLoader/Il2CppAssemblies`、日志、配置以及 ZIP 中未包含的
-其他本地文件。
+## 加载器管理
 
-安装单个模组、批量安装或执行全部更新前，如果当前游戏目录没有 MelonLoader，客户端会询问是否
-立即安装。选择立即安装时，MelonLoader 安装成功后才会继续模组任务；选择暂不安装时会按确认继续，
-但模组在安装 MelonLoader 前不能被游戏加载。
+加载器就是注册表里的普通条目：`mods/lavagang.melonloader/` 与 `mods/bepinex.bepinex-be/` 的
+`kind` 是 `modloader`，用 `supply` 声明它供给别的包哪些类型、各自装在哪，用 `provides` 声明它的
+兼容性能力。客户端在加载器页列出每个 `modloader` 包：装没装、已装版本、能装的最新版、当前环境
+的兼容判定，以及它供给的类型与目录。安装、更新和卸载都走普通安装管线（解析 → 准备 → 应用），与
+模组共用同一套下载主机限制、发布者 SHA-256 校验、ZIP 限制和事务安装；加载器自己的载荷按
+`install.payload` 落进游戏根目录，内容映射到供给类型时也可以按 `install.files` 安装。基础运行时
+不记逐文件清单：它的安装记录只留版本、发布资产和安装时落地的顶层条目（加载器自己的目录，以及
+游戏根目录里的代理文件），卸载按这份清单交还整棵树与代理 DLL。
+
+模组的安装规则里写了哪个类型，求解器就把供给该类型的加载器一起放进同一个安装计划，所以安装一个
+MelonLoader 模组会在同一事务里装上 MelonLoader。加载器供给的能力版本是兼容性轴之一。
 
 ## 运行
 
@@ -66,15 +78,14 @@ GUI 使用 Windows Edge WebView2 的硬件加速渲染，Python 继续负责 Reg
 运行期间仍可继续浏览并追加任务，正在执行安装事务时客户端会等待事务完成后再退出。模组列表
 显示简介；详情头部集中显示名称、ID、版本和作者，正文会读取登记仓库的默认 README，使用
 GitHub 渲染结果并在本地净化后显示。安装确认页会列出 Registry 声明的推荐模组，默认不勾选，
-只有用户主动选择后才会一起加入安装队列。Registry 标记为“新安装推荐”的模组只会在
-`Mods` 中没有任何 DLL 时显示星标并固定在当前排序顶部；已有任意模组后恢复普通排序。
-该标记不会弹窗、自动勾选或自动安装。
+只有用户主动选择后才会一起加入安装队列。Registry 标记为“新安装推荐”的模组只会在当前
+运行时的模组目录（没有桥接加载器时就是 `Mods`）中没有任何 DLL 时显示星标并固定在当前排序
+顶部；已有任意模组后恢复普通排序。该标记不会弹窗、自动勾选或自动安装。
 
-加载目录和刷新“已安装”页面时，客户端会扫描 `Mods` 和 `UserLibs` 中尚未受控的 DLL。
+加载目录和刷新“已安装”页面时，客户端会扫描活跃运行时标识符的目录中尚未受控的 DLL。
 只有文件名、静态安装目标和 GitHub Release 提供的 SHA-256 完全匹配且结果唯一时才会自动接管；
 未知、本地修改、缺少摘要或存在多重匹配的文件保持不受控。接管后的模组可以正常更新和卸载；
-其余 `Mods` 和 `UserLibs` DLL 会在“已安装”页显示为“无法识别”，只提供文件名和路径，
-不能更新或卸载。
+其余 DLL 会在“已安装”页显示为“无法识别”，只提供文件名和路径，不能更新或卸载。
 
 CLI 使用本地 Registry：
 
@@ -112,15 +123,15 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 
 ## 安全边界
 
-- 只接受 HTTPS Registry 和 GitHub Release 下载地址。
-- DLL 分类只读 PE/.NET 元数据，不使用 `Assembly.Load`。
+- 只接受 HTTPS Registry 与 Release 下载地址：GitHub 来源的资产必须落在模组自己仓库的 releases 下，外部来源的资产必须落在条目声明的主机白名单里；只有 `kind` 为 `modloader` 的包可以声明外部来源。
+- 文件类型与 DLL 归类只读 PE/.NET 元数据，不使用 `Assembly.Load`。
 - ZIP 限制条目数、单文件/总解压体积和压缩比，并拒绝绝对路径、`..` 与设备路径。
-- “翻译”分类使用受限安装模式：替换前按时间备份并保留最新 5 份，只能用 ZIP 事务性替换 `AutoTranslator`，失败时恢复原目录。
-- 原生或无法识别的 DLL 必须由 Registry override 指定目标。
-- 同一路径的不同内容、外部修改的托管文件和不同哈希的手工文件会阻止安装。
+- 文件只能落在某个加载器供给表声明的目录，或加载器自己 `install.payload` 的 `target` 里：一个类型可以有几个供给者，用已装上的那个，`subpath` 不得越出游戏目录。
+- “翻译”分类是 `patch` 包：整体接管 `xunity:translation` 的供给目录，安装前把整个目录归档（保留最新 5 份）后清空，卸载时整目录还原。
+- 原生或无法静态归类的 DLL 必须由安装规则显式给出类型。
+- 同一路径的不同内容、外部修改的托管文件和不同哈希的手工文件会阻止安装；补丁模式按它的替换语义直接覆盖，被替换的原件先归档到 `SprocketModManager/backup/patched`。
 - Sprocket 运行时拒绝修改游戏目录。
-- MelonLoader 只从 `LavaGang/MelonLoader` 的最新正式 Release 获取精确命名的 Windows x64 ZIP；
-  解压同样限制条目数、体积、压缩比和目标路径，并在覆盖失败时恢复原文件。
+- 加载器与模组走同一条安装管线：同样的下载主机限制、发布者摘要校验、ZIP 限制、事务安装与失败回滚。
 - README 只能从该模组登记的 GitHub 仓库读取；显示前会移除脚本、表单、嵌入内容、不安全 URL
   和非 GitHub 图片资源。
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改的文件。普通安装前已存在的文件仍受保护；

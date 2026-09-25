@@ -9,8 +9,9 @@ each mod repository once and writes normalized versions, tags, and assets into t
 Pages `index.json`. The website and default client therefore consume no anonymous
 GitHub API quota for the catalog. Binaries still come directly from each mod's own
 GitHub Release. The client resolves the cached snapshot, verifies publisher-provided
-SHA-256 digests when available, statically inspects DLLs, and transactionally installs
-files into `Mods`, `Plugins`, `UserLibs`, or controlled paths under `UserData`.
+SHA-256 digests when available, derives each file's type from the install rules and PE
+metadata, and transactionally installs files into the directory declared by the loader
+that supplies that type (`{Sprocket}/Mods`, `{Sprocket}/BepInEx/plugins`, and so on).
 
 ## Current Vertical Slice
 
@@ -26,19 +27,27 @@ This scenario has been exercised against two real Releases, including download,
 remote digest verification, DLL classification, isolated-directory installation,
 state tracking, removal of the requested package, and orphan dependency cleanup.
 
-## MelonLoader management
+## Loader management
 
-The Settings page detects MelonLoader and its version in the selected Sprocket
-directory, then reads the latest stable GitHub Release from `LavaGang/MelonLoader`.
-Install and update operations select only the official `MelonLoader.x64.zip`, verify
-the Release SHA-256, and safely extract it into the Sprocket root. Replacement is
-rollback-protected and preserves `MelonLoader/Il2CppAssemblies`, logs, configuration,
-and other local files that are not present in the ZIP.
+Loaders are ordinary registry entries: `mods/lavagang.melonloader/` and
+`mods/bepinex.bepinex-be/` have `kind` `modloader`, declare through `supply` which types
+they provide to other packages and where, and declare their compatibility capabilities
+through `provides`. The modloader page lists every `modloader` package with whether it is
+installed, its installed version, the newest installable version, its compatibility
+verdict for the current environment, and the types and directories it supplies. Install,
+update, and removal all go through the ordinary install pipeline (resolve -> prepare ->
+apply), sharing the mods' download-host restrictions, publisher SHA-256 verification,
+ZIP limits, and transactional installation; a loader's own payload lands in the game root
+through `install.payload`, or installs by type through `install.files` when its content
+maps onto supply types. A base runtime keeps no per-file list: its install record holds
+the version, the release assets, and the top-level entries it installed into (its own
+directories plus the proxy files in the game root), and removal hands back the whole tree
+and the proxy DLLs through that list.
 
-Before a single install or a batch install, the client offers to
-install MelonLoader when it is missing. Choosing to install waits for MelonLoader to
-finish before queueing the mods. Choosing to continue leaves the mod files installable,
-but the game cannot load them until MelonLoader is installed.
+Whichever type a mod's install rules declare, the solver puts the loader that supplies it
+into the same install plan, so installing a MelonLoader mod installs MelonLoader in the
+same transaction. The capability version a loader supplies is one of the compatibility
+axes.
 
 ## Run
 
@@ -70,16 +79,17 @@ repository's default README, uses GitHub's renderer, and sanitizes the result lo
 The install confirmation lists Registry-declared recommendations as unchecked options;
 only recommendations explicitly selected by the user are added to the queue. Packages
 marked as recommended for new installs show a star and stay pinned above regular results
-only while `Mods` contains no DLL. Once any mod exists, the catalog returns to its normal
+only while the current runtime's mod directories (plain `Mods` when no bridge loader is
+installed) contain no DLL. Once any mod exists, the catalog returns to its normal
 sort. This marker never opens a prompt, selects, or installs a package.
 
 When the catalog loads or the Installed page refreshes, the client scans unmanaged DLLs
-under `Mods` and `UserLibs`. It adopts a package only when the file name, static install
-target, and GitHub Release SHA-256 all match uniquely. Unknown, locally modified,
-digest-less, or ambiguous files remain unmanaged. Adopted packages can be updated and
-removed normally; all other DLLs under `Mods` and `UserLibs` appear as read-only
-"Unrecognized" rows on the Installed page, showing only their file name and path with no
-update or removal action.
+under the active runtime identifiers' directories. It adopts a package only when the file
+name, static install target, and GitHub Release SHA-256 all match uniquely. Unknown,
+locally modified, digest-less, or ambiguous files remain unmanaged. Adopted packages can
+be updated and removed normally; all other DLLs appear as read-only "Unrecognized" rows on
+the Installed page, showing only their file name and path with no update or removal
+action.
 
 Use a local Registry with the CLI:
 
@@ -121,20 +131,28 @@ Edge installations.
 
 ## Security Boundaries
 
-- Only HTTPS Registry and GitHub Release download URLs are accepted.
-- DLL classification reads PE/.NET metadata only and never uses `Assembly.Load`.
+- Only HTTPS Registry and Release download URLs are accepted: GitHub-sourced assets
+  must sit under the mod's own repository releases, and external-source assets must sit
+  on the hosts the entry allows. Only a modloader may declare an external source.
+- File types and DLL classification read PE/.NET metadata only and never use
+  `Assembly.Load`.
 - ZIP archives are limited by entry count, per-file and total extracted size, and
   compression ratio. Absolute paths, `..`, and device paths are rejected.
-- The Translations category uses a restricted mode that can only transactionally
-  replace `AutoTranslator` from a ZIP, retains the five newest timestamped backups,
-  and restores the old directory on failure.
-- Native or unrecognized DLLs require a Registry override that selects a target.
+- Files can only land in a directory declared by some loader's supply table, or in a
+  loader's own `install.payload` `target`: a type may have several suppliers and the
+  installed one decides, and a `subpath` cannot escape the game directory.
+- The Translations category is a `patch` package: it takes over the supply directory of
+  `xunity:translation`, archiving the whole directory (five newest kept) and clearing it
+  before installing, and restoring the whole directory on removal.
+- Native or unclassifiable DLLs require an install rule that names their type.
 - Conflicting content at the same path, externally modified managed files, and
-  manually installed files with a different hash block installation.
+  manually installed files with a different hash block installation; patch mode
+  overwrites by its replacement semantics instead and archives the replaced original
+  under `SprocketModManager/backup/patched`.
 - The game directory is never modified while Sprocket is running.
-- MelonLoader is fetched only from the exact Windows x64 ZIP in the latest stable
-  `LavaGang/MelonLoader` Release. Extraction applies entry, size, ratio, and path
-  limits and rolls back overwritten files after a failure.
+- Loaders and mods share one install pipeline: the same download-host restrictions,
+  publisher digest verification, ZIP limits, transactional installation, and rollback
+  on failure.
 - READMEs are fetched only from the mod's registered GitHub repository. Scripts, forms,
   embedded content, unsafe URLs, and non-GitHub image sources are removed before display.
 - Installation state is isolated per game directory. Uninstalling never removes files

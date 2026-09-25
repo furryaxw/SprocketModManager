@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from ..domain.compatibility import INCOMPATIBLE, Environment, release_verdict
+from ..domain.compatibility import INCOMPATIBLE, CapabilityEnvironment, release_verdict
 from ..domain.errors import ResolutionError
 from ..domain.models import RegistryPackage, ReleaseInfo, ResolvedPackage, ResolutionPlan
 from ..domain.registry import Registry
@@ -47,13 +47,16 @@ class DependencySolver:
             self,
             registry: Registry,
             github: GitHubClient,
-            environment: Environment | None = None,
+            environment: CapabilityEnvironment | None = None,
             pinned: frozenset[str] = frozenset(),
+            installed: frozenset[str] = frozenset(),
     ):
         self.registry = registry
         self.github = github
         self.environment = environment
         self.pinned = pinned
+        # 目标游戏目录里已经装上的包 id：一个类型有多个供给者时，只能由已安装的那个决定目录。
+        self.installed = installed
         self._cache: dict[str, _Releases] = {}
 
     def _env_blocks(self, package: RegistryPackage, release: ReleaseInfo) -> bool:
@@ -102,9 +105,69 @@ class DependencySolver:
             and all(satisfies(release.version, constraint) for constraint in constraints)
         )
 
-    @staticmethod
-    def _dependencies_for(package: RegistryPackage, release: ReleaseInfo) -> tuple[dict[str, str], ...]:
-        return dependencies_for_release(package, release)
+    def _loader_for_type(
+            self,
+            package: RegistryPackage,
+            file_type: str,
+            declared_ids: frozenset[str] = frozenset(),
+    ) -> RegistryPackage | None:
+        """这个类型该跟着哪个加载器装；由声明的依赖、供给者和已安装集合共同决定。
+
+        只有唯一供给者时就是它。有多个供给者时，包自己声明的依赖点名了其中一个就用它：
+        载荷是针对那份运行时构建的，声明的依赖比目标目录里装了什么更准确。没有这样的
+        声明才看已安装集合：只有恰好一个已安装才有答案，否则报错让用户先去加载器页挑
+        一个。计划里每个类型最多只出现一个供给者。
+        """
+        candidates = self.registry.providers_for_type(file_type)
+        if not candidates:
+            return None
+        if package.id in {candidate.id for candidate in candidates}:
+            # 包自己就供给这个类型（加载器自己的载荷），不需要把自己列成依赖。
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        for candidate in candidates:
+            if candidate.id in declared_ids:
+                return candidate
+        installed = [candidate for candidate in candidates if candidate.id in self.installed]
+        if len(installed) == 1:
+            return installed[0]
+        ids = ", ".join(candidate.id for candidate in candidates)
+        if not installed:
+            raise ResolutionError(
+                f"no modloader provider is installed for install type '{file_type}'; "
+                f"install one of {ids} first"
+            )
+        raise ResolutionError(
+            f"several modloader providers are installed for install type '{file_type}'; "
+            f"keep only one of {ids}"
+        )
+
+    def _dependencies_for(self, package: RegistryPackage, release: ReleaseInfo) -> tuple[dict[str, str], ...]:
+        """声明的依赖 + 从静态安装类型推导出的加载器依赖。
+
+        文件写着 `melonloader:mod` 就必须有供给这个类型的加载器在场上，所以它是一条真依赖：
+        求解时一并装上，卸载时也按同一张依赖图判定能不能删。加载器自己供给的类型不算依赖。
+        包声明的依赖已经点名了某个供给者时，那一条就是这条依赖，不再另加隐式依赖。
+
+        只跳过本机能力：对本机能力的依赖由能力判定负责，装不了一个能力（例如游戏那根轴），
+        也不该进依赖图。既不是包、也不是能力的 id 不是跳过，而是照旧报成解析不了的依赖。
+        """
+        declared = tuple(
+            dependency
+            for dependency in dependencies_for_release(package, release)
+            if self.registry.has_package(str(dependency.get("id", "")))
+            or not self.registry.knows_capability(str(dependency.get("id", "")))
+        )
+        resolved_ids = {str(item.get("id")) for item in declared}
+        implicit: list[dict[str, str]] = []
+        for file_type in package.declared_types():
+            supplier = self._loader_for_type(package, file_type, frozenset(resolved_ids))
+            if supplier is None or supplier.id in resolved_ids:
+                continue
+            resolved_ids.add(supplier.id)
+            implicit.append({"id": supplier.id, "version": "*", "when": "*"})
+        return declared + tuple(implicit)
 
     @staticmethod
     def _explain(
@@ -112,7 +175,7 @@ class DependencySolver:
             root_range: str,
             dead_ends: list[_DeadEnd],
             constraints: dict[str, list[str]],
-            environment: Environment | None,
+            environment: CapabilityEnvironment | None,
     ) -> str:
         """报出真正卡住的那条约束：最靠后的那次「无候选」+ 该包实际有哪些版本。
 

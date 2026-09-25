@@ -23,10 +23,6 @@ class LogUploadResult:
     url: str
 
 
-def latest_log_path(game_dir: Path) -> Path:
-    return game_dir.expanduser() / "MelonLoader" / "Latest.log"
-
-
 def upload_log_file(path: Path, endpoint: str, *, app_version: str, timeout: int = 30,
                     max_bytes: int = MAX_LOG_BYTES) -> LogUploadResult:
     parsed = urlparse(endpoint)
@@ -58,14 +54,3 @@ def upload_log_file(path: Path, endpoint: str, *, app_version: str, timeout: int
         raise DownloadError("log upload returned an invalid URL")
     LOGGER.info("log upload completed file=%s status=%d bytes=%d", path.name, status, len(body))
     return LogUploadResult(request_id, status, len(body), url)
-
-
-def upload_latest_log(game_dir: Path, endpoint: str, *, app_version: str, timeout: int = 30,
-                      max_bytes: int = MAX_LOG_BYTES) -> LogUploadResult:
-    return upload_log_file(
-        latest_log_path(game_dir),
-        endpoint,
-        app_version=app_version,
-        timeout=timeout,
-        max_bytes=max_bytes,
-    )

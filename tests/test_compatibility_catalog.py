@@ -45,7 +45,7 @@ PACKAGE = {
                     "download_url": "https://github.com/test/repo/releases/download/v1.1.0/TestMod.dll",
                 }
             ],
-            "dependencies": [{"id": "environment.sprocket", "version": ">=0.2.54.0"}],
+            "dependencies": [{"id": "hamish.sprocket", "version": ">=0.2.54.0"}],
             "compatibility": {"source": "declared"},
         },
         {
@@ -63,7 +63,7 @@ PACKAGE = {
                     "download_url": "https://github.com/test/repo/releases/download/v1.0.0/TestMod.dll",
                 }
             ],
-            "dependencies": [{"id": "environment.sprocket", "version": ">=0.2.53.0 <0.2.54.0"}],
+            "dependencies": [{"id": "hamish.sprocket", "version": ">=0.2.53.0 <0.2.54.0"}],
             "compatibility": {"source": "declared"},
         },
     ],
@@ -83,11 +83,10 @@ def game_dir(root: Path, version: str = "0.2.53.2") -> Path:
 def index_file(root: Path, *, sprocket_range: str = "<0.2.54.0", packages: list | None = None) -> Path:
     payload = {
         "schema_version": 1,
-        "game": "sprocket",
-        "virtual_packages": ["environment.sprocket", "environment.melonloader"],
-        "environment": {
-            "schema_version": 1,
-            "entries": [{"melonloader": ">=0.7.0 <0.8.0", "sprocket": sprocket_range}],
+        "game": {"id": "hamish.sprocket", "name": "Sprocket"},
+        "providers": {
+            "schema_version": 2,
+            "entries": [{"loader": "lavagang.melonloader", "version": ">=0.7.0 <0.8.0", "sprocket": sprocket_range}],
         },
         "generated_at": "2026-09-25T00:00:00Z",
         "packages": [PACKAGE] if packages is None else packages,
@@ -129,7 +128,7 @@ def embedded(
                     "download_url": f"https://github.com/test/repo/releases/download/v{version}/TestMod.dll",
                 }
             ],
-            "dependencies": [{"id": "environment.sprocket", "version": sprocket_range}],
+            "dependencies": [{"id": "hamish.sprocket", "version": sprocket_range}],
             "compatibility": {"source": "declared"},
         }
     ]
@@ -178,7 +177,7 @@ class CatalogVerdictTests(unittest.TestCase):
             service = ModManagerService(app_dir)
             api = ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
             try:
-                api._environment_monitor.note_latest_loader("0.7.3")
+                api._environment_monitor.note_latest_loaders({"lavagang.melonloader": "0.7.3"})
                 result = api.load_catalog()
             finally:
                 self._close(api)

@@ -156,7 +156,6 @@ sandbox.pywebview = {
                 skipped: call === 1 ? payload.skipped || [] : [],
                 recommendations: payload.plan?.recommendations || [],
                 failed: [],
-                melonloader_installed: true,
             };
         },
         enqueue_install: async (...args) => {
@@ -193,8 +192,8 @@ const source = [
     "globalThis.__state = state;",
     fs.readFileSync(path.join(clientUiDir, "js", "compatibility.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "catalog.js"), "utf8"),
-    // 状态栏的状态由环境（melonloader.js）与队列（installs.js）共同决定，两个都要加载。
-    fs.readFileSync(path.join(clientUiDir, "js", "melonloader.js"), "utf8"),
+    // 状态栏的状态由环境（modloaders.js）与队列（installs.js）共同决定，两个都要加载。
+    fs.readFileSync(path.join(clientUiDir, "js", "modloaders.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "installs.js"), "utf8"),
 ].join("\n");
 const context = vm.createContext(sandbox);
@@ -259,6 +258,9 @@ async function main() {
         title: modalOptions.title,
         options: options(select),
         className: select ? select.className : "",
+        warnings: flatten(body)
+            .filter((item) => item.className === "loader-displace-warning")
+            .map((item) => item.text),
     };
 
     if (select && payload.change_to) {

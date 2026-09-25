@@ -121,5 +121,46 @@ class ResolveModPathTests(unittest.TestCase):
                 resolve_mod_path(self.GAME, candidate)
 
 
+class IdentifierRootTests(unittest.TestCase):
+    """允许的目录由标识符给出：桥接加载器的 `MLLoader/Mods` 也算受管目录。"""
+
+    GAME = Path(r"C:\Game")
+
+    def test_accepts_a_bridge_directory(self) -> None:
+        relative = "MLLoader/Mods/Example.dll"
+        self.assertEqual(
+            resolve_mod_path(self.GAME, relative, ("MLLoader/Mods", "MLLoader/Plugins")),
+            self.GAME / "MLLoader" / "Mods" / "Example.dll",
+        )
+
+    def test_rejects_directories_outside_the_given_roots(self) -> None:
+        roots = ("MLLoader/Mods",)
+        for candidate in ("Mods/Example.dll", "MLLoader/UserLibs/Lib.dll", "MLLoader/Plugins/Tool.dll"):
+            with self.assertRaises(ModToggleError, msg=repr(candidate)):
+                resolve_mod_path(self.GAME, candidate, roots)
+
+    def test_switching_works_inside_a_bridge_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            mod = game / "MLLoader" / "Mods" / "Example.dll"
+            mod.parent.mkdir(parents=True)
+            mod.write_bytes(b"content")
+
+            target = resolve_mod_path(game, "MLLoader/Mods/Example.dll", ("MLLoader/Mods",))
+            disabled = set_enabled(target, False)
+            self.assertTrue(disabled.is_file())
+            self.assertEqual(disabled.name, "Example.dll.disable")
+
+            enabled = set_enabled(disabled, True)
+            self.assertTrue(mod.is_file())
+            self.assertFalse(disabled.exists())
+
+    def test_a_single_segment_root_still_covers_its_subdirectories(self) -> None:
+        self.assertEqual(
+            resolve_mod_path(self.GAME, "Mods/Nested/Example.dll", ("Mods",)),
+            self.GAME / "Mods" / "Nested" / "Example.dll",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

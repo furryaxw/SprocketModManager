@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
-from ..domain.errors import DownloadError
+from ..domain.errors import DownloadError, InstallError
 from ..domain.models import (
     PreparedAsset,
     PreparedPackage,
@@ -20,7 +20,11 @@ from ..infrastructure.http_client import HttpClient
 from ..infrastructure.release_checksums import publisher_checksum
 from ..infrastructure.scanner import PackageScanner
 from ..utilities.checksums import sha256_file
-from ..utilities.package_paths import validate_relative_path
+from ..utilities.package_paths import (
+    validate_file_type,
+    validate_relative_path,
+    validate_supply_target,
+)
 
 
 class PlanPreparer:
@@ -28,7 +32,28 @@ class PlanPreparer:
         self.app_dir = app_dir
         self.http = http
         self.github = github
-        self.scanner = PackageScanner()
+
+    @staticmethod
+    def install_directories(plan: ResolutionPlan) -> dict[str, PurePosixPath]:
+        """计划里的加载器供给表：类型 -> 游戏根目录下的相对目录。
+
+        隐式依赖保证供给者一定在计划里，所以这里不需要再问注册表。同一个类型在计划里出现
+        两个供给者时无法确定该用哪个目录，直接报错而不是让后一个悄悄覆盖前一个。
+        """
+        directories: dict[str, PurePosixPath] = {}
+        owners: dict[str, str] = {}
+        for resolved in plan.packages:
+            for file_type, target in resolved.package.supply.items():
+                validated = validate_file_type(file_type)
+                owner = owners.get(validated)
+                if owner is not None and owner != resolved.package.id:
+                    raise InstallError(
+                        f"install type {validated} is supplied by both {owner} and "
+                        f"{resolved.package.id} in the same plan"
+                    )
+                owners[validated] = resolved.package.id
+                directories[validated] = validate_supply_target(target)
+        return directories
 
     def prepare(
             self,
@@ -40,6 +65,8 @@ class PlanPreparer:
         work_root.mkdir(parents=True, exist_ok=True)
         work_dir = Path(tempfile.mkdtemp(prefix="prepare-", dir=work_root))
         prepared_packages: list[PreparedPackage] = []
+        directories = self.install_directories(plan)
+        scanner = PackageScanner(directories)
         try:
             for resolved in plan.packages:
                 package = resolved.package
@@ -56,7 +83,9 @@ class PlanPreparer:
                     if downloader is not None:
                         downloader(asset, destination, progress)
                     else:
-                        self.http.download(asset, destination, progress=None)
+                        self.http.download(
+                            asset, destination, progress=None, hosts=set(package.asset_hosts())
+                        )
                     actual_digest = sha256_file(destination)
                     expected = publisher_checksum(
                         self.http, package, resolved.release, asset
@@ -76,7 +105,7 @@ class PlanPreparer:
                             publisher_digest=expected_digest,
                         )
                     )
-                    files, ignored = self.scanner.scan(
+                    files, ignored = scanner.scan(
                         package,
                         destination,
                         package_dir / "scan" / str(asset.id),
@@ -86,7 +115,7 @@ class PlanPreparer:
                 if not item.files:
                     raise DownloadError(f"{package.id}: selected Release assets contain no installable files")
                 prepared_packages.append(item)
-            return PreparedPlan(plan, prepared_packages, work_dir)
+            return PreparedPlan(plan, prepared_packages, work_dir, directories)
         except Exception:
             shutil.rmtree(work_dir, ignore_errors=True)
             raise

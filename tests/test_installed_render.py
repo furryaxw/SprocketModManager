@@ -35,6 +35,7 @@ def payload(
         context_rows: list | None = None,
         dblclick_row_buttons: list | None = None,
         environment: dict | None = None,
+        modloaders: list | None = None,
 ) -> dict:
     """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
     integrity = "corrupted" if corrupted else "suppressed" if suppressed else "release"
@@ -110,6 +111,8 @@ def payload(
     document["packages"] = packages or []
     if environment is not None:
         document["environment"] = environment
+    if modloaders is not None:
+        document["modloaders"] = modloaders
     if selection is not None:
         document["selection"] = selection
     if action:
@@ -498,8 +501,15 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             packages=[package],
             environment={
                 "sprocket": {"version": "0.2.53.2"},
-                "melonloader": {"used_version": "0.7.3"},
+                "loaders": {
+                    "lavagang.melonloader": {"installed": True, "used_version": "0.7.3"},
+                },
             },
+            modloaders=[{
+                "id": "lavagang.melonloader",
+                "name": "MelonLoader",
+                "display_name": {"en": "MelonLoader", "zh": "MelonLoader"},
+            }],
         )
 
         marker = _find(result["rows"][0], lambda node: "update-alert" in node["className"])
@@ -522,7 +532,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
         self.assertEqual(
             queued,
-            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False, False,
+            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False,
               {"furryaxw.sprocket-laser-rangefinder": "0.2.0"}]],
             "只有选中且确实有新版的行才排队，并且装的就是行上写的那一版",
         )
@@ -571,7 +581,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
         self.assertEqual(
             queued,
-            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False, False,
+            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False,
               {"furryaxw.sprocket-laser-rangefinder": "0.2.0"}]],
         )
 

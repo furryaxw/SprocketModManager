@@ -4,9 +4,10 @@ import json
 import os
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from ..domain.errors import InstallError
+from ..domain.models import MODLOADER_KIND
 from .mod_toggle import canonical_relative
 
 # 存储格式 v2：**由 package 主导**。文件挂在所属包下面：
@@ -19,6 +20,10 @@ from .mod_toggle import canonical_relative
 #     },
 #     "unowned": {"<path>": {"sha256": ..., "disabled": ...}}
 #   }
+#
+# `kind` 为 `modloader` 的包不记逐文件清单：它的记录只有版本、发布资产、安装时落地的顶层目录
+# （`directories`）与游戏根目录里的顶层文件（`payload_files`，带安装时的摘要）；文件在磁盘上不受
+# 逐文件跟踪。读取或写回时按包 id 或记录里的 `kind` 归一，把清单里的路径从包记录与文件表一起摘掉。
 #
 # `corrupted` 不是持久化字段：它由磁盘 hash 与发布版本 hash 现场比出来（`application/integrity.py`）。
 # 状态文件只记事实（路径 / sha256 / disabled），判断永远实时算，不会陈旧。
@@ -41,6 +46,26 @@ def _string_list(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str) and item.strip()]
 
 
+def _payload_files(value: object) -> list[dict[str, str]]:
+    """基础运行时的顶层文件条目：`{"path": ..., "sha256": ...}`（路径归一到规范形式）。"""
+    if not isinstance(value, list):
+        return []
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        canonical = canonical_relative(path)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append({"path": canonical, "sha256": str(item.get("sha256") or "")})
+    return entries
+
+
 def _file_entry(raw: object) -> dict[str, Any]:
     entry = raw if isinstance(raw, dict) else {}
     normalized = {key: entry.get(key) for key in _STORAGE_FILE_KEYS}
@@ -57,8 +82,11 @@ def _merge_entry(target: dict[str, Any], incoming: dict[str, Any], *, disabled: 
     target["disabled"] = bool(target.get("disabled")) or bool(incoming.get("disabled")) or disabled
 
 
-def _to_view(raw: dict[str, Any]) -> dict[str, Any]:
-    """把磁盘上的存储（v1 文件表 / v2 package 主导）统一成兼容视图。"""
+def _to_view(raw: dict[str, Any], *, modloaders: Iterable[str] = ()) -> dict[str, Any]:
+    """把磁盘上的存储（v1 文件表 / v2 package 主导）统一成兼容视图。
+
+    `modloaders` 是调用方已知的加载器包 id：记录里带 `kind` 的也照同一套归一。
+    """
     version = raw.get("schema_version")
     if version not in (1, SCHEMA_VERSION):
         raise InstallError("unsupported installed state schema")
@@ -74,6 +102,7 @@ def _to_view(raw: dict[str, Any]) -> dict[str, Any]:
 
     files: dict[str, dict[str, Any]] = {}
     packages: dict[str, dict[str, Any]] = {}
+    modloader_ids = {str(item) for item in modloaders}
 
     def store_file(relative: str, entry: dict[str, Any], *, owners: list[str] | None = None) -> str:
         """把文件记到**规范键**（去掉 `.disable`）上；`.disable` 只体现为 `disabled` 标志。"""
@@ -102,6 +131,12 @@ def _to_view(raw: dict[str, Any]) -> dict[str, Any]:
             raise InstallError("installed state is malformed")
         normalized_package = {key: value for key, value in package.items() if key != "files"}
         normalized_package["dependencies"] = _string_list(package.get("dependencies", []))
+        if str(package.get("kind") or "") == MODLOADER_KIND or package_id in modloader_ids:
+            # 基础运行时只记版本与目录：清单里的路径不归任何包，也不进文件表。
+            normalized_package["kind"] = MODLOADER_KIND
+            normalized_package["files"] = []
+            packages[package_id] = normalized_package
+            continue
         listed = package.get("files", [])
         if listed is None:  # 旧版本可能写成 null：按空列表处理（与 dependencies 一致）
             listed = []
@@ -176,17 +211,32 @@ def _to_storage(view: dict[str, Any]) -> dict[str, Any]:
             "requested": bool(package.get("requested")),
             "install_mode": package.get("install_mode", "standard"),
             "dependencies": _string_list(package.get("dependencies", [])),
-            # 安装时**新建的目录**（卸载按记录自深到浅删空目录）。白名单式存储必须显式列出，
+            # 包记录的目录：普通包记安装时**新建的目录**（卸载自深到浅删空目录），基础运行时记
+            # `install.payload` 落地的目录（卸载整树交还）。白名单式存储必须显式列出，
             # 否则这个字段会在落盘时被静默丢掉。
             "directories": _string_list(package.get("directories", [])),
+            # 基础运行时的顶层文件（游戏根目录里的 `version.dll` 之类）与安装时的摘要：卸载逐条核
+            # 对内容后才删。同样是白名单字段。
+            "payload_files": _payload_files(package.get("payload_files")),
+            # 整体接管的类型与它们各自的供给目录：卸载时据此整目录还原。同样是白名单字段。
+            "replaced_types": _string_list(package.get("replaced_types", [])),
+            "replaced_directories": {
+                str(key): str(value)
+                for key, value in (
+                    package.get("replaced_directories")
+                    if isinstance(package.get("replaced_directories"), dict)
+                    else {}
+                ).items()
+            },
         }
-        for extra in ("assets",):
+        # 身份与发布出处跟着记录走：包 id、发布 tag 与 release id 落盘时不能被静默丢掉。
+        for extra in ("id", "tag", "release_id", "assets", "kind"):
             if extra in package:
                 stored[extra] = package[extra]
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
         listed = package.get("files", [])
-        if isinstance(listed, list):
+        if isinstance(listed, list) and stored.get("kind") != MODLOADER_KIND:
             for item in listed:
                 if isinstance(item, dict):
                     relative = item.get("path")
@@ -234,7 +284,7 @@ class StateStore:
     def __init__(self, path: Path):
         self.path = path
 
-    def load(self) -> dict[str, Any]:
+    def load(self, *, modloaders: Iterable[str] = ()) -> dict[str, Any]:
         if not self.path.is_file():
             return deepcopy(EMPTY_STATE)
         try:
@@ -243,7 +293,7 @@ class StateStore:
             raise InstallError(f"cannot read installed state: {exc}") from exc
         if not isinstance(state, dict):
             raise InstallError("installed state is malformed")
-        return _to_view(state)
+        return _to_view(state, modloaders=modloaders)
 
     def save(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -161,26 +161,30 @@ class I18nCoverageTests(unittest.TestCase):
     def test_the_incompatible_update_sentence_is_composed_per_axis(self) -> None:
         """缺哪个轴就不提哪个轴：一句整串会把未知的轴也写进去（「Sprocket - 和 MelonLoader 未知」）。"""
         installed = (CLIENT_UI / "js" / "installs.js").read_text(encoding="utf-8")
+        modloaders = (CLIENT_UI / "js" / "modloaders.js").read_text(encoding="utf-8")
 
         self.assertIn('tr("incompatibleUpdateHead", {version})', installed)
-        self.assertIn('parts.join(tr("environmentAxisAnd"))', installed)
-        self.assertIn('tr("environmentAxisSprocket", {version: sprocket})', installed)
-        self.assertIn('tr("environmentAxisMelonLoader", {version: loader})', installed)
         self.assertIn('tr("incompatibleUpdateUnknown", {version})', installed)
+        self.assertIn("environmentAxesText()", installed)
+        self.assertIn('tr("environmentAxisSprocket", {version: sprocket})', modloaders)
+        self.assertIn('tr("environmentAxisLoader", {loader: loaderLabel(loaderId), version})', modloaders)
+        self.assertIn('parts.join(tr("environmentAxisAnd"))', modloaders)
 
         fragments = self._fragments(
             [
                 "incompatibleUpdateHead",
                 "incompatibleUpdateUnknown",
                 "environmentAxisSprocket",
-                "environmentAxisMelonLoader",
+                "environmentAxisLoader",
                 "environmentAxisAnd",
             ]
         )
         head = fragments["en"]["incompatibleUpdateHead"].replace("{version}", "1.1.0")
         parts = [
             fragments["en"]["environmentAxisSprocket"].replace("{version}", "0.2.53.2"),
-            fragments["en"]["environmentAxisMelonLoader"].replace("{version}", "0.7.3"),
+            fragments["en"]["environmentAxisLoader"]
+            .replace("{loader}", "MelonLoader")
+            .replace("{version}", "0.7.3"),
         ]
         both = head + fragments["en"]["environmentAxisAnd"].join(parts)
         self.assertEqual(
@@ -215,13 +219,12 @@ class I18nCoverageTests(unittest.TestCase):
         for key in (
             "kickerAccessibility",
             "kickerDiagnostics",
-            "kickerModRuntime",
             "kickerIndexSource",
             "kickerNetwork",
             "registrySection",
         ):
             self.assertIn(f'data-i18n="{key}"', html)
-        for literal in ("<small>ACCESSIBILITY</small>", "<small>MOD RUNTIME</small>", "<dt>Registry</dt>"):
+        for literal in ("<small>ACCESSIBILITY</small>", "<dt>Registry</dt>"):
             self.assertNotIn(literal, html)
 
 

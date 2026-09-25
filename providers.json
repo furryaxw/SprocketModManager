@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "entries": [
+    {
+      "loader": "lavagang.melonloader",
+      "version": ">=0.7.0 <0.8.0",
+      "sprocket": "<0.2.54"
+    },
+    {
+      "loader": "bepinex.bepinex-be",
+      "version": ">=6.0.0-be.785",
+      "sprocket": ">=0.2.54"
+    },
+    {
+      "loader": "1499501762.bepinex-melonloader-loader",
+      "version": ">=2.3.0",
+      "sprocket": ">=0.2.54"
+    }
+  ]
+}

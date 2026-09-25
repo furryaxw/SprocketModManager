@@ -15,7 +15,8 @@
     <script src="./js/installs.js" defer></script>
     <script src="./js/private_servers.js" defer></script>
     <script src="./js/settings.js" defer></script>
-    <script src="./js/melonloader.js" defer></script>
+    <script src="./js/logs.js" defer></script>
+    <script src="./js/modloaders.js" defer></script>
     <script src="./js/dialogs.js" defer></script>
     <script src="./js/main.js" defer></script>
 </head>
@@ -37,18 +38,21 @@
             <button class="nav-item" type="button" data-page-target="catalog">
                 <span class="nav-index">02</span><span data-i18n="catalog">模组目录</span>
             </button>
+            <button class="nav-item" type="button" data-page-target="modloaders">
+                <span class="nav-index">03</span><span data-i18n="modloaders">加载器</span>
+            </button>
             <button class="nav-item" type="button" data-page-target="translations">
-                <span class="nav-index">03</span><span data-i18n="translations">翻译</span>
+                <span class="nav-index">04</span><span data-i18n="translations">翻译</span>
             </button>
             <button class="nav-item" type="button" data-page-target="downloads">
-                <span class="nav-index">04</span><span data-i18n="downloads">下载队列</span>
+                <span class="nav-index">05</span><span data-i18n="downloads">下载队列</span>
                 <b id="queue-badge" hidden>0</b>
             </button>
             <button class="nav-item" type="button" data-page-target="settings">
-                <span class="nav-index">05</span><span data-i18n="settings">设置</span>
+                <span class="nav-index">06</span><span data-i18n="settings">设置</span>
             </button>
             <button class="nav-item" type="button" data-page-target="about">
-                <span class="nav-index">06</span><span data-i18n="about">关于</span>
+                <span class="nav-index">07</span><span data-i18n="about">关于</span>
             </button>
         </nav>
 
@@ -56,12 +60,10 @@
             <!-- 版本号与「为什么对不上」都留在这里；右下角 statusbar 只报健康状态。 -->
             <div class="environment" id="environment">
                 <div class="environment-line" id="environment-sprocket">Sprocket -</div>
-                <div class="environment-line">
-                    <span id="environment-melonloader-text">MelonLoader -</span>
-                    <button class="environment-install" id="environment-install-melonloader"
-                            type="button" data-i18n="installMelonLoaderLink" hidden>点击安装 MelonLoader
-                    </button>
-                </div>
+                <div class="environment-loaders" id="environment-loaders"></div>
+                <button class="environment-install" id="environment-install-loader"
+                        type="button" data-i18n="installLoaderLink" hidden>安装加载器
+                </button>
                 <div class="environment-line environment-note" id="environment-note" hidden></div>
             </div>
             <label class="language-control">
@@ -72,6 +74,9 @@
                     <option value="en">English</option>
                 </select>
             </label>
+            <button class="secondary-button" id="upload-logs" type="button"
+                    aria-haspopup="dialog" data-i18n="uploadLogs">上传日志
+            </button>
             <div class="registry-state" id="registry-state">
                 <span class="state-dot" aria-hidden="true"></span>
                 <span id="registry-state-text" data-i18n="connecting">正在连接</span>
@@ -207,6 +212,15 @@
             </div>
         </section>
 
+        <section class="page" id="page-modloaders" data-page="modloaders" hidden>
+            <div class="list-toolbar">
+                <span id="modloader-count">0</span>
+                <!-- 「提供」那一块是这个页面存在的理由：说清每种可安装类型装到哪里。 -->
+                <span class="list-hint" data-i18n="modloaderHint">安装、更新或卸载加载器 · 每项的「提供」列出可安装类型与安装位置</span>
+            </div>
+            <section class="modloader-list" id="modloader-list" aria-live="polite"></section>
+        </section>
+
         <section class="page" id="page-translations" data-page="translations" hidden>
             <div class="catalog-tools translation-tools">
                 <span class="result-count" id="translation-count">0</span>
@@ -303,32 +317,6 @@
                 <div class="form-section">
                     <div class="section-heading">
                         <span>04</span>
-                        <div><strong>MelonLoader</strong><small data-i18n="kickerModRuntime">模组运行环境</small></div>
-                    </div>
-                    <div class="component-row">
-                        <div class="component-summary">
-                            <div>
-                                <strong data-i18n="melonloaderStatus">加载器状态</strong>
-                                <span class="component-state" id="melonloader-state" data-i18n="checking">检查中</span>
-                            </div>
-                            <p id="melonloader-detail" data-i18n="melonloaderChecking">正在检查本机与官方 Release</p>
-                        </div>
-                        <div class="component-actions">
-                            <button class="secondary-button" id="open-melonloader-release" type="button"
-                                    data-i18n="officialRelease">官方 Release
-                            </button>
-                            <button class="secondary-button" id="upload-latest-log" type="button"
-                                    data-i18n="uploadLatestLog">上传 Latest.log
-                            </button>
-                            <button class="primary-button" id="melonloader-action" type="button" disabled
-                                    data-i18n="checking">检查中
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-section">
-                    <div class="section-heading">
-                        <span>05</span>
                         <div><strong data-i18n="registrySection">注册表</strong><small data-i18n="kickerIndexSource">索引来源</small></div>
                     </div>
                     <label class="field-label" for="index-url" data-i18n="indexUrl">索引 URL 或本地路径</label>
@@ -336,7 +324,7 @@
                 </div>
                 <div class="form-section">
                     <div class="section-heading">
-                        <span>06</span>
+                        <span>05</span>
                         <div><strong data-i18n="networkProxy">网络代理</strong><small data-i18n="kickerNetwork">网络与 GitHub</small></div>
                     </div>
                     <div class="field-stack proxy-setting">
@@ -362,7 +350,7 @@
                 </div>
                 <div class="form-section developer-server-section">
                     <div class="section-heading">
-                        <span>07</span>
+                        <span>06</span>
                         <div><strong data-i18n="developerServers">开发者服务器</strong><small
                                 data-i18n="privateDistributionSubtitle">私有分发</small></div>
                     </div>
@@ -423,9 +411,6 @@
                     </button>
                     <button class="secondary-button" id="open-manager-directory" type="button"
                             data-i18n="openManagerDirectory">打开数据目录
-                    </button>
-                    <button class="secondary-button" id="upload-manager-log" type="button"
-                            data-i18n="uploadManagerLog">上传管理器日志
                     </button>
                 </div>
             </div>

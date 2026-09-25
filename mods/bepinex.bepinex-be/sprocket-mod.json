@@ -1,0 +1,70 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 2,
+  "id": "bepinex.bepinex-be",
+  "name": "BepInEx",
+  "authors": ["BepInEx"],
+  "repository": "BepInEx/BepInEx",
+  "license": "LGPL-2.1-only",
+  "display_name": {
+    "en": "BepInEx (Bleeding Edge)",
+    "zh": "BepInEx（Bleeding Edge）"
+  },
+  "description": {
+    "en": "The official BepInEx 6 Bleeding Edge build published by the BepInEx build server.",
+    "zh": "BepInEx 官方构建服务器发布的 BepInEx 6 Bleeding Edge 构建。"
+  },
+  "release": {
+    "include_prerelease": true,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["BepInEx-Unity.IL2CPP-win-x64-*.zip"],
+      "exclude": []
+    },
+    "source": {
+      "type": "external",
+      "hosts": ["builds.bepinex.dev"]
+    }
+  },
+  "releases": [
+    {
+      "tag": "6.0.0-be.788",
+      "version": "6.0.0-be.788",
+      "prerelease": true,
+      "published_at": "",
+      "page_url": "https://builds.bepinex.dev/projects/bepinex_be",
+      "assets": [
+        {
+          "name": "BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788+5b766a3.zip",
+          "size": 34336405,
+          "download_url": "https://builds.bepinex.dev/projects/bepinex_be/788/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788%2B5b766a3.zip",
+          "digest": "sha256:f4cc496bd098a0df4164b81e3737297707f13a47c2478dba2f60eefab784817a"
+        }
+      ]
+    }
+  ],
+  "dependencies": [],
+  "recommendations": ["hans21223.sprocket-mod-loader"],
+  "featured": false,
+  "kind": "modloader",
+  "provides": {
+    "bepinex.bepinex": "{version}"
+  },
+  "supply": {
+    "bepinex:core": "{Sprocket}/BepInEx/core",
+    "bepinex:plugin": "{Sprocket}/BepInEx/plugins",
+    "bepinex:patchers": "{Sprocket}/BepInEx/patchers"
+  },
+  "install": {
+    "payload": [
+      {
+        "match": "**",
+        "target": "{Sprocket}",
+        "layout": "tree"
+      }
+    ],
+    "exclude": []
+  },
+  "category": "utility",
+  "tags": ["modloader", "runtime", "bepinex", "bleeding-edge"]
+}

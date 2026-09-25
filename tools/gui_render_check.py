@@ -219,9 +219,57 @@ CATALOG_PACKAGES = [
     },
 ]
 
+MODLOADERS_PAYLOAD = [
+    {
+        "id": "lavagang.melonloader",
+        "name": "MelonLoader",
+        "display_name": {"en": "MelonLoader", "zh": "MelonLoader"},
+        "description": {"en": "Universal mod loader for Unity games.", "zh": "Unity 游戏的通用模组加载器。"},
+        "repository": "LavaGang/MelonLoader",
+        "page_url": "https://github.com/LavaGang/MelonLoader",
+        "category": "utility",
+        "tags": ["modloader", "runtime"],
+        "installed": True,
+        "installed_version": "0.7.2",
+        "latest_version": "0.7.3",
+        "update_available": True,
+        "compatible": "compatible",
+        "supply": [
+            {"type": "melonloader:core", "directory": "{Sprocket}"},
+            {"type": "melonloader:mod", "directory": "{Sprocket}/Mods"},
+        ],
+        "dependencies": [{"id": "furryaxw.sprocket-mod-api", "version": ">=0.4.0", "when": "*"}],
+        "recommendations": ["furryaxw.cannon-sound-pool-fix"],
+        "files": 131,
+    },
+    {
+        "id": "bepinex.bepinex-be",
+        "name": "BepInEx",
+        "display_name": {"en": "BepInEx", "zh": "BepInEx"},
+        "description": {"en": "Plugin framework for Unity games.", "zh": "Unity 游戏的插件框架。"},
+        "repository": "BepInEx/BepInEx",
+        "page_url": "https://github.com/BepInEx/BepInEx",
+        "category": "utility",
+        "tags": ["modloader", "runtime"],
+        "installed": False,
+        "installed_version": "",
+        "latest_version": "6.0.0-be.788",
+        "update_available": False,
+        "compatible": "incompatible",
+        "supply": [
+            {"type": "bepinex:core", "directory": "{Sprocket}/BepInEx/core"},
+            {"type": "bepinex:plugin", "directory": "{Sprocket}/BepInEx/plugins"},
+        ],
+        "dependencies": [],
+        "recommendations": [],
+        "files": 0,
+    },
+]
+
 STUB = """// 无头截图专用的假 pywebview 桥；只提供渲染页面所需的最小响应。
 const INSTALLED = %(installed)s;
 const CATALOG = %(catalog)s;
+const MODLOADERS = %(modloaders)s;
 const BOOTSTRAP = {
     ok: true,
     version: "0.0.0-headless-precheck",
@@ -232,7 +280,7 @@ const BOOTSTRAP = {
         github_proxy_enabled: false, github_proxy_url: "", github_proxy_placeholder: "http://127.0.0.1:7890",
         text_scale: 1.0,
     },
-    links: {melonloader: "https://example.invalid", repository: "https://example.invalid", registry: "https://example.invalid"},
+    links: {repository: "https://example.invalid", registry: "https://example.invalid"},
 };
 const METHODS = {
     bootstrap: async () => BOOTSTRAP,
@@ -243,12 +291,17 @@ const METHODS = {
         unrecognized: INSTALLED.unrecognized, local_mods: INSTALLED.local_mods,
         local_summary: INSTALLED.local_summary, has_any_mods: true, source: "headless pre-check"}),
     get_queue: async () => ({ok: true, entries: [], close_pending: false}),
-    get_melonloader_status: async () => ({ok: true, installed: true, version: "0.7.3", latest: "0.7.3", page_url: ""}),
+    get_modloaders: async () => ({ok: true, modloaders: MODLOADERS}),
+    remove_modloader: async (id) => ({ok: true, modloader: MODLOADERS.find((item) => item.id === id) || {}}),
     get_environment: async () => ({
         ok: true,
         sprocket: {state: "ok", version: "0.2.53.2"},
-        melonloader: {installed: true, version: "0.7.3", latest_version: "0.7.3", used_version: "0.7.3"},
-        environment: {state: "unknown", table_source: "missing"},
+        loaders: {
+            "lavagang.melonloader": {installed: true, version: "0.7.2", latest_version: "0.7.3", used_version: "0.7.2"},
+            "bepinex.bepinex-be": {installed: false, version: null, latest_version: "6.0.0-be.788", used_version: "6.0.0-be.788"},
+        },
+        environment: {state: "unknown", entry: null, loader: "", table_source: "missing",
+            sprocket: "0.2.53.2", loaders: {"lavagang.melonloader": "0.7.2"}},
         sprocket_running: true,
         revision: 1,
     }),
@@ -315,7 +368,8 @@ def find_edge() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Headless client rendering pre-check")
     parser.add_argument("--out", default="artifacts/gui-installed-page.png", help="screenshot output path")
-    parser.add_argument("--page", default="installed", help="page to show before the screenshot")
+    parser.add_argument("--page", default="installed",
+                        help="page to show before the screenshot: installed | catalog | translations | downloads | modloaders | settings | about")
     parser.add_argument(
         "--focus",
         default="",
@@ -337,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
         stub = STUB % {
             "installed": json.dumps(INSTALLED_PAYLOAD, ensure_ascii=False),
             "catalog": json.dumps(CATALOG_PACKAGES, ensure_ascii=False),
+            "modloaders": json.dumps(MODLOADERS_PAYLOAD, ensure_ascii=False),
         }
         stub = stub.replace('window.showPage("installed")', f'window.showPage("{args.page}")')
         if args.focus:

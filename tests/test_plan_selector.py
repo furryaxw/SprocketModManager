@@ -160,7 +160,7 @@ class PlanSelectorHarnessTests(unittest.TestCase):
             [option["value"] for option in result["after"]["options"] if option["selected"]], ["2.0.0"]
         )
         self.assertEqual(
-            result["enqueue"][3], {"test.mod": "2.0.0"}, "红版按点名的那一版入队"
+            result["enqueue"][2], {"test.mod": "2.0.0"}, "红版按点名的那一版入队"
         )
 
     def test_the_confirmed_install_carries_the_chosen_version(self) -> None:
@@ -168,7 +168,7 @@ class PlanSelectorHarnessTests(unittest.TestCase):
 
         self.assertIsNotNone(result["enqueue"], "确认后应该入队")
         self.assertEqual(result["enqueue"][0], ["test.mod"])
-        self.assertEqual(result["enqueue"][3], {"test.mod": "1.0.0"}, "入队带的是用户选的那个版本")
+        self.assertEqual(result["enqueue"][2], {"test.mod": "1.0.0"}, "入队带的是用户选的那个版本")
 
     def test_a_package_without_a_version_list_keeps_the_plain_line(self) -> None:
         # 索引里没带版本列表（拿不到可选项）时不出选择器，行里照旧只写版本号。
@@ -177,7 +177,7 @@ class PlanSelectorHarnessTests(unittest.TestCase):
         result = self._run(packages=[payload], plan={"plans": [plan("2.0.0")]})
 
         self.assertEqual(result["first"]["options"], [], "拿不到版本列表就没有选择器")
-        self.assertEqual(result["enqueue"][3], {"test.mod": "2.0.0"})
+        self.assertEqual(result["enqueue"][2], {"test.mod": "2.0.0"})
 
     def test_the_package_list_drives_the_options(self) -> None:
         # 索引里给几个版本就列几个：改动版本列表不需要改 UI 代码。
@@ -187,6 +187,27 @@ class PlanSelectorHarnessTests(unittest.TestCase):
 
         self.assertEqual([option["value"] for option in result["first"]["options"]], ["2.0.0"])
 
+
+    def test_a_displaced_loader_is_listed_in_the_confirmation(self) -> None:
+        """装一个供给同一项能力的加载器时，确认框先说明旧的那个会被交还。"""
+        planned = plan("2.0.0")
+        planned["displaces"] = [
+            {
+                "id": "lavagang.melonloader",
+                "name": "MelonLoader",
+                "display_name": {"en": "MelonLoader"},
+                "version": "0.7.3",
+            }
+        ]
+        result = self._run(plan={"plans": [planned]})
+
+        self.assertEqual(
+            result["first"]["warnings"],
+            [
+                "Removes MelonLoader: it provides the same capability as this loader, "
+                "and its files are backed up first."
+            ],
+        )
 
     def test_a_failing_plan_reports_exactly_once(self) -> None:
         """点一次安装只该报一次：重复的监听/重复的调用都会让这句话弹两遍。"""

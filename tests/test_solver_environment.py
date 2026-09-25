@@ -6,12 +6,12 @@ import unittest
 from pathlib import Path
 
 from sprocket_mod_manager.application.solver import DependencySolver
-from sprocket_mod_manager.domain.compatibility import Environment
+from sprocket_mod_manager.domain.compatibility import CapabilityEnvironment
 from sprocket_mod_manager.domain.errors import ResolutionError
 from sprocket_mod_manager.domain.models import ReleaseAsset, RegistryPackage, ReleaseInfo
 from sprocket_mod_manager.domain.registry import Registry
 
-SPROCKET_AXIS = "environment.sprocket"
+SPROCKET_AXIS = "hamish.sprocket"
 
 
 def release(version: str, *, dependencies: tuple[dict[str, str], ...] = ()) -> ReleaseInfo:
@@ -84,12 +84,13 @@ class SolverHarness:
         return _GitHub()
 
 
-def environment(sprocket: str = "0.2.53.2", melonloader: str | None = "0.7.3") -> Environment:
-    return Environment(
+def environment(sprocket: str = "0.2.53.2", loader: str | None = "0.7.3") -> CapabilityEnvironment:
+    return CapabilityEnvironment(
         sprocket=sprocket,
         sprocket_state="ok",
-        melonloader=melonloader,
-        table={"entries": [{"melonloader": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"}]},
+        capabilities={} if loader is None else {"lavagang.melonloader": loader},
+        loaders={} if loader is None else {"lavagang.melonloader": loader},
+        table={"entries": [{"loader": "lavagang.melonloader", "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"}]},
     )
 
 
@@ -146,12 +147,12 @@ class EnvironmentFilterTests(unittest.TestCase):
     def test_an_unknown_axis_does_not_filter(self) -> None:
         harness = SolverHarness([
             package("test.mod", [
-                release("2.0.0", dependencies=({"id": "environment.melonloader", "version": "<0.7.0"},)),
+                release("2.0.0", dependencies=({"id": "lavagang.melonloader", "version": "<0.7.0"},)),
             ]),
         ])
 
         plan = DependencySolver(
-            harness.registry, harness.github(), environment=Environment(sprocket="0.2.53.2", sprocket_state="ok")
+            harness.registry, harness.github(), environment=CapabilityEnvironment(sprocket="0.2.53.2", sprocket_state="ok")
         ).resolve("test.mod")
 
         self.assertEqual(str(plan.packages[0].release.version), "2.0.0")
@@ -167,7 +168,7 @@ class EnvironmentFilterTests(unittest.TestCase):
 
         self.assertIn("test.dep", str(caught.exception))
         self.assertIn("3.0.0 requires another environment", str(caught.exception))
-        self.assertIn("Sprocket 0.2.53.2 / MelonLoader 0.7.3", str(caught.exception))
+        self.assertIn("Sprocket 0.2.53.2 / lavagang.melonloader 0.7.3", str(caught.exception))
 
     def test_a_version_constraint_failure_does_not_blame_the_environment(self) -> None:
         harness = SolverHarness([
@@ -231,6 +232,24 @@ class TranslationExemptionTests(unittest.TestCase):
             release_verdict(environment(), category="utility", dependencies=incompatible),
             "incompatible",
         )
+
+
+class CapabilityDependencyTests(unittest.TestCase):
+    """对本机能力的包级依赖不是安装边：装不了一个能力，它由能力判定负责。"""
+
+    def test_a_local_capability_dependency_is_not_an_install_edge(self) -> None:
+        harness = SolverHarness([
+            package(
+                "test.mod",
+                [release("1.0.0")],
+                depends_on=({"id": SPROCKET_AXIS, "version": ">=0.2.53.0", "when": "*"},),
+            ),
+        ])
+
+        plan = DependencySolver(harness.registry, harness.github()).resolve("test.mod")
+
+        self.assertEqual([item.package.id for item in plan.packages], ["test.mod"])
+        self.assertEqual(plan.by_id()["test.mod"].dependency_ids, ())
 
 
 if __name__ == "__main__":

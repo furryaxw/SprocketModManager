@@ -28,10 +28,12 @@ const state = {
     links: {repository: "", registry: ""},
     environment: null,
     environmentRevision: null,
+    environmentRenderKey: null,
     // 「显示不兼容」是内存态：页面来回切不丢，重启回到默认（隐藏）。
     showIncompatible: false,
-    melonloader: null,
-    melonloaderLoading: false,
+    modloaders: [],
+    modloadersLoading: false,
+    modloadersRequested: false,
     gameKillPending: false,
     readmes: new Map(),
     readmeLoading: new Set(),
@@ -52,6 +54,7 @@ const PAGE_META = {
     },
     installed: {kicker: "pageInstallation", title: "installedTitle", subtitle: gamePathSummary},
     downloads: {kicker: "pageTransfers", title: "downloadsTitle", subtitle: queueSummary},
+    modloaders: {kicker: "pageModloaders", title: "modloadersTitle", subtitle: () => tr("modRuntime")},
     settings: {kicker: "pageConfiguration", title: "settingsTitle", subtitle: () => tr("localSettings")},
     about: {
         kicker: "pageApplication",
@@ -100,7 +103,7 @@ function setLanguage(language) {
     renderInstalled();
     renderQueue();
     renderDetail();
-    renderMelonLoader();
+    renderModloaders();
     renderDeveloperServers();
     renderGithubLogin();
     renderEnvironment();
@@ -184,7 +187,7 @@ function reportClientLog(level, message) {
 function statusbarState() {
     if (environmentProblem()) return "error";
     if ((state.installed || []).some((item) => item.corrupted && !item.suppressed)) return "error";
-    if (state.catalogLoading || state.melonloaderLoading || queueActive()) return "busy";
+    if (state.catalogLoading || state.modloadersLoading || queueActive()) return "busy";
     return "ready";
 }
 
@@ -292,8 +295,8 @@ async function showPage(page) {
     updatePageHeader();
     if (page === "settings") {
         await reloadSettings();
-        await refreshMelonLoaderStatus(false);
     }
+    if (page === "modloaders") await refreshModloaders();
     if (["catalog", "translations"].includes(page)) {
         const selected = state.packages.find((item) => item.id === state.selectedId);
         if (selected && (selected.category === "translation") !== (page === "translations")) {
@@ -349,9 +352,15 @@ function packageBrowserView() {
     };
 }
 
+/** 加载器目录页的专属包：基础运行时不在模组目录里出现（它在加载器页安装）。 */
+function isModloaderPackage(pkg) {
+    return pkg?.kind === "modloader";
+}
+
 function filteredPackages(view) {
     const {keyword, category, sort, translations} = view;
     const result = state.packages.filter((pkg) => {
+        if (isModloaderPackage(pkg)) return false;
         if ((pkg.category === "translation") !== translations) return false;
         if (category !== "all" && pkg.category !== category) return false;
         const haystack = [

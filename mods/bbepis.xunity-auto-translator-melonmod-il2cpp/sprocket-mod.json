@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
   "name": "XUnity.AutoTranslator-MelonMod-IL2CPP",
   "authors": ["bbepis"],
@@ -25,10 +25,19 @@
   "dependencies": [],
   "recommendations": ["furryaxw.xunity-il2cpptmpro-bridge"],
   "featured": false,
+  "kind": "translateloader",
+  "supply": {
+    "xunity:translation": "{Sprocket}/AutoTranslator"
+  },
   "install": {
-    "scan_dlls": true,
-    "exclude": ["Mods/README (AutoTranslator).md"],
-    "overrides": []
+    "payload": [
+      {
+        "match": "**",
+        "target": "{Sprocket}",
+        "layout": "tree"
+      }
+    ],
+    "exclude": ["Mods/README (AutoTranslator).md"]
   },
   "category": "utility",
   "tags": ["translation", "localization", "xunity", "textmeshpro"]

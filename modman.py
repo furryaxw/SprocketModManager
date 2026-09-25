@@ -12,6 +12,7 @@ from pathlib import Path
 from sprocket_mod_manager.infrastructure.config import ConfigStore
 from sprocket_mod_manager.domain.errors import ModManagerError
 from sprocket_mod_manager.domain.models import PreparedPlan, ResolutionPlan
+from sprocket_mod_manager.application.identifiers import toggle_directories
 from sprocket_mod_manager.application.preparer import PlanPreparer
 from sprocket_mod_manager.application.local_mods import scan_local_mods, summarize
 from sprocket_mod_manager.application.service import ModManagerService, default_app_dir
@@ -121,7 +122,15 @@ def _local_mods(
     }
     registry = service.registry
     packages = registry.packages if registry is not None else ()
-    mods = scan_local_mods(game_path, managed, packages, compute_hashes=hashes)
+    capabilities = getattr(service.environment, "capabilities", None)
+    mods = scan_local_mods(
+        game_path,
+        managed,
+        packages,
+        installed=tuple(installed),
+        capabilities=capabilities if isinstance(capabilities, dict) else {},
+        compute_hashes=hashes,
+    )
     return [mod.as_dict() for mod in mods], summarize(mods)
 
 
@@ -284,7 +293,7 @@ def cli_main(argv: list[str] | None = None) -> int:
                 _print_plan(service, result)
         elif args.command == "install":
             game_path = _game_path(args, config)
-            plan = service.resolve(args.package, args.range)
+            plan = service.resolve(args.package, args.range, installed=service.installed(game_path))
             _print_plan(service, plan)
             installed_plan, warnings = service.install(
                 args.package,
@@ -349,8 +358,18 @@ def cli_main(argv: list[str] | None = None) -> int:
                 )
         elif args.command in {"disable", "enable"}:
             game_path = _game_path(args, config)
+            installed = service.installed(game_path)
+            registry = service.registry
+            packages = registry.packages if registry is not None else ()
+            capabilities = getattr(service.environment, "capabilities", None)
+            roots = toggle_directories(
+                game_path,
+                packages,
+                tuple(installed),
+                capabilities if isinstance(capabilities, dict) else {},
+            )
             # 只给基本名就行：文件当前是 `.dll` 还是 `.dll.disable` 由解析器判断，且幂等。
-            target = resolve_mod_path(game_path, args.path)
+            target = resolve_mod_path(game_path, args.path, roots)
             new_path = apply_enabled(target, args.command == "enable")
             relative = new_path.relative_to(game_path).as_posix()
             # 和 GUI 的 toggle_mod 一样同步安装记录：否则状态里留着旧路径，
@@ -379,7 +398,7 @@ def cli_main(argv: list[str] | None = None) -> int:
                 targets = [package_id for package_id, info in installed.items() if info.get("requested")]
             changed = 0
             for package_id in targets:
-                plan = service.resolve(package_id)
+                plan = service.resolve(package_id, installed=installed)
                 latest = plan.by_id()[package_id].release.version
                 current = installed.get(package_id, {}).get("version")
                 if current == str(latest):

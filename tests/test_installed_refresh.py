@@ -27,6 +27,13 @@ from test_adoption import FIXTURE_MOD, package  # noqa: E402  (复用认领测�
 FIXTURE_DIR = FIXTURE_MOD.parent
 
 
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：扫描 `Mods` / `UserLibs` 之前得先检测到运行时。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
+
 class ExplodingGitHub:
     """任何访问都炸——用来证明刷新路径没有网络依赖。"""
 
@@ -46,6 +53,7 @@ class InstalledRefreshTests(unittest.TestCase):
         game = root / "game"
         (game / "Mods").mkdir(parents=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
         ConfigStore(app_dir).save({"language": "zh", "game_path": str(game), "index_url": ""})
         service = ModManagerService(app_dir)
@@ -96,23 +104,23 @@ class InstalledRefreshTests(unittest.TestCase):
     def test_one_refresh_requests_each_dll_metadata_once(self) -> None:
         """刷新路径不许重复扫描：一次 `get_installed` 里每个 DLL 只该请求一次元数据。
 
-        计数的对象必须是**缓存查表层**（`local_mods.read_cached_metadata`）而不是底层解析
-        （`read_dll_metadata`）——后者在内存缓存命中时不会增长，会把"同一请求里扫两遍"这种
-        重复劳动掩盖过去。这条断言就是那道防线。
+        计数的对象必须是**缓存查表层**（标识符认身份时调用的 `read_cached_metadata`）而不是
+        底层解析（`read_dll_metadata`）——后者在内存缓存命中时不会增长，会把"同一请求里扫两遍"
+        这种重复劳动掩盖过去。这条断言就是那道防线。
         """
-        from sprocket_mod_manager.application import local_mods
+        from sprocket_mod_manager.application.identifiers import melonloader
 
         with tempfile.TemporaryDirectory() as directory:
             api, _game, _service = self._api(Path(directory))
             calls: list[str] = []
-            real_read = local_mods.read_cached_metadata
+            real_read = melonloader.read_cached_metadata
 
             def counting_read(path):
                 calls.append(str(path))
                 return real_read(path)
 
             try:
-                with patch.object(local_mods, "read_cached_metadata", counting_read):
+                with patch.object(melonloader, "read_cached_metadata", counting_read):
                     result = api.get_installed()
             finally:
                 api.install_queue.close()

@@ -1,4 +1,4 @@
-// 在 Node 里执行真实 melonloader.js 的启动更新检查（无浏览器）。
+// 在 Node 里执行真实 modloaders.js 的启动更新检查（无浏览器）。
 //
 // 用法：node render_update_harness.js <client_ui_dir> <payload.json>
 //
@@ -96,7 +96,7 @@ const apiCalls = [];
 let modalOptions = null;
 let resolveModal = null;
 
-// core.js / melonloader.js 自己带 `tr`/`toast`/`setStatus`/`resultError`，这里只补它们没有的：
+// core.js / modloaders.js 自己带 `tr`/`toast`/`setStatus`/`resultError`，这里只补它们没有的：
 // 弹窗（dialogs.js 不加载）与假桥。
 const sandbox = {
     console,
@@ -130,7 +130,7 @@ const source = [
     fs.readFileSync(path.join(clientUiDir, "js", "i18n.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "core.js"), "utf8"),
     `Object.assign(state, ${JSON.stringify(injected)});`,
-    fs.readFileSync(path.join(clientUiDir, "js", "melonloader.js"), "utf8"),
+    fs.readFileSync(path.join(clientUiDir, "js", "modloaders.js"), "utf8"),
 ].join("\n");
 
 sandbox.window = sandbox;

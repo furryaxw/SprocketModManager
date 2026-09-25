@@ -21,24 +21,26 @@ from ..infrastructure.mod_toggle import (
 )
 from ..utilities.checksums import sha256_file
 from .adoption import match_package_by_metadata
-
-DEFAULT_ROOTS = ("Mods", "Plugins", "UserLibs")
-_ROOT_ORDER = {name: index for index, name in enumerate(DEFAULT_ROOTS)}
+from .identifiers import ModIdentifier, ModType, scan_targets
 
 
-def _sort_key(mod: LocalMod) -> tuple[int, bool, str, str]:
-    """清单顺序：按根目录分组（`Mods` → `Plugins` → `UserLibs`），组内禁用项最后、再按显示名。
+def _sort_key(order: Mapping[str, int]):
+    """清单顺序：按**目录**分组（扫描顺序），组内禁用项最后、再按显示名。
 
-    分组看**路径根目录**而不是 DLL 自报的 `kind`：MelonLoader 按所在目录决定加载类别，
+    分组看文件所在目录而不是 DLL 自报的 `kind`：MelonLoader 按所在目录决定加载类别，
     一个放在 `UserLibs` 里却继承 `MelonMod` 的程序集也不该跑到模组前面。
     """
-    root = mod.path.split("/", 1)[0]
-    return (
-        _ROOT_ORDER.get(root, len(DEFAULT_ROOTS)),
-        mod.disabled,
-        mod.display_name.casefold(),
-        mod.path.casefold(),
-    )
+
+    def key(mod: LocalMod) -> tuple[int, bool, str, str]:
+        directory = mod.path.rsplit("/", 1)[0] if "/" in mod.path else ""
+        return (
+            order.get(directory.casefold(), len(order)),
+            mod.disabled,
+            mod.display_name.casefold(),
+            mod.path.casefold(),
+        )
+
+    return key
 
 
 @dataclass(frozen=True)
@@ -98,14 +100,22 @@ def scan_local_mods(
         game_path: Path,
         managed_paths: Mapping[str, str],
         packages: Sequence[RegistryPackage] = (),
-        roots: Sequence[str] = DEFAULT_ROOTS,
+        roots: Sequence[str] | None = None,
         *,
+        installed: Sequence[str] = (),
+        capabilities: Mapping[str, object] | None = None,
         compute_hashes: bool = False,
 ) -> list[LocalMod]:
-    """扫描 ``Mods`` / ``Plugins`` / ``UserLibs``，返回排序后的本地模组清单。
+    """扫描当前环境里活跃标识符的目录，返回排序后的本地模组清单。
 
-    每个根目录只扫 **1 层**（直接子文件），子目录里的 DLL 不算模组。
-    顺序见 :func:`_sort_key`：`Mods`、`Plugins`、`UserLibs` 依次成段。
+    目录默认由标识符给出：它声明的能力在场（已装供给者、环境能力，或磁盘上检测到运行时）
+    才激活。目录来自**已安装**供给者的 `supply` 表（桥接加载器把模组安家到 `MLLoader/Mods`
+    时，扫描跟着走），没有已装供给者时用检测到的布局；`roots` 显式给出时按那份名单扫，
+    此时目录没有供给类型，类别退回 DLL 自己的分类。
+
+    每个目录只扫 **1 层**（直接子文件），子目录里的 DLL 不算模组。顺序见 :func:`_sort_key`：
+    按目录分组，组内禁用项最后、再按显示名。条目的 `kind` 是所在目录的类型；目录没有类型时
+    用 DLL 的分类兜底。
 
     ``managed_paths`` 是「相对路径（小写、正斜杠）→ package id」的映射，来自安装记录。
     任何单个文件的解析失败都降级成 ``error`` 字段，不影响其他条目。
@@ -114,9 +124,19 @@ def scan_local_mods(
     需要哈希的调用方（CLI、安装期校验）显式传 True。
     """
     managed = {key.casefold(): value for key, value in managed_paths.items()}
+    if roots is None:
+        targets: list[tuple[ModIdentifier | None, str, ModType | None]] = [
+            (identifier, directory.path, directory.type)
+            for identifier, directory in scan_targets(
+                game_path, packages, installed, capabilities or ()
+            )
+        ]
+    else:
+        targets = [(None, str(name), None) for name in roots]
+
     found: list[LocalMod] = []
-    for root_name in roots:
-        root = game_path / root_name
+    for identifier, directory, mod_type in targets:
+        root = game_path / directory
         if not root.is_dir():
             continue
         for path in _iter_candidates(root):
@@ -125,7 +145,7 @@ def scan_local_mods(
             display_name = path.name
             version = ""
             authors: tuple[str, ...] = ()
-            kind = root_name
+            kind = mod_type.kind if mod_type is not None else directory
             declared = ""
             registry_id = ""
             registry_match = ""
@@ -138,13 +158,16 @@ def scan_local_mods(
             incompatible_assemblies: tuple[str, ...] = ()
 
             try:
-                metadata = read_cached_metadata(path)
+                metadata = (
+                    identifier.identify(path) if identifier is not None else read_cached_metadata(path)
+                )
             except Exception as exc:  # noqa: BLE001 - 单个文件失败不能中断整次扫描
                 error = str(exc)
                 metadata = None
 
             if metadata is not None:
-                kind = metadata.melon_kind or root_name
+                if mod_type is None:
+                    kind = metadata.melon_kind or directory
                 assembly_name = str(metadata.assembly_name or "")
                 required_dependencies = tuple(metadata.required_dependencies)
                 incompatible_assemblies = tuple(metadata.incompatible_assemblies)
@@ -196,7 +219,8 @@ def scan_local_mods(
                 )
             )
 
-    found.sort(key=_sort_key)
+    order = {directory.casefold(): index for index, (_identifier, directory, _type) in enumerate(targets)}
+    found.sort(key=_sort_key(order))
     resolved = apply_dependency_graph(found)
     # 扫描是**唯一会触发新解析**的地方，所以缓存必须在这里落盘。
     # 不在这里落盘，命令行 `modman local-mods` 每次都从零解析：同样 13 个真实 DLL，

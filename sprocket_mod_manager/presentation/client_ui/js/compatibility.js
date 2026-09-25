@@ -7,11 +7,19 @@ const VERDICT_INCOMPATIBLE = "incompatible";
 // 不判这个包自己的环境（翻译包）：不标色、不隐藏，它依赖的包照常判。
 const VERDICT_NOT_APPLICABLE = "not_applicable";
 
-// 两个环境轴（与索引里 release 的 `dependencies[].id` 一致）。
-const SPROCKET_AXIS_ID = "environment.sprocket";
-const MELONLOADER_AXIS_ID = "environment.melonloader";
+// 游戏那一维的轴 id（与索引里 release 的 `dependencies[].id` 一致）；其余每一轴就是它自己那个能力 id。
+const SPROCKET_AXIS_ID = "hamish.sprocket";
 
 // 这一层只做「拿判定结果做决定」：判定本身是后端按当前环境算好的，前端不重新解析版本区间。
+
+/**
+ * 兼容性那一行的轴名：逐轴结果自带 id，名字照 id 查 —— 游戏轴是固定的，
+ * 其余每轴就是它自己那个包，名字从加载器目录里取，认不出来就写 id。
+ */
+function axisLabel(axisId) {
+    if (axisId === SPROCKET_AXIS_ID) return "Sprocket";
+    return loaderLabel(axisId);
+}
 
 /** 包的全部可安装版本（新到旧）；索引里没带就是空数组。 */
 function packageReleases(pkg) {

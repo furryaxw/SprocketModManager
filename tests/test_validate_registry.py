@@ -1,4 +1,4 @@
-"""环境表在工作树上写坏时，CI 的门禁要直接红，而不是安静地少过滤一条。"""
+"""供给表在工作树上写坏时，CI 的门禁要直接红，而不是安静地少过滤一条。"""
 
 from __future__ import annotations
 
@@ -23,20 +23,23 @@ def load(name: str, filename: str):
 GEN_INDEX = load("sprocket_gen_index", "gen-index.py")
 VALIDATE = load("sprocket_validate_registry", "validate_registry.py")
 
+LOADER_ID = "lavagang.melonloader"
+MODLOADERS = {LOADER_ID, "bepinex.bepinex-be", "1499501762.bepinex-melonloader-loader"}
+
 
 def table_module(path: Path):
-    """Stand-in for gen-index.py with ENVIRONMENT_FILE pointed at `path`."""
+    """Stand-in for gen-index.py with PROVIDERS_FILE pointed at `path`."""
 
     class Module:
-        ENVIRONMENT_FILE = path
-        load_environment_table = staticmethod(GEN_INDEX.load_environment_table)
+        PROVIDERS_FILE = path
+        load_providers_table = staticmethod(GEN_INDEX.load_providers_table)
 
     return Module
 
 
-class EnvironmentTableGateTests(unittest.TestCase):
+class ProvidersTableGateTests(unittest.TestCase):
     def write(self, directory: str, payload) -> Path:
-        path = Path(directory) / GEN_INDEX.ENVIRONMENT_FILE_NAME
+        path = Path(directory) / GEN_INDEX.PROVIDERS_FILE_NAME
         path.write_text(
             payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
             encoding="utf-8",
@@ -44,18 +47,21 @@ class EnvironmentTableGateTests(unittest.TestCase):
         return path
 
     def test_the_shipped_table_passes(self) -> None:
-        self.assertEqual(VALIDATE.validate_environment(GEN_INDEX), [])
+        self.assertEqual(VALIDATE.validate_providers(GEN_INDEX, MODLOADERS), [])
 
     def test_a_missing_table_is_a_failure(self) -> None:
-        errors = VALIDATE.validate_environment(table_module(Path("nowhere") / "environment.json"))
+        errors = VALIDATE.validate_providers(table_module(Path("nowhere") / "providers.json"), MODLOADERS)
 
-        self.assertEqual(errors, ["environment.json is missing"])
+        self.assertEqual(errors, ["providers.json is missing"])
 
     def test_a_broken_entry_fails_with_the_warning_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = self.write(directory, {"entries": [{"melonloader": ">=0.7.0", "sprocket": "0.2.53"}]})
+            path = self.write(
+                directory,
+                {"entries": [{"loader": LOADER_ID, "version": ">=0.7.0", "sprocket": "0.2.53"}]},
+            )
 
-            errors = VALIDATE.validate_environment(table_module(path))
+            errors = VALIDATE.validate_providers(table_module(path), MODLOADERS)
 
         self.assertEqual(len(errors), 2)
         self.assertIn("第 1 条", errors[0])
@@ -65,6 +71,10 @@ class EnvironmentTableGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = self.write(directory, {"entries": []})
 
-            errors = VALIDATE.validate_environment(table_module(path))
+            errors = VALIDATE.validate_providers(table_module(path), MODLOADERS)
 
-        self.assertIn("environment.json has no usable entry", errors)
+        self.assertIn("providers.json has no usable entry", errors)
+
+
+if __name__ == "__main__":
+    unittest.main()

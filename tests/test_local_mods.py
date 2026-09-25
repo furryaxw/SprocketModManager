@@ -22,6 +22,13 @@ FIXTURE_PLUGIN = FIXTURE_DIR / "FixturePlugin.dll"
 FIXTURE_LIBRARY = FIXTURE_DIR / "FixtureLibrary.dll"
 
 
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：`Mods` / `Plugins` / `UserLibs` 要被扫描就得先检测到它。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
+
 def make_package(
         package_id: str,
         name: str,
@@ -120,6 +127,7 @@ class MatchOrderTests(unittest.TestCase):
 class LocalScanTests(unittest.TestCase):
     def _build_game_dir(self, root: Path) -> Path:
         (root / "Sprocket.exe").write_bytes(b"stub")
+        install_melonloader(root)
         (root / "Mods").mkdir()
         (root / "Plugins").mkdir()
         (root / "UserLibs").mkdir()
@@ -252,6 +260,7 @@ class LocalModsApiTests(unittest.TestCase):
         (game / "Mods").mkdir(parents=True)
         (game / "Plugins").mkdir(parents=True)
         (game / "Sprocket.exe").touch()
+        install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
         shutil.copyfile(FIXTURE_PLUGIN, game / "Plugins" / "FixturePlugin.dll")
         ConfigStore(app_dir).save({"language": "en", "game_path": str(game), "index_url": ""})
@@ -347,6 +356,225 @@ class LocalModsApiTests(unittest.TestCase):
             self.assertFalse(result["ok"], result)
             self.assertEqual(result["code"], "open_mod_location_failed")
         reveal.assert_not_called()
+
+
+BRIDGE_ID = "1499501762.bepinex-melonloader-loader"
+BEPINEX_ID = "bepinex.bepinex-be"
+
+
+def loader_package(
+        package_id: str,
+        supply: dict[str, str],
+        *,
+        provides: dict[str, str] | None = None,
+        kind: str = "modloader",
+) -> RegistryPackage:
+    return RegistryPackage(
+        id=package_id,
+        name=package_id,
+        authors=("test",),
+        repository=f"test/{package_id}",
+        license="MIT",
+        display_name={"en": package_id},
+        description={"en": package_id},
+        release={},
+        dependencies=(),
+        install={},
+        category="utility",
+        tags=(),
+        kind=kind,
+        supply=dict(supply),
+        provides=dict(provides or {}),
+    )
+
+
+def bridge_package() -> RegistryPackage:
+    return loader_package(
+        BRIDGE_ID,
+        {
+            "melonloader:core": "{Sprocket}/MLLoader/MelonLoader",
+            "melonloader:mod": "{Sprocket}/MLLoader/Mods",
+            "melonloader:plugin": "{Sprocket}/MLLoader/Plugins",
+            "melonloader:userlib": "{Sprocket}/MLLoader/UserLibs",
+        },
+        provides={"lavagang.melonloader": "0.7.3"},
+        kind="loaderbridge",
+    )
+
+
+def bepinex_package() -> RegistryPackage:
+    return loader_package(
+        BEPINEX_ID,
+        {
+            "bepinex:core": "{Sprocket}/BepInEx/core",
+            "bepinex:plugin": "{Sprocket}/BepInEx/plugins",
+            "bepinex:patchers": "{Sprocket}/BepInEx/patchers",
+        },
+        provides={"bepinex.bepinex": "{version}"},
+    )
+
+
+class RuntimeDirectoryTests(unittest.TestCase):
+    """目录跟着已装的加载器走：模组住在 `MLLoader/Mods` 时扫描也跟着去那里。"""
+
+    def _game(self, root: Path) -> Path:
+        (root / "Sprocket.exe").write_bytes(b"stub")
+        install_melonloader(root)
+        (root / "Mods").mkdir()
+        (root / "MLLoader" / "Mods").mkdir(parents=True)
+        (root / "BepInEx" / "plugins").mkdir(parents=True)
+        shutil.copyfile(FIXTURE_MOD, root / "Mods" / "LegacyMod.dll")
+        shutil.copyfile(FIXTURE_MOD, root / "MLLoader" / "Mods" / "BridgeMod.dll")
+        (root / "BepInEx" / "plugins" / "BepInExPlugin.dll").write_bytes(FIXTURE_MOD.read_bytes())
+        return root
+
+    def test_a_bridge_mod_is_listed_where_its_loader_puts_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._game(Path(directory))
+            packages = [
+                bridge_package(),
+                make_package("fixture.sprocket-mod", "FixtureMod", authors=("Fixture Author",)),
+            ]
+            mods = scan_local_mods(root, {}, packages, installed=(BRIDGE_ID,))
+            by_path = {mod.path: mod for mod in mods}
+
+            self.assertEqual(set(by_path), {"MLLoader/Mods/BridgeMod.dll"})
+            entry = by_path["MLLoader/Mods/BridgeMod.dll"]
+            self.assertEqual(entry.kind, "Mods")
+            self.assertEqual(entry.registry_id, "fixture.sprocket-mod")
+            self.assertEqual(entry.display_name, "Fixture Mod")
+
+    def test_the_bridge_loader_itself_is_not_a_mod(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._game(Path(directory))
+            (root / "MLLoader" / "MelonLoader").mkdir(parents=True)
+            shutil.copyfile(FIXTURE_MOD, root / "MLLoader" / "MelonLoader" / "MelonLoader.dll")
+
+            paths = {mod.path for mod in scan_local_mods(root, {}, [bridge_package()], installed=(BRIDGE_ID,))}
+
+            self.assertNotIn("MLLoader/MelonLoader/MelonLoader.dll", paths)
+
+    def test_bepinex_plugins_are_listed_without_a_fabricated_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._game(Path(directory))
+            mods = scan_local_mods(root, {}, [bepinex_package()], installed=(BEPINEX_ID,))
+            by_path = {mod.path: mod for mod in mods}
+
+            entry = by_path["BepInEx/plugins/BepInExPlugin.dll"]
+            self.assertEqual(entry.kind, "BepInEx plugins")
+            self.assertEqual(entry.display_name, "BepInExPlugin.dll")
+            self.assertEqual(entry.version, "")
+            self.assertEqual(entry.authors, ())
+            self.assertEqual(entry.declared_id, "")
+            self.assertEqual(entry.registry_id, "")
+            self.assertEqual(entry.assembly_name, "")
+            self.assertEqual(entry.error, "")
+            self.assertIn("Mods/LegacyMod.dll", by_path, "传统目录照常扫描")
+
+
+class BridgeRuntimeApiTests(unittest.TestCase):
+    """桥接加载器装好后，启用/禁用要认它安家的目录。"""
+
+    def _api(self, root: Path) -> tuple[object, Path]:
+        from sprocket_mod_manager.application.service import ModManagerService
+        from sprocket_mod_manager.domain.registry import Registry
+        from sprocket_mod_manager.infrastructure.config import ConfigStore
+        from sprocket_mod_manager.infrastructure.manager_paths import state_file_path
+        from sprocket_mod_manager.infrastructure.state import StateStore
+        from sprocket_mod_manager.presentation.web_gui import ClientApi
+
+        app_dir = root / "app"
+        game = root / "game"
+        (game / "MLLoader" / "Mods").mkdir(parents=True)
+        (game / "BepInEx" / "plugins").mkdir(parents=True)
+        (game / "Mods").mkdir()
+        (game / "Sprocket.exe").touch()
+        (game / "BepInEx" / "plugins" / "BepInEx.MelonLoader.Loader.dll").write_bytes(b"bridge")
+        shutil.copyfile(FIXTURE_MOD, game / "MLLoader" / "Mods" / "BridgeMod.dll")
+        shutil.copyfile(FIXTURE_MOD, game / "Mods" / "LegacyMod.dll")
+        ConfigStore(app_dir).save({"language": "en", "game_path": str(game), "index_url": ""})
+
+        service = ModManagerService(app_dir)
+        service.registry = Registry([bridge_package()])
+        StateStore(state_file_path(game)).save(
+            {
+                "schema_version": 2,
+                "packages": {
+                    BRIDGE_ID: {
+                        "name": "BepInEx.MelonLoader.Loader",
+                        "files": ["BepInEx/plugins/BepInEx.MelonLoader.Loader.dll"],
+                    }
+                },
+                "files": {},
+                "metadata": {},
+            }
+        )
+        api = ClientApi("0.3.3", app_dir=app_dir, service_factory=lambda _app_dir: service)
+        return api, game
+
+    def test_bridge_mods_are_listed_and_toggleable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, game = self._api(Path(directory))
+            try:
+                listed = api.get_local_mods()
+                self.assertTrue(listed["ok"], listed)
+                self.assertEqual(
+                    {mod["path"] for mod in listed["mods"]},
+                    {"MLLoader/Mods/BridgeMod.dll"},
+                    "桥接加载器决定模组住哪里，游戏根的 Mods 不再是它读的目录",
+                )
+
+                disabled = api.toggle_mod("MLLoader/Mods/BridgeMod.dll", False)
+                self.assertTrue(disabled["ok"], disabled)
+                self.assertEqual(disabled["toggled"], "MLLoader/Mods/BridgeMod.dll.disable")
+                self.assertTrue((game / "MLLoader" / "Mods" / "BridgeMod.dll.disable").is_file())
+
+                enabled = api.toggle_mod("MLLoader/Mods/BridgeMod.dll.disable", True)
+                self.assertTrue(enabled["ok"], enabled)
+                self.assertTrue((game / "MLLoader" / "Mods" / "BridgeMod.dll").is_file())
+            finally:
+                api.install_queue.close()
+
+    def test_bepinex_files_are_not_toggleable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, game = self._api(Path(directory))
+            try:
+                result = api.toggle_mod("BepInEx/plugins/BepInEx.MelonLoader.Loader.dll", False)
+            finally:
+                api.install_queue.close()
+
+            self.assertFalse(result["ok"], result)
+            self.assertEqual(result["code"], "toggle_mod_failed")
+            self.assertTrue((game / "BepInEx" / "plugins" / "BepInEx.MelonLoader.Loader.dll").is_file())
+
+
+class DetectedRuntimeTests(unittest.TestCase):
+    """激活看磁盘上有没有运行时，不看安装记录：管理器之外装上的 MelonLoader 照样激活。"""
+
+    def test_an_unrecorded_but_detected_melonloader_still_lists_its_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Sprocket.exe").write_bytes(b"stub")
+            install_melonloader(root)
+            (root / "Mods").mkdir()
+            (root / "UserLibs").mkdir()
+            shutil.copyfile(FIXTURE_MOD, root / "Mods" / "FixtureMod.dll")
+            shutil.copyfile(FIXTURE_LIBRARY, root / "UserLibs" / "FixtureLibrary.dll")
+
+            mods = scan_local_mods(root, {}, ())
+            self.assertEqual(
+                {mod.path for mod in mods},
+                {"Mods/FixtureMod.dll", "UserLibs/FixtureLibrary.dll"},
+            )
+
+    def test_nothing_is_listed_without_a_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Sprocket.exe").write_bytes(b"stub")
+            (root / "Mods").mkdir()
+            shutil.copyfile(FIXTURE_MOD, root / "Mods" / "FixtureMod.dll")
+
+            self.assertEqual(scan_local_mods(root, {}, ()), [])
 
 
 if __name__ == "__main__":

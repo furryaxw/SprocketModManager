@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -10,8 +11,9 @@ from unittest.mock import patch
 
 from sprocket_mod_manager.infrastructure.config import ConfigStore
 from sprocket_mod_manager.infrastructure.github import RepositoryReadme
-from sprocket_mod_manager.infrastructure.melonloader import MelonLoaderInstallation
 from sprocket_mod_manager.infrastructure.log_upload import LogUploadResult
+from sprocket_mod_manager.infrastructure.manager_paths import state_file_path
+from sprocket_mod_manager.infrastructure.state import StateStore
 from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
 from sprocket_mod_manager.domain.registry import Registry
 from sprocket_mod_manager.domain.semver import Version
@@ -24,6 +26,41 @@ def client_javascript(root: Path) -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted((root / "js").glob("*.js"))
+    )
+
+
+def install_melonloader(game: Path) -> None:
+    """游戏根目录的 MelonLoader 布局：扫描 `Mods` / `UserLibs` 之前得先检测到运行时。"""
+    (game / "version.dll").touch()
+    (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "dll" / "FixtureMod.dll",
+        game / "MelonLoader" / "net6" / "MelonLoader.dll",
+    )
+
+
+def bridge_package(package_id: str) -> RegistryPackage:
+    return RegistryPackage(
+        id=package_id,
+        name="BepInEx.MelonLoader.Loader",
+        authors=("1499501762",),
+        repository="1499501762/BepInEx.MelonLoader.Loader",
+        license="Apache-2.0",
+        display_name={"en": "MLLoader"},
+        description={"en": "bridge"},
+        release={},
+        dependencies=(),
+        install={},
+        category="utility",
+        tags=(),
+        kind="loaderbridge",
+        provides={"lavagang.melonloader": "0.7.3"},
+        supply={
+            "melonloader:core": "{Sprocket}/MLLoader/MelonLoader",
+            "melonloader:mod": "{Sprocket}/MLLoader/Mods",
+            "melonloader:plugin": "{Sprocket}/MLLoader/Plugins",
+            "melonloader:userlib": "{Sprocket}/MLLoader/UserLibs",
+        },
     )
 
 
@@ -44,12 +81,6 @@ class FakeWindow:
 
     def destroy(self):
         self.destroyed.set()
-
-
-class MissingMelonLoader:
-    @staticmethod
-    def detect(_game_path):
-        return MelonLoaderInstallation(False, None)
 
 
 class ReadmeService:
@@ -126,7 +157,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertEqual(result["path"], str(app_dir))
         opener.assert_called_once_with(app_dir)
 
-    def test_upload_manager_log_uses_current_manager_log(self):
+    def test_upload_log_routes_the_manager_source_to_the_manager_log(self):
         with TemporaryDirectory() as directory:
             app_dir = Path(directory)
             api = ClientApi("test", app_dir=app_dir)
@@ -136,7 +167,7 @@ class WebGuiTests(unittest.TestCase):
                     "sprocket_mod_manager.presentation.web_gui.upload_log_file",
                     return_value=uploaded,
                 ) as upload:
-                    result = api.upload_manager_log()
+                    result = api.upload_log("manager")
             finally:
                 api.install_queue.close()
 
@@ -199,6 +230,7 @@ class WebGuiTests(unittest.TestCase):
             mods = game / "Mods"
             mods.mkdir(parents=True)
             (game / "Sprocket.exe").touch()
+            install_melonloader(game)
             ConfigStore(app_dir).save(
                 {"language": "en", "game_path": str(game), "index_url": ""}
             )
@@ -209,6 +241,72 @@ class WebGuiTests(unittest.TestCase):
                 self.assertTrue(api._has_any_mods())
             finally:
                 api.install_queue.close()
+
+    def test_a_detected_runtime_feeds_the_capability_map(self) -> None:
+        """磁盘上检测到的版本就是能力版本，不是「可安装的最新版」。"""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = root / "game"
+            (game / "Mods").mkdir(parents=True)
+            (game / "Sprocket.exe").touch()
+            install_melonloader(game)
+            ConfigStore(app_dir).save({"language": "en", "game_path": str(game), "index_url": ""})
+            loader = replace(
+                installable_package("lavagang.melonloader", "MelonLoader.dll"),
+                kind="modloader",
+                supply={
+                    "melonloader:core": "{Sprocket}/MelonLoader",
+                    "melonloader:mod": "{Sprocket}/Mods",
+                    "melonloader:plugin": "{Sprocket}/Plugins",
+                    "melonloader:userlib": "{Sprocket}/UserLibs",
+                },
+            )
+
+            api = ClientApi("0.3.2", app_dir=app_dir)
+            try:
+                api.service.registry = Registry([loader])
+                api._environment_monitor.note_latest_loaders({"lavagang.melonloader": "9.9.9"})
+                environment = api.current_environment()
+            finally:
+                api._environment_monitor.stop()
+                api.install_queue.close()
+
+        self.assertEqual(environment.capability_version("lavagang.melonloader"), "1.2.3")
+
+    def test_the_environment_monitor_follows_the_bridge_directories(self) -> None:
+        """指纹要覆盖活跃标识符的目录，桥接加载器的 `MLLoader/Mods` 也在其中。"""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_dir = root / "app"
+            game = root / "game"
+            (game / "MLLoader" / "Mods").mkdir(parents=True)
+            (game / "MLLoader" / "MelonLoader").mkdir(parents=True)
+            (game / "Sprocket.exe").touch()
+            (game / "MLLoader" / "MelonLoader" / "MelonLoader.dll").write_bytes(b"bridge")
+            ConfigStore(app_dir).save({"language": "en", "game_path": str(game), "index_url": ""})
+            bridge_id = "1499501762.bepinex-melonloader-loader"
+            StateStore(state_file_path(game)).save(
+                {
+                    "schema_version": 2,
+                    "packages": {
+                        bridge_id: {"name": "MLLoader", "files": ["MLLoader/MelonLoader/MelonLoader.dll"]}
+                    },
+                    "files": {},
+                    "metadata": {},
+                }
+            )
+
+            api = ClientApi("0.3.2", app_dir=app_dir)
+            try:
+                api.service.registry = Registry([bridge_package(bridge_id)])
+                api.environment_snapshot()
+                directories = api._mod_directories
+            finally:
+                api._environment_monitor.stop()
+                api.install_queue.close()
+
+        self.assertIn("MLLoader/Mods", directories)
 
     def test_bootstrap_uses_saved_language_without_detecting_game_path(self):
         with TemporaryDirectory() as directory:
@@ -250,27 +348,6 @@ class WebGuiTests(unittest.TestCase):
             service.release.set()
             self.assertTrue(window.destroyed.wait(2))
             api.on_closed()
-
-    def test_mod_enqueue_requires_explicit_confirmation_without_melonloader(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            game = root / "game"
-            game.mkdir()
-            (game / "Sprocket.exe").touch()
-            ConfigStore(root / "app").save(
-                {"language": "en", "game_path": str(game), "index_url": ""}
-            )
-            api = ClientApi("0.2.0", app_dir=root / "app")
-            api.melonloader = MissingMelonLoader()
-            try:
-                blocked = api.enqueue_install([])
-                allowed = api.enqueue_install([], allow_without_melonloader=True)
-            finally:
-                api.install_queue.close()
-
-        self.assertFalse(blocked["ok"])
-        self.assertEqual(blocked["code"], "melonloader_required")
-        self.assertTrue(allowed["ok"])
 
     def test_text_scale_is_saved_and_returned_to_the_client(self):
         with TemporaryDirectory() as directory:
@@ -370,7 +447,6 @@ class WebGuiTests(unittest.TestCase):
                 app_dir=app_dir,
                 service_factory=lambda _app_dir: service,
             )
-            api.melonloader = MissingMelonLoader()
             try:
                 result = api.plan_install([package.id])
             finally:
@@ -391,6 +467,7 @@ class WebGuiTests(unittest.TestCase):
             game = root / "game"
             (game / "Mods").mkdir(parents=True)
             (game / "Sprocket.exe").touch()
+            install_melonloader(game)
             content = b"published mod"
             (game / "Mods" / "TestMod.dll").write_bytes(content)
             unknown = game / "Mods" / "UnknownMod.dll"
@@ -435,6 +512,7 @@ class WebGuiTests(unittest.TestCase):
             userlib.parent.mkdir(parents=True)
             userlib.write_bytes(b"unmanaged library")
             (game / "Sprocket.exe").touch()
+            install_melonloader(game)
             ConfigStore(app_dir).save(
                 {"language": "en", "game_path": str(game), "index_url": ""}
             )
@@ -457,9 +535,14 @@ class WebGuiTests(unittest.TestCase):
         )
         self.assertFalse(result["has_any_mods"])
 
-    def test_official_melonloader_repository_is_an_allowed_link(self):
+    def test_a_registered_package_repository_is_an_allowed_link(self):
         with TemporaryDirectory() as directory:
             api = ClientApi("0.2.0", app_dir=Path(directory))
+            loader = replace(
+                installable_package("lavagang.melonloader", "MelonLoader.dll"),
+                repository="LavaGang/MelonLoader",
+            )
+            api.service.registry = Registry([loader])
             try:
                 with patch("sprocket_mod_manager.presentation.web_gui.webbrowser.open") as open_browser:
                     result = api.open_url("https://github.com/LavaGang/MelonLoader/releases")
@@ -504,23 +587,22 @@ class WebGuiTests(unittest.TestCase):
         self.assertNotIn("customtkinter", web_gui)
         self.assertEqual(html.count('id="language-select"'), 1)
         self.assertIn('id="modal-layer" hidden', html)
-        self.assertIn('id="melonloader-action"', html)
+        self.assertIn('id="modloader-list"', html)
         self.assertIn('id="text-scale"', html)
         self.assertNotIn("window.alert", javascript)
         self.assertNotIn("window.confirm", javascript)
-        self.assertIn("async function ensureMelonLoader", javascript)
+        self.assertIn("async function installLoader", javascript)
         self.assertIn("function sanitizeReadmeHtml", javascript)
         self.assertIn('callApi("get_package_readme"', javascript)
         self.assertIn("metadata.textContent = localized(pkg.description, pkg.id)", javascript)
         self.assertIn('heading.className = "detail-heading"', javascript)
-        self.assertIn('readmeSection.className = "detail-readme"', javascript)
+        self.assertIn('readmeDetails.className = "detail-readme"', javascript)
         self.assertIn(
-            "panel.append(compatibilitySection(pkg, verdict))",
+            "appendCompatibility(block, pkg, verdict)",
             javascript,
-            "兼容性细节挂在详情页最底下",
+            "兼容性细节是详情块的最后一段",
         )
         self.assertIn('"enqueue_install",', javascript)
-        self.assertIn("loaderDecision.allowWithout", javascript)
         self.assertIn("function applyTextScale", javascript)
         self.assertIn("checkbox.checked = planState.recommendedSelection.has(plan.id)", javascript)
         self.assertIn('className: "installed"', javascript)
@@ -537,10 +619,10 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn("if (item.unrecognized)", javascript)
         self.assertIn('class="brand-line" aria-hidden="true"', html)
         self.assertIn('id="open-manager-directory"', html)
-        self.assertIn('id="upload-manager-log"', html)
+        self.assertIn('id="upload-logs"', html)
         self.assertIn('id="debug-mode"', html)
         self.assertIn('callApi("open_manager_directory")', javascript)
-        self.assertIn('"upload_manager_log"', javascript)
+        self.assertIn('"upload_log"', javascript)
 
     def test_catalog_columns_share_one_bounded_scroll_area(self):
         css = (

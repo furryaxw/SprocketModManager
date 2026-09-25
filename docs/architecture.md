@@ -27,6 +27,9 @@ Domain modules must not import application, infrastructure, or presentation.
 - `solver.py`: dependency resolution
 - `preparer.py`: download verification and install-plan preparation
 - `adoption.py`: adoption of existing game files
+- `local_mods.py`: local-mod inventory assembled from disk, registry, and state
+- `identifiers/`: per-runtime mod identifiers — runtime detection, the directories a
+  runtime's installed providers supply, and the identity rules for what lives in them
 - `catalog.py`: concurrent catalog release loading
 - `install_queue.py`: queued installation state and worker serialization
 - `private_install.py`: private-package preparation workflow
@@ -42,7 +45,7 @@ must not import presentation.
 - `private_servers/`: private catalog models, cache, GitHub sync, and server client
 - `release_checksums.py`, `scanner.py`, `installer.py`: package inspection and filesystem
 - `file_transaction.py`, `xunity_backup.py`: rollback and translation backups
-- `melonloader.py`, `log_upload.py`: external integrations
+- `log_upload.py`: external integrations
 - `app_logging.py`, `desktop.py`: manager diagnostics and Windows shell integration
 
 Infrastructure implements I/O and may use domain types. It must not import

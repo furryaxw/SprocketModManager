@@ -1,0 +1,56 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 2,
+  "id": "1499501762.bepinex-melonloader-loader",
+  "name": "BepInEx.MelonLoader.Loader",
+  "authors": ["1499501762"],
+  "repository": "1499501762/BepInEx.MelonLoader.Loader",
+  "license": "Apache-2.0",
+  "display_name": {
+    "en": "MLLoader (BepInEx)",
+    "zh": "MLLoader（BepInEx 插件）"
+  },
+  "description": {
+    "en": "BepInEx 6 plugin and patcher that runs MelonLoader 0.7.3 mods, plugins and user libs under BepInEx, re-homing their folders under MLLoader.",
+    "zh": "BepInEx 6 插件与 patcher：在 BepInEx 下运行 MelonLoader 0.7.3 的模组、插件与用户库，并把它们的目录重新安家到 MLLoader 下。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["MLLoader-IL2CPP-BepInEx6-*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "kind": "loaderbridge",
+  "provides": {
+    "lavagang.melonloader": "0.7.3"
+  },
+  "supply": {
+    "melonloader:core": "{Sprocket}/MLLoader/MelonLoader",
+    "melonloader:mod": "{Sprocket}/MLLoader/Mods",
+    "melonloader:plugin": "{Sprocket}/MLLoader/Plugins",
+    "melonloader:userlib": "{Sprocket}/MLLoader/UserLibs"
+  },
+  "install": {
+    "payload": [
+      {
+        "match": "**",
+        "target": "{Sprocket}",
+        "layout": "tree"
+      }
+    ],
+    "exclude": []
+  },
+  "category": "utility",
+  "tags": ["modloader", "bridge", "bepinex", "melonloader"]
+}

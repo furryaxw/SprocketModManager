@@ -1,28 +1,30 @@
-"""环境兼容性：本机 Sprocket / MelonLoader 决定每个 release 是三色里的哪一种。
+"""能力兼容性：本机给每个能力提供的版本决定每条 release 是三色里的哪一种。
 
-索引里每条 release 的 `dependencies` 已经写明它对两个环境虚拟包的区间
-（`environment.sprocket` / `environment.melonloader`），这里只做区间匹配，不参与依赖求解：
-装哪个版本由调用方定，装下去之后是否真的能跑由玩家自己决定。
+索引里每条 release 的 `dependencies` 已经写明它对能力的区间。能力的版本有两个来源：
+本机的游戏版本（游戏能力，索引顶层 `game.id` 给的 id）和已装加载器包通过 `provides`
+声明出来的能力。这里只做区间匹配，不参与依赖求解：装哪个版本由调用方定，装下去之后
+是否真的能跑由玩家自己决定。
 
-索引顶层还带一张「加载器 ↔ 游戏」表（注册表 `site/environment.json` 规范化而来）：表里说
-这段加载器只支持某个游戏版本之前，而本机更晚，那这个环境自身就是矛盾的 —— 那不是任何一个
-release 的错，所以判定顶点为黄而不是红。这张表只从注册表来，客户端同步到一次就缓存住，
-本地不放内置副本。
+索引顶层还带一张「加载器包 ↔ 游戏」表（注册表 `providers.json` 规范化而来）：表里说某个
+加载器包的某段版本只支持某个游戏版本之前，而本机更晚，那这个组合自身就是矛盾的 —— 那不是
+任何一条 release 的错，所以判定顶点为黄而不是红。这张表只从注册表来，客户端同步到一次就
+缓存住，本地不放内置副本。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping
 
-SPROCKET_PACKAGE = "environment.sprocket"
-MELONLOADER_PACKAGE = "environment.melonloader"
-ENVIRONMENT_PACKAGES = (SPROCKET_PACKAGE, MELONLOADER_PACKAGE)
+from .semver import satisfies
+
+# 索引没给出游戏能力 id 时的兜底；正常情况下它由索引顶层 `game.id` 提供。
+DEFAULT_GAME_CAPABILITY = "hamish.sprocket"
 
 COMPATIBLE = "compatible"
 UNKNOWN = "unknown"
 INCOMPATIBLE = "incompatible"
-# 不判这个包自己的环境声明（翻译包）：界面上不标色、不隐藏，但它依赖的包照常判。
+# 不判这个包自己的能力声明（翻译包）：界面上不标色、不隐藏，但它依赖的包照常判。
 NOT_APPLICABLE = "not_applicable"
 
 TRANSLATION_CATEGORY = "translation"
@@ -114,8 +116,20 @@ def range_lower_bound(range_spec: Any) -> tuple[int, ...] | None:
     return best
 
 
-def environment_table(payload: Any) -> dict[str, Any]:
-    """索引顶层的「加载器 ↔ 游戏」表；形状不对或没有就是空表（没有本地内置表）。
+def loader_range_allows(version: Any, range_spec: Any) -> bool:
+    """加载器包版本是否落在区间里。
+
+    加载器版本是标准 SemVer，可能带预发布段（`6.0.0-be.788`），所以这里用 semver 判；
+    读不出来的旧式写法退回按段比较。
+    """
+    try:
+        return satisfies(str(version), str(range_spec or "*"))
+    except ValueError:
+        return range_allows(version, range_spec)
+
+
+def providers_table(payload: Any) -> dict[str, Any]:
+    """索引顶层的「加载器包 ↔ 游戏」表；形状不对或没有就是空表（没有本地内置表）。
 
     空表的意思是「这层不知道」：不参与过滤、也不报冲突 —— 表只从注册表来，同步过一次就缓存着。
     """
@@ -123,23 +137,30 @@ def environment_table(payload: Any) -> dict[str, Any]:
         entries = payload.get("entries")
         if isinstance(entries, list):
             cleaned = [
-                {"melonloader": str(entry["melonloader"]), "sprocket": str(entry["sprocket"])}
+                {
+                    "loader": str(entry["loader"]),
+                    "version": str(entry["version"]),
+                    "sprocket": str(entry["sprocket"]),
+                }
                 for entry in entries
-                if isinstance(entry, dict) and "melonloader" in entry and "sprocket" in entry
+                if isinstance(entry, dict)
+                and "loader" in entry
+                and "version" in entry
+                and "sprocket" in entry
             ]
-            return {"schema_version": 1, "entries": cleaned}
-    return {"schema_version": 1, "entries": []}
+            return {"schema_version": 2, "entries": cleaned}
+    return {"schema_version": 2, "entries": []}
 
 
 def release_verdict(
-        environment: Environment,
+        environment: "CapabilityEnvironment",
         *,
         category: str,
         dependencies: Iterable[dict[str, Any]] | None,
 ) -> str:
-    """一个 release 的三色判定（判定口径唯一的一处）。
+    """一条 release 的三色判定（判定口径唯一的一处）。
 
-    翻译包（`translation`）不看自己的环境声明：正文是文本，声明往往是抄来的、也常常过时；
+    翻译包（`translation`）不看自己的能力声明：正文是文本，声明往往是抄来的、也常常过时；
     它能不能用取决于它依赖的那些包 —— 那些包各自按自己的声明判，所以这里返回「不适用」。
     """
     if category == TRANSLATION_CATEGORY:
@@ -148,33 +169,41 @@ def release_verdict(
 
 
 @dataclass(frozen=True)
-class Environment:
-    """判定用的环境：两个轴的取值、游戏版本状态，以及加载器 ↔ 游戏表。"""
+class CapabilityEnvironment:
+    """判定用的能力表：每个能力本机的版本，外加加载器包 ↔ 游戏的表。
 
+    `capabilities` 是能力 id -> 版本：游戏那项由 `game_id`/`sprocket` 给，其余来自已装
+    加载器包的 `provides`（`{version}` 按实际发布版本替换）。`loaders` 是加载器**包** id ->
+    在用的版本，只用来对上 `providers.json` 那张表 —— 表和能力是两个层次，包版本与它提供的
+    能力版本可以不同（桥接包给 `lavagang.melonloader` 一个版本，自己的包版本是另一个）。
+    """
+
+    game_id: str = DEFAULT_GAME_CAPABILITY
     sprocket: str | None = None
     sprocket_state: str = "unconfigured"
-    melonloader: str | None = None
+    capabilities: Mapping[str, str] = field(default_factory=dict)
+    loaders: Mapping[str, str] = field(default_factory=dict)
     table: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "table", environment_table(self.table))
+        object.__setattr__(self, "table", providers_table(self.table))
+        object.__setattr__(self, "loaders", dict(self.loaders or {}))
+        object.__setattr__(self, "capabilities", dict(self.capabilities or {}))
 
-    def axis_version(self, package_id: str) -> str | None:
-        if package_id == SPROCKET_PACKAGE:
+    def capability_version(self, capability_id: str) -> str | None:
+        if capability_id == self.game_id:
             return self.sprocket if self.sprocket_state == "ok" else None
-        if package_id == MELONLOADER_PACKAGE:
-            return self.melonloader
-        return None
+        return self.capabilities.get(capability_id)
 
     @property
     def unusable_game(self) -> bool:
         return self.sprocket_state in UNUSABLE_GAME_STATES
 
     def verdict(self, dependencies: Iterable[dict[str, Any]] | None) -> str:
-        """一个 release 的三色判定。
+        """一条 release 的三色判定。
 
-        任一环境轴不通过＝不兼容；没有可评估的轴＝未知；**环境自身矛盾**（加载器还跟不上
-        这个游戏）时顶点为未知 —— 那不是这个 release 的错，但也不能说它兼容。
+        任一能力轴不通过＝不兼容；没有可评估的轴＝未知；**这个组合自身矛盾**（加载器还跟不上
+        这个游戏）时顶点为未知 —— 那不是这条 release 的错，但也不能说它兼容。
         """
         if self.unusable_game:
             return INCOMPATIBLE
@@ -182,7 +211,7 @@ class Environment:
         for dependency in dependencies or ():
             if not isinstance(dependency, dict):
                 continue
-            version = self.axis_version(str(dependency.get("id", "")))
+            version = self.capability_version(str(dependency.get("id", "")))
             if version is None:
                 continue
             participated = True
@@ -194,41 +223,44 @@ class Environment:
             return UNKNOWN
         return COMPATIBLE
 
-    def loader_row(self) -> dict[str, Any] | None:
-        """命中当前加载器版本的那一行。
+    def loader_row(self, loader_id: str) -> dict[str, Any] | None:
+        """命中这个加载器包当前版本的那一行。
 
-        一个加载器版本只对应**一行**：加载器区间下界更大者优先（新的一行覆盖旧的一行），
-        下界相同则表里靠后的覆盖靠前的，没有下界的兜底行排最后。这样加一行「新加载器支持
-        更新的游戏」不会把老那一行弄坏 —— 老加载器仍然只命中它自己那行。
+        一个包版本只对应**一行**：区间下界更大者优先（新的一行覆盖旧的一行），下界相同则
+        表里靠后的覆盖靠前的，没有下界的兜底行排最后。这样加一行「新加载器支持更新的游戏」
+        不会把老那一行弄坏 —— 老加载器仍然只命中它自己那行。
         """
-        if not self.melonloader:
+        version = self.loaders.get(loader_id)
+        if not version:
             return None
         matches = [
             (index, entry)
             for index, entry in enumerate(self.table.get("entries", ()))
             if isinstance(entry, dict)
-            and range_allows(self.melonloader, entry.get("melonloader"))
+            and str(entry.get("loader", "")) == loader_id
+            and loader_range_allows(version, entry.get("version"))
         ]
         if not matches:
             return None
 
         def priority(item: tuple[int, dict[str, Any]]) -> tuple[int, tuple[int, ...], int]:
             index, entry = item
-            bound = range_lower_bound(entry.get("melonloader"))
+            bound = range_lower_bound(entry.get("version"))
             return (0 if bound is None else 1, bound or (), index)
 
         return max(matches, key=priority)[1]
 
     def consistency(self) -> dict[str, Any]:
-        """环境自身是否自洽：表里说这段加载器只支持到某个游戏版本之前，而本机更晚。"""
-        if self.sprocket is None or self.sprocket_state != "ok" or not self.melonloader:
-            return {"state": UNKNOWN, "entry": None}
-        row = self.loader_row()
-        if row is None:
-            return {"state": UNKNOWN, "entry": None}
-        if not range_allows(self.sprocket, row.get("sprocket")):
-            return {"state": "conflict", "entry": dict(row)}
-        return {"state": "ok", "entry": None}
+        """这个组合是否自洽：表里说这段加载器只支持到某个游戏版本之前，而本机更晚。"""
+        if self.sprocket is None or self.sprocket_state != "ok" or not self.loaders:
+            return {"state": UNKNOWN, "entry": None, "loader": ""}
+        for loader_id in sorted(self.loaders):
+            row = self.loader_row(loader_id)
+            if row is None:
+                continue
+            if not range_allows(self.sprocket, row.get("sprocket")):
+                return {"state": "conflict", "entry": dict(row), "loader": loader_id}
+        return {"state": "ok", "entry": None, "loader": ""}
 
     def axes(self, dependencies: Iterable[dict[str, Any]] | None) -> list[dict[str, Any]]:
         """逐轴结果：声明了什么、本机是什么、这一轴过没过。
@@ -242,13 +274,17 @@ class Environment:
             for item in dependencies or ()
             if isinstance(item, dict) and item.get("id")
         }
+        others = sorted(
+            (set(declared) | set(self.capabilities)) - {self.game_id}
+        )
+        capability_ids = [self.game_id, *others]
         result: list[dict[str, Any]] = []
-        for package_id in ENVIRONMENT_PACKAGES:
-            local = self.axis_version(package_id)
-            range_spec = declared.get(package_id, "")
+        for capability_id in capability_ids:
+            local = self.capability_version(capability_id)
+            range_spec = declared.get(capability_id, "")
             result.append(
                 {
-                    "id": package_id,
+                    "id": capability_id,
                     "declared": range_spec,
                     "local": local or "",
                     "satisfied": (
@@ -260,14 +296,21 @@ class Environment:
 
     def label(self) -> str:
         """给人看的一行环境描述：求解器说清「为什么这些版本装不了」时用它。"""
-        return f"Sprocket {self.sprocket or '-'} / MelonLoader {self.melonloader or '-'}"
+        parts = [f"Sprocket {self.sprocket or '-'}"]
+        parts.extend(
+            f"{capability_id} {self.capabilities[capability_id] or '-'}"
+            for capability_id in sorted(self.capabilities)
+            if capability_id != self.game_id
+        )
+        return " / ".join(parts)
 
     def as_dict(self, *, table_source: str) -> dict[str, Any]:
         state = self.consistency()
         return {
             "state": state["state"],
             "entry": state["entry"],
+            "loader": state["loader"],
             "table_source": table_source,
             "sprocket": self.sprocket,
-            "melonloader": self.melonloader,
+            "loaders": dict(self.loaders),
         }

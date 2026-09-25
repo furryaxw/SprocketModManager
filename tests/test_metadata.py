@@ -46,33 +46,6 @@ def metadata():
 
 
 class MetadataLocalizationTests(unittest.TestCase):
-    def test_translation_package_requires_xunity_mode_and_dependency(self):
-        meta = metadata()
-        meta["category"] = "translation"
-        meta["release"]["assets"]["include"] = ["*.zip"]
-        meta["install"] = {
-            "mode": "xunity-translation",
-            "scan_dlls": False,
-            "exclude": [],
-            "overrides": [],
-        }
-        meta["dependencies"] = [
-            {
-                "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
-                "version": "*",
-                "when": "*",
-            }
-        ]
-        INDEX.validate_meta(meta, "example.mod")
-
-        without_dependency = {**meta, "dependencies": []}
-        with self.assertRaisesRegex(INDEX.RegistryError, "must depend on"):
-            INDEX.validate_meta(without_dependency, "example.mod")
-
-        standard_mode = {**meta, "install": {"scan_dlls": False, "exclude": [], "overrides": []}}
-        with self.assertRaisesRegex(INDEX.RegistryError, "must use install.mode"):
-            INDEX.validate_meta(standard_mode, "example.mod")
-
     def test_one_display_language_without_description_is_valid(self):
         INDEX.validate_meta(metadata(), "example.mod")
 
@@ -197,7 +170,7 @@ class MetadataLocalizationTests(unittest.TestCase):
             index = INDEX.generate_index(
                 root / "mods",
                 output,
-                release_loader=lambda _package, _known: [release],
+                release_loader=lambda _package, _known, _axes: [release],
             )
 
         self.assertEqual(index["packages"][0]["releases"], [release])
@@ -286,7 +259,11 @@ class MetadataLocalizationTests(unittest.TestCase):
 
         self.assertEqual(index["packages"][0]["releases"], [release])
         fallback.assert_called_once_with("https://example.com/index.json")
-        self.assertIn("restored releases", warning.call_args.args[0])
+        messages = [call.args[0] for call in warning.call_args_list if call.args]
+        self.assertTrue(
+            any("restored releases" in message for message in messages),
+            messages,
+        )
 
     def test_release_fetch_falls_back_to_latest_when_list_has_no_compatible_asset(self):
         invalid = {
@@ -383,6 +360,296 @@ class MetadataLocalizationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "release asset URL"):
             RegistryPackage.from_dict(raw)
+
+
+class InstallTypeValidationTests(unittest.TestCase):
+    """安装类型可以写成具体类型或通配；供给位置必须具体；外部下载来源只有 modloader 可以声明。"""
+
+    def schema_two(self) -> dict:
+        meta = metadata()
+        meta["schema_version"] = 2
+        meta["install"] = {
+            "files": [{"match": "*.dll", "type": "melonloader:mod"}],
+            "scan_dlls": True,
+            "exclude": [],
+        }
+        return meta
+
+    def test_install_file_types_may_be_wildcards(self):
+        meta = self.schema_two()
+        meta["install"]["files"] = [{"match": "*.dll", "type": "melonloader:*"}]
+
+        INDEX.validate_meta(meta, "example.mod")
+
+    def test_install_file_types_must_be_well_formed(self):
+        meta = self.schema_two()
+        for value in ("", "melonloader", ":mod", "melonloader:"):
+            with self.subTest(value=value):
+                meta["install"]["files"] = [{"match": "*.dll", "type": value}]
+                with self.assertRaisesRegex(INDEX.RegistryError, "invalid install file type"):
+                    INDEX.validate_meta(meta, "example.mod")
+
+    def test_supply_keys_must_be_concrete_types(self):
+        meta = self.schema_two()
+        meta["kind"] = "modloader"
+        meta["supply"] = {"melonloader:*": "{Sprocket}/Mods"}
+
+        with self.assertRaisesRegex(INDEX.RegistryError, "invalid supplied type"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_install_types_are_matched_by_concrete_type(self):
+        packages = {
+            "example.mod": {
+                "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+                "install": {"files": [{"match": "*.dll", "type": "melonloader:plugin"}]},
+            }
+        }
+
+        with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
+            INDEX.validate_install_types(packages)
+
+        packages["example.mod"]["install"]["files"] = [
+            {"match": "*.dll", "type": "melonloader:mod"}
+        ]
+        INDEX.validate_install_types(packages)
+
+    def test_a_wildcard_install_type_needs_a_supplier_in_its_namespace(self):
+        packages = {
+            "example.mod": {
+                "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+                "install": {"files": [{"match": "*.dll", "type": "melonloader:*"}]},
+            }
+        }
+
+        INDEX.validate_install_types(packages)
+
+        packages["example.mod"]["install"]["files"] = [
+            {"match": "*.dll", "type": "bepinex:*"}
+        ]
+        with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
+            INDEX.validate_install_types(packages)
+
+    def test_only_a_modloader_may_declare_an_external_source(self):
+        meta = metadata()
+        meta["release"]["source"] = {"type": "external", "hosts": ["example.org"]}
+
+        with self.assertRaisesRegex(
+            INDEX.RegistryError, "only a modloader may declare an external release source"
+        ):
+            INDEX.validate_meta(meta, "example.mod")
+
+        loader = self.schema_two()
+        loader["kind"] = "modloader"
+        loader["supply"] = {"melonloader:mod": "{Sprocket}/Mods"}
+        loader["releases"] = [{"id": 1}]
+        loader["release"]["source"] = {"type": "external", "hosts": ["example.org"]}
+
+        INDEX.validate_meta(loader, "example.mod")
+
+
+class KindValidationTests(unittest.TestCase):
+    def schema_two(self) -> dict:
+        meta = metadata()
+        meta["schema_version"] = 2
+        meta["install"] = {
+            "files": [{"match": "*.dll", "type": "melonloader:mod"}],
+            "scan_dlls": True,
+            "exclude": [],
+        }
+        return meta
+
+    def test_kind_defaults_to_modfile(self):
+        meta = self.schema_two()
+        INDEX.validate_meta(meta, "example.mod")
+        self.assertEqual(RegistryPackage.from_dict(meta).kind, "modfile")
+        self.assertFalse(RegistryPackage.from_dict(meta).is_loader)
+
+    def test_unknown_kinds_are_rejected(self):
+        meta = {**self.schema_two(), "kind": "plugin"}
+        with self.assertRaisesRegex(INDEX.RegistryError, "invalid kind"):
+            INDEX.validate_meta(meta, "example.mod")
+        with self.assertRaisesRegex(ValueError, "unknown package kind"):
+            RegistryPackage.from_dict(meta)
+
+    def test_a_loader_kind_may_use_the_type_line(self):
+        meta = {**self.schema_two(), "kind": "patch", "install": {
+            "mode": "patch",
+            "files": [{"match": "Patch/*.dll", "type": "melonloader:mod"}],
+            "scan_dlls": False,
+            "exclude": [],
+        }}
+        INDEX.validate_meta(meta, "example.mod")
+
+    def test_a_loader_kind_may_use_the_payload_line(self):
+        meta = {
+            **self.schema_two(),
+            "kind": "modloader",
+            "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+            "install": {"payload": [{"match": "**", "target": "{Sprocket}", "layout": "tree"}], "exclude": []},
+        }
+        INDEX.validate_meta(meta, "example.mod")
+        self.assertTrue(RegistryPackage.from_dict(meta).uses_payload)
+
+    def test_a_modfile_may_not_use_the_payload_line(self):
+        meta = {**self.schema_two(), "install": {"payload": [{"match": "**", "target": "{Sprocket}"}], "exclude": []}}
+        with self.assertRaisesRegex(INDEX.RegistryError, "modfile installs through install.files"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_the_two_install_lines_may_not_be_mixed(self):
+        meta = {
+            **self.schema_two(),
+            "kind": "modloader",
+            "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+            "install": {
+                "files": [{"match": "*.dll", "type": "melonloader:mod"}],
+                "payload": [{"match": "**", "target": "{Sprocket}"}],
+                "scan_dlls": False,
+                "exclude": [],
+            },
+        }
+        with self.assertRaisesRegex(INDEX.RegistryError, "must not mix"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_a_payload_target_must_be_a_game_root_path(self):
+        meta = {
+            **self.schema_two(),
+            "kind": "modloader",
+            "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+            "install": {"payload": [{"match": "**", "target": "Mods"}], "exclude": []},
+        }
+        with self.assertRaisesRegex(INDEX.RegistryError, "invalid install payload target"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_replace_requires_patch_mode(self):
+        meta = {
+            **self.schema_two(),
+            "install": {
+                "files": [{"match": "**", "type": "xunity:translation"}],
+                "replace": ["xunity:translation"],
+                "scan_dlls": False,
+                "exclude": [],
+            },
+        }
+        with self.assertRaisesRegex(INDEX.RegistryError, "requires install.mode patch"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_replace_requires_a_files_rule_for_the_type(self):
+        meta = {
+            **self.schema_two(),
+            "install": {
+                "mode": "patch",
+                "files": [{"match": "**", "type": "melonloader:mod"}],
+                "replace": ["xunity:translation"],
+                "scan_dlls": False,
+                "exclude": [],
+            },
+        }
+        with self.assertRaisesRegex(INDEX.RegistryError, "needs a files rule"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_replace_is_valid_on_the_type_line(self):
+        meta = {
+            **self.schema_two(),
+            "kind": "patch",
+            "install": {
+                "mode": "patch",
+                "files": [{"match": "**", "type": "xunity:translation"}],
+                "replace": ["xunity:translation"],
+                "scan_dlls": False,
+                "exclude": [],
+            },
+        }
+        INDEX.validate_meta(meta, "example.mod")
+        self.assertEqual(
+            RegistryPackage.from_dict(meta).replace_types(), ("xunity:translation",)
+        )
+
+
+class ProvidesValidationTests(unittest.TestCase):
+    def schema_two(self) -> dict:
+        meta = metadata()
+        meta["schema_version"] = 2
+        meta["install"] = {
+            "files": [{"match": "*.dll", "type": "melonloader:mod"}],
+            "scan_dlls": True,
+            "exclude": [],
+        }
+        return meta
+
+    def test_provides_maps_a_capability_to_a_version(self):
+        meta = {**self.schema_two(), "provides": {"lavagang.melonloader": "0.7.3"}}
+        INDEX.validate_meta(meta, "example.mod")
+
+    def test_the_version_template_is_accepted(self):
+        meta = {**self.schema_two(), "provides": {"bepinex.bepinex": "{version}"}}
+        INDEX.validate_meta(meta, "example.mod")
+
+    def test_provides_values_must_be_versions(self):
+        meta = {**self.schema_two(), "provides": {"lavagang.melonloader": "not-a-version"}}
+        with self.assertRaisesRegex(INDEX.RegistryError, "invalid version"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_provides_keys_must_be_capability_ids(self):
+        meta = {**self.schema_two(), "provides": {"LavaGang": "0.7.3"}}
+        with self.assertRaisesRegex(INDEX.RegistryError, "invalid provided capability id"):
+            INDEX.validate_meta(meta, "example.mod")
+
+    def test_absent_provides_defaults_to_the_own_id(self):
+        modfile = RegistryPackage.from_dict(self.schema_two())
+        self.assertEqual(modfile.declared_capabilities(), {})
+        self.assertEqual(modfile.capabilities(), {"example.mod": "{version}"})
+
+        loader = RegistryPackage.from_dict(
+            {
+                **self.schema_two(),
+                "kind": "modloader",
+                "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+                "install": {"payload": [{"match": "**", "target": "{Sprocket}"}], "exclude": []},
+            }
+        )
+        self.assertEqual(loader.declared_capabilities(), {})
+        self.assertEqual(loader.capabilities(), {"example.mod": "{version}"})
+
+    def test_explicit_provides_replaces_the_default(self):
+        meta = {
+            **self.schema_two(),
+            "kind": "modloader",
+            "supply": {"bepinex:mod": "{Sprocket}/Mods"},
+            "install": {"payload": [{"match": "**", "target": "{Sprocket}"}], "exclude": []},
+            "provides": {"bepinex.bepinex": "{version}"},
+        }
+        package = RegistryPackage.from_dict(meta)
+        self.assertEqual(package.capabilities(), {"bepinex.bepinex": "{version}"})
+
+
+class CapabilityDependencyTests(unittest.TestCase):
+    def test_a_dependency_on_an_unprovided_capability_is_rejected(self):
+        data = {**metadata(), "dependencies": [{"id": "nobody.provides", "version": "*", "when": "*"}]}
+        with self.assertRaisesRegex(RegistryError, "dependency is not registered"):
+            Registry.from_dict({"schema_version": 1, "packages": [data]})
+
+    def test_a_dependency_on_the_game_capability_is_allowed(self):
+        data = {**metadata(), "dependencies": [{"id": "hamish.sprocket", "version": "*", "when": "*"}]}
+        registry = Registry.from_dict({"schema_version": 1, "packages": [data]})
+        self.assertTrue(registry.knows_capability("hamish.sprocket"))
+
+    def test_a_dependency_on_a_provided_capability_is_allowed(self):
+        provider = {
+            **metadata(),
+            "id": "example.bridge",
+            "name": "Bridge",
+            "repository": "ExampleAuthor/Bridge",
+            "kind": "loaderbridge",
+            "provides": {"lavagang.melonloader": "0.7.3"},
+            "install": {"payload": [{"match": "**", "target": "{Sprocket}"}], "exclude": []},
+        }
+        consumer = {
+            **metadata(),
+            "id": "example.mod",
+            "dependencies": [{"id": "lavagang.melonloader", "version": ">=0.7.0", "when": "*"}],
+        }
+        registry = Registry.from_dict({"schema_version": 1, "packages": [provider, consumer]})
+        self.assertTrue(registry.knows_capability("lavagang.melonloader"))
 
 
 if __name__ == "__main__":
