@@ -62,12 +62,23 @@ def rotate_logs(app_dir: Path, *, history_limit: int = HISTORY_LIMIT) -> Path:
     return latest
 
 
+def _terminal_handler(level: int, formatter: logging.Formatter) -> logging.Handler | None:
+    """终端那一份。窗口程序没有 `stderr`（`sys.stderr is None`），那时只剩文件。"""
+    if sys.stderr is None:
+        return None
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    handler._sprocket_manager_handler = True  # type: ignore[attr-defined]
+    return handler
+
+
 def configure_logging(
         app_dir: Path,
         *,
         debug: bool = False,
-        console: bool = False,
 ) -> Path:
+    """两份都装：文件留档，终端同时能看到同一条。"""
     _close_manager_handlers()
     latest = rotate_logs(app_dir)
     level = logging.DEBUG if debug else logging.INFO
@@ -83,12 +94,9 @@ def configure_logging(
     root = logging.getLogger()
     root.setLevel(level)
     root.addHandler(file_handler)
-    if console:
-        console_handler = logging.StreamHandler(sys.stderr)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(formatter)
-        console_handler._sprocket_manager_handler = True  # type: ignore[attr-defined]
-        root.addHandler(console_handler)
+    terminal_handler = _terminal_handler(level, formatter)
+    if terminal_handler is not None:
+        root.addHandler(terminal_handler)
     logging.captureWarnings(True)
     return latest
 

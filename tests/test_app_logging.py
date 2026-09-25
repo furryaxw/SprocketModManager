@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
 import unittest
 from pathlib import Path
@@ -84,6 +86,19 @@ class AppLoggingTests(unittest.TestCase):
             self.assertNotIn("hidden-debug", normal)
             self.assertIn("visible-info", normal)
             self.assertIn("visible-debug", debug)
+
+    def test_the_terminal_gets_the_records_that_go_into_the_file(self) -> None:
+        """写进 Latest.log 的每一条同时也打到终端（窗口程序没有终端时只留文件）。"""
+        with TemporaryDirectory() as directory:
+            app_dir = Path(directory)
+            terminal = io.StringIO()
+            with contextlib.redirect_stderr(terminal):
+                configure_logging(app_dir, debug=False)
+                logging.getLogger("test").info("mirrored-line")
+                logging.shutdown()
+
+            self.assertIn("mirrored-line", terminal.getvalue())
+            self.assertIn("mirrored-line", manager_log_path(app_dir).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
