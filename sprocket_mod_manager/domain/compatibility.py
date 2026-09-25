@@ -152,6 +152,39 @@ def providers_table(payload: Any) -> dict[str, Any]:
     return {"schema_version": 2, "entries": []}
 
 
+def loader_table_decision(
+        table: Mapping[str, Any],
+        package_id: str,
+        game_capability: str,
+        game_version: str | None,
+        release_version: str,
+) -> tuple[str, tuple[dict[str, str], ...]] | None:
+    """按「加载器包 ↔ 游戏」表判一个加载器发布：返回（判定，该用的兼容声明）。
+
+    表里没有这个包的行、或者本机游戏版本读不出来时返回 None —— 这层不知道答案，调用方按 release
+    自己的声明判。表里有行、但没有一行覆盖本机游戏版本，说明这条游戏线不用这个加载器：判不兼容，
+    声明为空。命中一行时声明就是那条游戏轴，release 的版本落在那一行的 `version` 之外同样不兼容。
+    """
+    if not game_version:
+        return None
+    entries = [
+        entry
+        for entry in table.get("entries") or ()
+        if isinstance(entry, dict) and str(entry.get("loader", "")) == package_id
+    ]
+    if not entries:
+        return None
+    for entry in entries:
+        if not range_allows(game_version, entry.get("sprocket")):
+            continue
+        if not loader_range_allows(release_version, entry.get("version")):
+            return INCOMPATIBLE, ()
+        return COMPATIBLE, (
+            {"id": game_capability, "version": str(entry.get("sprocket")), "when": "*"},
+        )
+    return INCOMPATIBLE, ()
+
+
 def release_verdict(
         environment: "CapabilityEnvironment",
         *,

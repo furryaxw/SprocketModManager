@@ -13,7 +13,7 @@ from ...application.identifiers import scan_targets, toggle_directories
 from ...application.integrity import suppression_key, suppression_key_of, suppression_keys
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
-from ...domain.compatibility import CapabilityEnvironment, release_verdict
+from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import ModManagerError, ModToggleError
 from ...domain.models import RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
@@ -125,7 +125,11 @@ class CatalogController(ApiController):
             package: RegistryPackage,
             environment: CapabilityEnvironment,
     ) -> list[dict[str, Any]]:
-        """该包每个可安装版本的三色判定（新到旧）：界面拿它决定隐藏、颜色和默认选中。"""
+        """该包每个可安装版本的三色判定（新到旧）：界面拿它决定隐藏、颜色和默认选中。
+
+        加载器按「加载器包 ↔ 游戏」表判：哪一行覆盖本机游戏版本，那一行的版本区间就是它该处的范围。
+        加载器自己不写能力声明，按声明判只会得到"未知"。
+        """
         if package.releases is not None:
             releases = package.releases
         else:
@@ -133,21 +137,38 @@ class CatalogController(ApiController):
                 releases = service.github.releases(package)
             except (ModManagerError, OSError, ValueError):
                 return []
-        return [
-            {
+        registry = service.registry
+        table = registry.provider_table if registry is not None else {}
+        game_capability = environment.game_id
+        game_version = environment.capability_version(game_capability)
+        verdicts: list[dict[str, Any]] = []
+        for release in releases:
+            if not service.github.install_assets(package, release):
+                continue
+            decision = (
+                loader_table_decision(
+                    table, package.id, game_capability, game_version, str(release.version)
+                )
+                if package.is_loader
+                else None
+            )
+            if decision is None:
+                dependencies = release.dependencies
+                verdict = release_verdict(
+                    environment, category=package.category, dependencies=dependencies
+                )
+            else:
+                verdict, dependencies = decision
+            verdicts.append({
                 "tag": release.tag,
                 "version": str(release.version),
-                "verdict": release_verdict(
-                    environment, category=package.category, dependencies=release.dependencies
-                ),
+                "verdict": verdict,
                 "compatibility": dict(release.compatibility) if release.compatibility else None,
                 # 声明的原始区间与逐轴结果：详情页照着摆，不再自己解析一遍。
-                "dependencies": [dict(item) for item in release.dependencies],
-                "axes": environment.axes(release.dependencies),
-            }
-            for release in releases
-            if service.github.install_assets(package, release)
-        ]
+                "dependencies": [dict(item) for item in dependencies],
+                "axes": environment.axes(dependencies),
+            })
+        return verdicts
 
     def _environment(self) -> CapabilityEnvironment:
         """判定用的环境：与左下角显示的是同一份（同一个监听缓存）。"""

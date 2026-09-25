@@ -9,6 +9,7 @@ from sprocket_mod_manager.domain.compatibility import (
     INCOMPATIBLE,
     UNKNOWN,
     CapabilityEnvironment,
+    loader_table_decision,
     providers_table,
     range_allows,
     release_verdict,
@@ -440,6 +441,57 @@ class BridgeCapabilityTests(unittest.TestCase):
 
         self.assertEqual(environment.consistency()["state"], "ok")
         self.assertIsNone(environment.loader_row("test.unlisted-loader"))
+
+
+class LoaderTableDecisionTests(unittest.TestCase):
+    """加载器发布的判定：按表里覆盖本机游戏版本的那一行，不看加载器自己不写的声明。"""
+
+    TABLE = {
+        "entries": [
+            {"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54.0"},
+            {"loader": "bepinex.bepinex-be", "version": ">=6.0.0-be.785", "sprocket": ">=0.2.54.0"},
+        ]
+    }
+
+    def test_the_row_covering_the_game_line_decides_and_declares_the_game_axis(self) -> None:
+        verdict, dependencies = loader_table_decision(
+            self.TABLE, LOADER_ID, GAME, "0.2.53.2", "0.7.3"
+        )
+
+        self.assertEqual(verdict, COMPATIBLE)
+        self.assertEqual(dependencies[0]["id"], GAME, "声明就是那条游戏轴")
+        self.assertEqual(dependencies[0]["version"], "<0.2.54.0")
+
+    def test_a_release_outside_the_row_version_range_is_incompatible(self) -> None:
+        verdict, dependencies = loader_table_decision(
+            self.TABLE, LOADER_ID, GAME, "0.2.53.2", "0.8.1"
+        )
+
+        self.assertEqual(verdict, INCOMPATIBLE)
+        self.assertEqual(dependencies, ())
+
+    def test_a_loader_whose_rows_all_target_another_game_line_is_incompatible(self) -> None:
+        verdict, _dependencies = loader_table_decision(
+            self.TABLE, "bepinex.bepinex-be", GAME, "0.2.53.2", "6.0.0-be.788"
+        )
+
+        self.assertEqual(verdict, INCOMPATIBLE)
+
+    def test_a_prerelease_version_inside_a_bepinex_row_is_compatible(self) -> None:
+        verdict, _dependencies = loader_table_decision(
+            self.TABLE, "bepinex.bepinex-be", GAME, "0.2.54.2", "6.0.0-be.788"
+        )
+
+        self.assertEqual(verdict, COMPATIBLE)
+
+    def test_a_package_outside_the_table_keeps_its_own_declaration(self) -> None:
+        self.assertIsNone(
+            loader_table_decision(self.TABLE, "some.patch", GAME, "0.2.53.2", "1.0.0")
+        )
+        self.assertIsNone(
+            loader_table_decision(self.TABLE, LOADER_ID, GAME, None, "0.7.3"),
+            "游戏版本读不出来时这层不知道答案",
+        )
 
 
 if __name__ == "__main__":
