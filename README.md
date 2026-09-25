@@ -70,8 +70,9 @@ MelonLoader 模组会在同一事务里装上 MelonLoader。加载器供给的�
 
 管理器日志位于 `%LOCALAPPDATA%\SprocketModManager\Latest.log`。每次启动都会清空
 `Latest.log`，将上一轮日志保存为带时间戳的历史文件，并只保留最新 5 份。关于页面可以直接打开
-该目录或上传当前管理器日志。设置页面的日志上传按钮仍用于上传游戏目录中的
-`MelonLoader\Latest.log`。
+该目录。侧栏的「上传日志」列出可上传的来源：管理器日志始终可用，游戏目录里检测到的运行时
+日志（`MelonLoader\Latest.log`、`BepInEx\LogOutput.log`）在文件存在时才列出；选定一项后
+上传，并返回可复制的公开链接。
 
 GUI 使用 Windows Edge WebView2 的硬件加速渲染，Python 继续负责 Registry、扫描、依赖
 解析与安装。GUI 支持批量选择；单项安装和批量安装共用一个顺序下载队列。队列

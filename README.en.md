@@ -66,8 +66,10 @@ values are combined with OR. It records `DEBUG` messages and enables WebView2 de
 
 Manager logs are stored at `%LOCALAPPDATA%\SprocketModManager\Latest.log`. Each launch clears
 `Latest.log`, archives the previous session with a timestamp, and retains the five newest history
-files. The About page can open this directory or upload the current manager log. The log upload
-button on Settings continues to upload `MelonLoader\Latest.log` from the game directory.
+files. The About page can open this directory. The sidebar's Upload logs action lists the sources
+that can be uploaded: the manager log is always available, and a runtime log detected in the game
+directory (`MelonLoader\Latest.log`, `BepInEx\LogOutput.log`) is listed once the file exists. The
+chosen source is uploaded and returns a public link that can be copied.
 
 The GUI is hardware-accelerated by Windows Edge WebView2, while Python continues to
 handle the Registry, scanning, dependency resolution, and installation. Individual
