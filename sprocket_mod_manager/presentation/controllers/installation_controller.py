@@ -10,7 +10,7 @@ from ...application.install_queue import ACTIVE_STATES, InstallQueueEntry
 from ...application.preparer import PlanPreparer
 from ...application.private_install import prepare_private_package
 from ...application.service import ModManagerService
-from ...domain.compatibility import COMPATIBLE, CapabilityEnvironment, release_verdict
+from ...domain.compatibility import COMPATIBLE, CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import ModManagerError
 from ...domain.models import RegistryPackage, ResolutionPlan
 from ...domain.semver import Version
@@ -138,15 +138,27 @@ class InstallationController(ApiController):
         latest = str(status.get("latest_version") or "")
         installed = bool(status.get("installed"))
         compatible = "unknown"
+        registry = service.registry
+        table = registry.provider_table if registry is not None else {}
+        game_capability = environment.game_id
+        game_version = environment.capability_version(game_capability)
         try:
             for release in service.github.releases(package):
-                if service.github.install_assets(package, release):
-                    compatible = release_verdict(
+                if not service.github.install_assets(package, release):
+                    continue
+                decision = loader_table_decision(
+                    table, package.id, game_capability, game_version, str(release.version)
+                )
+                compatible = (
+                    decision[0]
+                    if decision is not None
+                    else release_verdict(
                         environment,
                         category=package.category,
                         dependencies=release.dependencies,
                     )
-                    break
+                )
+                break
         except (ModManagerError, OSError, RuntimeError, ValueError):
             compatible = "unknown"
         files = [item for item in (installed_info.get("files") or ()) if isinstance(item, str)]
@@ -287,20 +299,27 @@ class InstallationController(ApiController):
     def _displaced_loaders(
             self,
             service: ModManagerService,
-            package: RegistryPackage,
             plan: ResolutionPlan,
             installed: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """装这个包会让哪些已装加载器被交还：确认框先把它们列出来。
+        """装这个计划会让哪些已装加载器被交还：确认框先把它们列出来。
 
-        计划里的包不算：它们是这次要装的。判定与落盘前那次交还用同一个口径
-        （`capability_conflicts`），确认框里说会卸载的就是实际会卸载的。
+        加载器可能是被依赖带进来的（模组依赖 BepInEx，BepInEx 就顶掉官方 MelonLoader），所以看的是
+        **计划里的每个加载器**，不只是用户点的那个包。计划里的包不算：它们是这次要装的。判定与落盘前
+        那次交还用同一个口径（`capability_conflicts`），确认框里说会卸载的就是实际会卸载的。
         """
         if service.registry is None:
             return []
         installing = {item.package.id for item in plan.packages}
+        displaced: list[str] = []
+        for item in plan.packages:
+            if not item.package.is_loader:
+                continue
+            for package_id in service.capability_conflicts(item.package.id, installed):
+                if package_id not in installing and package_id not in displaced:
+                    displaced.append(package_id)
         entries: list[dict[str, Any]] = []
-        for package_id in service.capability_conflicts(package.id, installed):
+        for package_id in displaced:
             if package_id in installing:
                 continue
             try:
@@ -415,7 +434,7 @@ class InstallationController(ApiController):
                         skipped.append(package.id)
                         continue
                     data = self._plan_data(service, package, plan)
-                    data["displaces"] = self._displaced_loaders(service, package, plan, installed)
+                    data["displaces"] = self._displaced_loaders(service, plan, installed)
                     plans.append(data)
                     resolved_plans.append((package, plan))
                 except (ModManagerError, OSError, ValueError) as exc:
@@ -426,29 +445,33 @@ class InstallationController(ApiController):
                 for item in plan.packages
             }
             recommendations: dict[str, dict[str, Any]] = {}
-            for package, _plan in resolved_plans:
-                for recommendation_id in package.recommendations:
-                    if recommendation_id in covered:
-                        continue
-                    if recommendation_id in recommendations:
-                        recommendations[recommendation_id]["recommended_by"].append(package.id)
-                        continue
-                    try:
-                        recommended = self._package(service, recommendation_id)
-                        recommended_plan = service.resolve(
-                            recommended.id,
-                            self._version_range(service, recommended, requested.get(recommendation_id)),
-                            pinned=True,
-                            installed=frozenset(installed),
-                        )
-                    except ModManagerError:
-                        continue
-                    root = recommended_plan.by_id()[recommended.id]
-                    if installed.get(recommended.id, {}).get("version") == str(root.release.version):
-                        continue
-                    data = self._plan_data(service, recommended, recommended_plan)
-                    data["recommended_by"] = [package.id]
-                    recommendations[recommended.id] = data
+            # 推荐来自计划里的每个包：依赖带进来的加载器也有自己的推荐（BepInEx 推荐兼容补丁），
+            # 它们和用户点的那个包一样会一起装上，所以推荐要一起给出来。
+            for _package, plan in resolved_plans:
+                for item in plan.packages:
+                    recommending = item.package
+                    for recommendation_id in recommending.recommendations:
+                        if recommendation_id in covered:
+                            continue
+                        if recommendation_id in recommendations:
+                            recommendations[recommendation_id]["recommended_by"].append(recommending.id)
+                            continue
+                        try:
+                            recommended = self._package(service, recommendation_id)
+                            recommended_plan = service.resolve(
+                                recommended.id,
+                                self._version_range(service, recommended, requested.get(recommendation_id)),
+                                pinned=True,
+                                installed=frozenset(installed),
+                            )
+                        except ModManagerError:
+                            continue
+                        root = recommended_plan.by_id()[recommended.id]
+                        if installed.get(recommended.id, {}).get("version") == str(root.release.version):
+                            continue
+                        data = self._plan_data(service, recommended, recommended_plan)
+                        data["recommended_by"] = [recommending.id]
+                        recommendations[recommended.id] = data
             if not plans and failed:
                 raise ModManagerError(self._failure_message(failed))
             return self._success(

@@ -655,6 +655,62 @@ class EnvironmentApiTests(unittest.TestCase):
             [LOADER_ID],
         )
 
+    def test_switching_the_game_directory_drops_the_previous_readings(self) -> None:
+        """换游戏目录后读数必须来自新目录：旧目录的加载器与版本不能留着。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = game_dir_with_version(root / "first", unity_payload("0.2.53.2"))
+            detected_melonloader(first)
+            second = game_dir_with_version(root / "second", unity_payload("0.2.54.2"))
+            api = self._api(root, first)
+            api.service.registry = Registry([loader_package()], _loader_table())
+            try:
+                before = api.get_environment()
+                api.save_settings({"language": "zh", "game_path": str(second)})
+                after = api.get_environment()
+            finally:
+                self._close(api)
+
+        self.assertEqual(before["sprocket"]["version"], "0.2.53.2")
+        self.assertTrue(before["loaders"][LOADER_ID]["installed"], before["loaders"])
+        self.assertEqual(after["sprocket"]["version"], "0.2.54.2")
+        self.assertFalse(
+            after["loaders"][LOADER_ID]["installed"],
+            "新目录里没有 MelonLoader：读数不能沿用上一个游戏目录",
+        )
+
+    def test_a_loader_pulled_in_as_a_dependency_displaces_the_installed_one(self) -> None:
+        """依赖带进来的加载器也要交还旧的：模组依赖 BepInEx 时会顶掉官方 MelonLoader。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game = game_dir_with_version(root, unity_payload("0.2.53.2"))
+            (game / "MelonLoader" / "net6").mkdir(parents=True)
+            (game / "version.dll").write_bytes(b"proxy")
+            api = self._api(root, game)
+            bepinex = bepinex_package()
+            api.service.registry = Registry([loader_package(), bepinex], _loader_table())
+            api.service._installer_for(game).adopt_loader(
+                loader_package(),
+                game,
+                version="0.7.3",
+                directories=("MelonLoader",),
+                payload_files=(("version.dll", sha256_file(game / "version.dll")),),
+            )
+            # 计划的根是那个模组，加载器只是被依赖带进来的一员。
+            plan = ResolutionPlan(
+                "test.mod", (ResolvedPackage(bepinex, bepinex.releases[0], ()),)
+            )
+            try:
+                with patch(
+                    "sprocket_mod_manager.infrastructure.installer.sprocket_is_running",
+                    return_value=False,
+                ):
+                    displaced = api.service.displace_conflicting_loaders(plan, game)
+            finally:
+                self._close(api)
+
+        self.assertEqual(displaced, [LOADER_ID])
+
     def test_installing_a_loader_uninstalls_the_loader_sharing_its_capability(self) -> None:
         """装桥接加载器会把官方加载器交还掉，并先把它那棵树归档进备份区。"""
         with tempfile.TemporaryDirectory() as directory:
@@ -811,7 +867,11 @@ class EnvironmentApiTests(unittest.TestCase):
         self.assertFalse(item["installed"])
         self.assertEqual(item["installed_version"], "")
         self.assertFalse(item["update_available"])
-        self.assertEqual(item["compatible"], "unknown", "没有环境声明就是未知")
+        self.assertEqual(
+            item["compatible"],
+            "compatible",
+            "加载器按「加载器包 ↔ 游戏」表判：0.2.53.2 正落在 MelonLoader 那一行里",
+        )
         self.assertEqual(
             item["supply"],
             [
@@ -998,6 +1058,26 @@ class EnvironmentUiTests(unittest.TestCase):
             "modloaderRemoveMessage",
         ):
             self.assertEqual(i18n.count(f"{key}:"), 2, f"{key} 要有 zh 与 en")
+
+    def test_switching_the_game_directory_reloads_every_cached_reading(self) -> None:
+        """换目录时客户端要把各页各自的缓存一起重置：漏一个就会拿旧目录的结果去判兼容性。"""
+        settings = (CLIENT_UI / "js" / "settings.js").read_text(encoding="utf-8")
+
+        for reset in (
+            "state.packages = []",
+            "state.installed = []",
+            "state.localMods = []",
+            "state.modloaders = []",
+            "state.environment = null",
+        ):
+            self.assertIn(reset, settings, f"换目录后 {reset.split('=')[0].strip()} 也要作废")
+        for reload_call in (
+            "await refreshEnvironment(",
+            "await loadCatalog(",
+            "await refreshInstalled(",
+            "await refreshModloaders(",
+        ):
+            self.assertIn(reload_call, settings, f"换目录后要重新取：{reload_call}")
 
 
 if __name__ == "__main__":

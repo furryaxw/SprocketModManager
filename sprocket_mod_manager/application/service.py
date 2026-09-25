@@ -197,22 +197,22 @@ class ModManagerService:
             plan: ResolutionPlan,
             game_dir: Path,
         ) -> list[str]:
-        """落盘之前先交还供给同一能力、已经装着的加载器。
+        """落盘之前先交还供给同一能力、或者同为基础运行时、已经装着的加载器。
 
-        计划里的包不参与：它们是这次要装的，不是要被换掉的。被交还的加载器先把整棵树归档进
-        保留的备份区（与整体接管的归档同址、同保留份数），再按它自己声明的顶层条目交还。
+        加载器是被依赖带进来的时候也要交还（模组依赖 BepInEx 就会顶掉官方 MelonLoader），所以看的是
+        **计划里的每个加载器**，不只是用户点的那个包。计划里的包不参与：它们是这次要装的，不是要被换
+        掉的。被交还的加载器先把整棵树归档进保留的备份区（与整体接管的归档同址、同保留份数），再按
+        它自己声明的顶层条目交还。
         """
-        root = plan.by_id().get(plan.root_id)
-        if root is None:
-            return []
         installing = {item.package.id for item in plan.packages}
-        displaced = [
-            package_id
-            for package_id in self.capability_conflicts(
-                root.package.id, self._installed_ids(game_dir)
-            )
-            if package_id not in installing
-        ]
+        installed = self._installed_ids(game_dir)
+        displaced: list[str] = []
+        for item in plan.packages:
+            if not item.package.is_loader:
+                continue
+            for package_id in self.capability_conflicts(item.package.id, installed):
+                if package_id not in installing and package_id not in displaced:
+                    displaced.append(package_id)
         for package_id in displaced:
             self._claim_and_archive_loader(package_id, game_dir)
             self.remove(package_id, game_dir)
