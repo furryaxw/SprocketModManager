@@ -562,8 +562,8 @@ class ClientApi:
     def cancel_queue_item(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.cancel_queue_item(*args, **kwargs)
 
-    def clear_finished(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._installation_controller.clear_finished(*args, **kwargs)
+    def clear_completed(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.clear_completed(*args, **kwargs)
 
     def _log_source_entries(self) -> list[dict[str, Any]]:
         """可上传的日志：管理器那份永远在，运行时那份来自活跃标识符。

@@ -778,7 +778,7 @@ class InstallationController(ApiController):
         self.data_changed(KEY_QUEUE)
         return self._success(canceled=canceled)
 
-    def clear_finished(self) -> dict[str, Any]:
-        self.install_queue.clear_finished()
+    def clear_completed(self) -> dict[str, Any]:
+        self.install_queue.clear_completed()
         self.data_changed(KEY_QUEUE)
         return self._success()

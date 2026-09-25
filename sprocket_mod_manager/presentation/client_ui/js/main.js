@@ -24,8 +24,8 @@ function wireEvents() {
     $("#remove-selected").addEventListener("click", removeSelectedMods);
     $("#toggle-selection").addEventListener("click", toggleInstalledSelection);
     $("#invert-selection").addEventListener("click", invertInstalledSelection);
-    $("#clear-finished").addEventListener("click", async () => {
-        await callApi("clear_finished");
+    $("#clear-completed").addEventListener("click", async () => {
+        await callApi("clear_completed");
         await pollQueue(true);
     });
     $("#browse-game-path").addEventListener("click", chooseGamePath);

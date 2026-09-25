@@ -14,7 +14,6 @@ COMPLETED = "completed"
 FAILED = "failed"
 CANCELED = "canceled"
 ACTIVE_STATES = {WAITING, INSTALLING}
-FINISHED_STATES = {COMPLETED, FAILED, CANCELED}
 LOGGER = logging.getLogger(__name__)
 
 
@@ -61,14 +60,14 @@ class InstallQueue:
         with self._condition:
             if self._closed:
                 raise RuntimeError("install queue is closed")
-            active_ids = {
-                entry.package_id
-                for entry in self._entries
-                if entry.state in ACTIVE_STATES
-            }
             for package_id in dict.fromkeys(package_ids):
-                if package_id in active_ids:
+                existing = [item for item in self._entries if item.package_id == package_id]
+                if any(item.state == INSTALLING for item in existing):
+                    # 正在跑的那一条不能顶掉：事务已经开始，换行会让界面显示的状态与磁盘上的进度对不上。
                     continue
+                if existing:
+                    # 一个模组只占一行：这一条新任务取代它先前那行（等待中的、或已经跑完的）。
+                    self._entries = [item for item in self._entries if item.package_id != package_id]
                 entry = InstallQueueEntry(
                     uuid.uuid4().hex,
                     package_id,
@@ -78,7 +77,6 @@ class InstallQueue:
                     version_range=str(ranges.get(package_id) or "*"),
                 )
                 self._entries.append(entry)
-                active_ids.add(package_id)
                 added.append(entry)
             self._condition.notify_all()
             snapshot = self._snapshot_locked()
@@ -100,9 +98,10 @@ class InstallQueue:
         LOGGER.info("queue item canceled task_id=%s package=%s", task_id, entry.package_id)
         return True
 
-    def clear_finished(self) -> None:
+    def clear_completed(self) -> None:
+        """清掉装成功的行；失败与取消的行留着，界面还要拿它们重试。"""
         with self._condition:
-            self._entries = [entry for entry in self._entries if entry.state not in FINISHED_STATES]
+            self._entries = [entry for entry in self._entries if entry.state != COMPLETED]
             snapshot = self._snapshot_locked()
         self._notify(snapshot)
 
