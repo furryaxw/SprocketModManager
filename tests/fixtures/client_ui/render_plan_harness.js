@@ -171,25 +171,20 @@ const injected = {
     language: "en",
     languageMode: "en",
     catalogLoading: false,
-    packages: payload.packages || [],
-    publicPackages: payload.packages || [],
     privatePackages: [],
-    installed: [],
-    unrecognized: [],
-    localMods: [],
-    queue: [],
     selectedId: null,
     // `batch` / 集合类字段不要放进这里：JSON 会把 Set 变成 {}，留着 core.js 里的原样。
     showIncompatible: false,
-    environment: payload.environment || null,
-    environmentRevision: 1,
 };
 
 const source = [
     fs.readFileSync(path.join(clientUiDir, "js", "i18n.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "core.js"), "utf8"),
+    fs.readFileSync(path.join(clientUiDir, "js", "data.js"), "utf8"),
     `Object.assign(state, ${JSON.stringify(injected)});`,
     "globalThis.__state = state;",
+    `dataDeliver(${JSON.stringify({key: "environment", value: payload.environment || null, revision: 1})});`,
+    `dataDeliver(${JSON.stringify({key: "catalog", value: {packages: payload.packages || [], source: ""}, revision: 1})});`,
     fs.readFileSync(path.join(clientUiDir, "js", "compatibility.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "catalog.js"), "utf8"),
     // 状态栏的状态由环境（modloaders.js）与队列（installs.js）共同决定，两个都要加载。

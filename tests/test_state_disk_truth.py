@@ -64,6 +64,7 @@ class DiskTruthTests(unittest.TestCase):
                 after = api.get_installed()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             self.assertEqual(after["installed"], [], "文件没了就不许再显示为已安装")
             self.assertEqual(after["local_mods"], [], "磁盘上也没有这个模组了")
@@ -79,6 +80,7 @@ class DiskTruthTests(unittest.TestCase):
                 after = api.get_installed()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             self.assertEqual([item["id"] for item in after["installed"]], [self.PACKAGE_ID],
                              "手工改名不该丢掉归属（同一逻辑文件）")
@@ -99,6 +101,7 @@ class DiskTruthTests(unittest.TestCase):
                 after = api.get_installed()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             self.assertEqual(after["installed"], [], "换了文件名的记录要被清掉")
             row = after["local_mods"][0]
@@ -119,12 +122,16 @@ class DiskTruthTests(unittest.TestCase):
                 state_text = (game / "SprocketModManager" / "installed.json").read_text(encoding="utf-8")
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             self.assertTrue(verified["ok"], verified)
             self.assertEqual(verified["corrupted"], ["Mods/FixtureMod.dll"], "不匹配任何发布版本 → 损坏")
             self.assertEqual(verified["modified"], ["Mods/FixtureMod.dll"], "同时对不上安装记录")
             self.assertEqual(verified["checked"], 1)
-            self.assertTrue(verified["installed"][0]["corrupted"], "列表要能把损坏状态带给界面")
+            # 校验结果不在返回值里另带一份：它落进数据层，界面按推送重画。
+            self.assertTrue(
+                api.get_installed()["installed"][0]["corrupted"], "列表要能把损坏状态带给界面"
+            )
             self.assertNotIn("corrupted", state_text, "判定结果不许写回安装记录（永远是实时算的）")
 
     def test_verify_clears_the_flag_once_the_file_matches_again(self) -> None:
@@ -137,10 +144,11 @@ class DiskTruthTests(unittest.TestCase):
                 verified = api.verify_installed()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             self.assertEqual(verified["corrupted"], [])
             self.assertEqual(verified["modified"], [])
-            self.assertFalse(verified["installed"][0]["corrupted"])
+            self.assertFalse(api.get_installed()["installed"][0]["corrupted"])
 
     def test_suppressed_file_is_no_longer_corrupted_but_visible_as_suppressed(self) -> None:
         """可以显式抑制损坏提示，但界面要能看出是"被抑制"而不是"正常"。"""
@@ -161,6 +169,7 @@ class DiskTruthTests(unittest.TestCase):
                 after = api.get_installed()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             row = after["installed"][0]
             self.assertFalse(row["corrupted"], "被抑制的文件不该再报红")
@@ -194,6 +203,7 @@ class DiskTruthTests(unittest.TestCase):
                 verified = api.verify_installed()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
         loader = next(item for item in installed["installed"] if item["id"] == "lavagang.melonloader")
         self.assertFalse(loader["corrupted"], "加载器没有逐文件哈希，不许报损坏")
@@ -234,6 +244,7 @@ class DiskTruthTests(unittest.TestCase):
                 self.assertTrue(api.get_installed()["installed"][0]["corrupted"], "取消抑制后重新报红")
             finally:
                 api.install_queue.close()
+                api.data.close()
 
     def test_stale_suppression_entries_are_dropped_automatically(self) -> None:
         """失效条目（包记录没了、路径也没了）在下次读取时自动从名单里清掉。"""
@@ -255,6 +266,7 @@ class DiskTruthTests(unittest.TestCase):
                 pruned = listing.load()
             finally:
                 api.install_queue.close()
+                api.data.close()
 
             self.assertEqual(pruned, ["fixture.sprocket-mod:FixtureMod.dll"],
                              "只剩还有效的那条；包记录没了/路径没了的都被清掉")
@@ -287,6 +299,7 @@ class DiskTruthTests(unittest.TestCase):
                 self.assertEqual(verified["missing"], [])
             finally:
                 api.install_queue.close()
+                api.data.close()
 
 if __name__ == "__main__":
     unittest.main()

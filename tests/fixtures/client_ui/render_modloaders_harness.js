@@ -21,6 +21,7 @@ const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
 // 环境读数的序列：启动时先在没有注册表的情况下读一次，注册表随目录加载后再读一次。
 const environmentSequence = Array.isArray(payload.environment_sequence) ? payload.environment_sequence : null;
 let environmentReads = 0;
+let environmentRevision = 0;
 
 class FakeElement {
     constructor(tag) {
@@ -115,23 +116,39 @@ const apiCalls = [];
 const toasts = [];
 const api = {
     client_log: async () => ({ok: true}),
-    get_modloaders: async () => {
-        apiCalls.push({kind: "call", args: ["get_modloaders"]});
-        return {ok: true, modloaders: payload.modloaders || []};
-    },
     remove_modloader: async (id) => {
         apiCalls.push({kind: "call", args: ["remove_modloader", id]});
         const item = (payload.modloaders || []).find((entry) => entry.id === id) || {};
         return {ok: true, modloader: item};
     },
-    get_environment: async (includeLatest) => {
-        apiCalls.push({kind: "call", args: ["get_environment", includeLatest]});
-        if (environmentSequence) {
-            const entry = environmentSequence[Math.min(environmentReads, environmentSequence.length - 1)];
-            environmentReads += 1;
-            return {ok: true, ...entry};
+    data_subscribe: async (keys) => {
+        apiCalls.push({kind: "call", args: ["data_subscribe", ...(keys || [])]});
+        return {ok: true, keys: keys || [], snapshot: {}};
+    },
+    /**
+     * 刷新命令：**只回 ack**，读数照线上那样经 `smmBridge.deliver` 推给数据镜像。
+     * harness 因此和真客户端走同一条路：页面不把返回值当数据用。
+     */
+    data_request: async (key) => {
+        apiCalls.push({kind: "call", args: ["data_request", key]});
+        if (key === "queue" || key === "installed") return {ok: true, key, revision: 0};
+        const deliver = (value) => {
+            const bridge = sandbox.smmBridge;
+            environmentRevision += 1;
+            if (bridge && typeof bridge.deliver === "function") {
+                bridge.deliver({key, value, revision: environmentRevision});
+            }
+        };
+        if (key === "loaders") {
+            deliver({modloaders: payload.modloaders || []});
+            return {ok: true, key, revision: environmentRevision};
         }
-        return {ok: true, ...(payload.environment || {})};
+        const entry = environmentSequence
+            ? environmentSequence[Math.min(environmentReads, environmentSequence.length - 1)]
+            : (payload.environment || null);
+        environmentReads += 1;
+        deliver(entry);
+        return {ok: true, key, revision: environmentRevision};
     },
     open_url: async (url) => {
         apiCalls.push({kind: "call", args: ["open_url", url]});
@@ -145,8 +162,12 @@ const sandbox = {
     clearTimeout,
     queueMicrotask,
     // 加载器安装走模组的安装路；这里记下页面是否把包交给了那条路，路由本身另有测试。
-    beginInstall: (packageIds) => {
-        apiCalls.push({kind: "call", args: ["beginInstall", ...packageIds]});
+    beginInstall: (packageIds, presetVersions, includeInstalled) => {
+        apiCalls.push({
+            kind: "call",
+            args: ["beginInstall", ...packageIds],
+            includeInstalled: Boolean(includeInstalled),
+        });
         return Promise.resolve(true);
     },
     // core.js 自己定义 callApi（走 window.pywebview.api），所以这里给的是一个假桥而不是同名桩。
@@ -170,24 +191,28 @@ const injected = {
     page: "modloaders",
     language: payload.language || "en",
     languageMode: payload.language || "en",
-    packages: payload.packages || [],
-    installed: [],
-    localMods: [],
-    queue: [],
-    modloaders: payload.modloaders || [],
+    packages: [],
     modloadersRequested: true,
-    environment: environmentSequence ? null : (payload.environment || null),
-    environmentRevision: environmentSequence ? null : 1,
-    environmentRenderKey: null,
 };
 
 const source = [
     fs.readFileSync(path.join(clientUiDir, "js", "i18n.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "core.js"), "utf8"),
+    fs.readFileSync(path.join(clientUiDir, "js", "data.js"), "utf8"),
     `Object.assign(state, ${JSON.stringify(injected)});`,
     "globalThis.__state = state;",
+    // 环境读数是数据层的（`data.js` 里注册成只读视图）：这里按线上同一条入口喂数据。
+    ...(environmentSequence
+        ? []
+        : [`dataDeliver(${JSON.stringify({key: "environment", value: payload.environment || null, revision: 1})});`]),
+    `dataDeliver(${JSON.stringify({key: "loaders", value: {modloaders: payload.modloaders || []}, revision: 1})});`,
+    `dataDeliver(${JSON.stringify({key: "catalog", value: {packages: payload.packages || [], source: ""}, revision: 1})});`,
     fs.readFileSync(path.join(clientUiDir, "js", "compatibility.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "modloaders.js"), "utf8"),
+    fs.readFileSync(path.join(clientUiDir, "js", "business.js"), "utf8"),
+    // main.js 在真客户端里做这件事；harness 不加载它，所以在这里把监听建起来。
+    "watchEnvironmentData();",
+    "watchLoadersData();",
 ].join("\n");
 
 const context = vm.createContext(sandbox);
@@ -234,7 +259,7 @@ async function exercise() {
         // 复现启动顺序：环境先读一次（没有注册表），目录加载完再读一次（注册表在场）。
         try {
             await vm.runInContext(
-                "(async () => { await refreshEnvironment(true); await pollEnvironment(); })()",
+                "(async () => { await refreshEnvironment(true); await refreshEnvironment(false); })()",
                 context,
             );
         } catch (caught) {

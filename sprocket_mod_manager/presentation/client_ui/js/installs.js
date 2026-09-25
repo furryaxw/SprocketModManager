@@ -5,11 +5,13 @@
  *
  * 版本选择器只给根包（用户点的那些）；依赖的版本由求解器按环境定，不给挑。
  */
-async function beginInstall(packageIds, presetVersions = null) {
+async function beginInstall(packageIds, presetVersions = null, includeInstalled = false) {
     if (!packageIds.length) return;
     const versions = {...installVersions(packageIds), ...(presetVersions || {})};
     setStatus(tr("resolving"));
-    const result = await callApi("plan_install", packageIds, versions);
+    // 点名的那一项要「版本相同也给」的计划：版本选择器是它在装好的情况下换版本、重装的唯一入口，
+    // 不看它有几个版本可挑。
+    const result = await callApi("plan_install", packageIds, versions, includeInstalled);
     if (!result.ok) {
         if (result.code === "game_path_required") {
             showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
@@ -104,40 +106,39 @@ async function beginInstall(packageIds, presetVersions = null) {
     await showPage("downloads");
 }
 
+/**
+ * 让数据层刷一次「已安装」：命令只回 ack，读数经推送回来。
+ *
+ * 挂在这条路上的两件后续（认领、完整性校验）只在**用户动作或页面进来**时排一次，
+ * 不挂在推送回调上 —— 否则校验自己触发的推送会把自己再排一次，页面永远在转。
+ * 读数变了之后怎么画，在 `business.js` 里。
+ */
 async function refreshInstalled() {
     if (!state.ready) return;
     try {
-        const result = await callApi("get_installed");
+        const result = await callApi("data_request", "installed");
         if (!result.ok) {
             resultError(result);
             return;
         }
-        state.installed = result.installed || [];
-        state.unrecognized = result.unrecognized || [];
-        state.localMods = result.local_mods || [];
-        state.localSummary = result.local_summary || null;
-        state.hasAnyMods = Boolean(result.has_any_mods);
-        const installedById = new Map(state.installed.map((item) => [item.id, item]));
-        for (const pkg of state.packages) pkg.installed = installedById.get(pkg.id) || null;
-        renderInstalled();
-        renderCatalog();
-        // 认领要访问 GitHub Release，放到渲染之后异步跑，绝不挡住列表。
-        void claimExistingMods();
-        pendingVerify = true;
-        void verifyInstalled();
     } catch (error) {
         resultError({message: String(error)});
+        return;
     }
+    pendingVerify = true;
+    void verifyInstalled();
+    // 认领要访问 GitHub Release，放到渲染之后异步跑，绝不挡住列表。
+    void claimExistingMods();
 }
 
 let verifyInFlight = false;
 let pendingVerify = false;
 
 /**
- * 逐文件校验 SHA-256，拿回带 `corrupted` 的安装列表。
+ * 逐文件校验 SHA-256。
  *
- * 只被 `refreshInstalled` 排一次队（`pendingVerify`），而且直接替换 `state.installed` 后重画，
- * 不触发整页刷新——否则会自己把自己再排一次队，页面永远在转。
+ * 校验改的是「已安装」这份数据的完整性状态，所以结果不在返回值里传回来 —— 跑完让数据层重算一次，
+ * 界面按推送重画。这样就不存在"这条路径的读数"和"那条路径的读数"两个版本。
  */
 async function verifyInstalled() {
     if (!pendingVerify || verifyInFlight || !state.ready) return;
@@ -146,15 +147,16 @@ async function verifyInstalled() {
     verifyInFlight = true;
     try {
         const result = await callApi("verify_installed");
-        if (!result.ok || !Array.isArray(result.installed)) return;
-        const signature = (items) => JSON.stringify(items.map((item) => [item.id, Boolean(item.corrupted)]));
-        const changed = signature(result.installed) !== signature(state.installed || []);
-        state.installed = result.installed;
-        const installedById = new Map(state.installed.map((item) => [item.id, item]));
-        for (const pkg of state.packages) pkg.installed = installedById.get(pkg.id) || null;
-        if (changed) renderInstalled();
+        if (!result.ok) {
+            // 撞上别的模组操作（"另一个模组操作正在进行"）只是这一轮排不上队：下次刷新再审一次，
+            // 不当成校验失败。
+            pendingVerify = true;
+            return;
+        }
+        const refreshed = await callApi("data_request", "installed");
+        if (!refreshed.ok) pendingVerify = true;
     } catch (_error) {
-        // 校验失败不影响列表（下次打开页面还会再试）。
+        pendingVerify = true;
     } finally {
         verifyInFlight = false;
     }
@@ -164,6 +166,9 @@ let claimInFlight = false;
 
 async function claimExistingMods() {
     if (claimInFlight || !state.ready) return;
+    // 认领要按注册表里的包来算：目录还没到（启动时它排在后面）就等下一轮，别去撞
+    // 「registry is not loaded」。
+    if (!(state.packages || []).length) return;
     claimInFlight = true;
     try {
         const result = await callApi("adopt_existing");
@@ -375,11 +380,26 @@ function invertInstalledSelection() {
  */
 const INSTALLED_FILTERS = {
     all: {label: "installedFilterAll", match: () => true},
+    loaders: {label: "installedFilterLoaders", match: (item) => installedRowIsLoader(item)},
+    mods: {label: "installedFilterMods", match: (item) => !installedRowIsLoader(item)},
     enabled: {label: "installedFilterEnabled", match: (item) => !installedRowDisabled(item)},
     disabled: {label: "installedFilterDisabled", match: (item) => installedRowDisabled(item)},
     outdated: {label: "installedFilterOutdated", match: (item) => Boolean(installableUpdate(item))},
     incompatible: {label: "installedFilterIncompatible", match: (item) => installedRowIncompatible(item)},
 };
+
+/**
+ * 这一行是不是加载器。
+ *
+ * 事实来自数据层（注册表里那个包的 `kind`，或记录里留下的 `kind`），界面不靠文件名去猜 ——
+ * 猜法会在加载器和"名字里有 Loader 的模组"之间说不清话。
+ */
+function installedRowIsLoader(item) {
+    const record = item.fromScan
+        ? (state.installed || []).find((entry) => entry.id && entry.id === item.installed_package_id)
+        : item;
+    return Boolean(record?.loader);
+}
 
 /**
  * 这一行跟本机环境对不上：装着的那个版本跑不了，或者能看到的更新跑不了。
@@ -644,8 +664,12 @@ function renderScannedModRow(mod) {
     title.className = "row-title";
 
     const name = document.createElement("strong");
-    // 识别到 Registry 条目时用已缓存的多语言名称（i18n），否则回退到 DLL 自己的英文元数据。
-    name.textContent = localized(mod.registry_display_name, "")
+    // 名字从数据层的注册表条目取；包 id 依次看安装记录、扫描时的注册表匹配、DLL 自己声明的 id。
+    // 扫描结果自带的那份多语言名只在注册表还没到时补位，最后才回退到 DLL 的英文元数据。
+    name.textContent = registryPackageLabel(
+        mod.installed_package_id || mod.registry_id || mod.declared_id
+    )
+        || localized(mod.registry_display_name, "")
         || mod.display_name
         || mod.name
         || mod.path;
@@ -1022,30 +1046,14 @@ function renderQueue() {
     renderDetail();
 }
 
-async function pollQueue(force = false) {
+/** 让数据层刷一次队列：命令只回 ack，表经推送回来。 */
+async function pollQueue(_force = false) {
     if (!state.ready) return;
     try {
-        const result = await callApi("get_queue");
-        if (!result.ok) return;
-        const signature = JSON.stringify([result.entries, result.close_pending]);
-        if (!force && signature === state.queueSignature) return;
-        const previous = state.queueStates;
-        state.queue = result.entries || [];
-        state.queueSignature = signature;
-        state.queueStates = new Map(state.queue.map((entry) => [entry.task_id, entry.state]));
-        const newlyCompleted = state.queue.some((entry) => entry.state === "completed" && previous.get(entry.task_id) !== "completed");
-        const newlyFailed = state.queue.find((entry) => entry.state === "failed" && previous.get(entry.task_id) !== "failed");
-        renderQueue();
-        renderModloaders();
-        updatePageHeader();
-        // 队列跑没跑完也是状态栏要看的活状态。
-        renderStatusbar();
-        if (newlyCompleted) await refreshInstalled();
-        // 队列里失败的那一条也算「出过事」：状态栏红着，直到下一次操作成功。
-        if (newlyFailed) setStatus(newlyFailed.message || tr("operationFailed"), "error");
-        if (result.close_pending) setStatus(tr("closeWaiting"));
+        const result = await callApi("data_request", "queue");
+        if (!result.ok) resultError(result);
     } catch (_error) {
-        // A closing WebView can reject an in-flight poll. There is nothing left to update.
+        // A closing WebView can reject an in-flight call. There is nothing left to update.
     }
 }
 

@@ -26,9 +26,8 @@ const state = {
         github_proxy_url: "", github_user_id: "", text_scale: 100,
     },
     links: {repository: "", registry: ""},
-    environment: null,
-    environmentRevision: null,
-    environmentRenderKey: null,
+    // 环境读数与已安装读数都是数据层的只读视图（见 `data.js`）；这里只留渲染要用的界面状态。
+    environmentAxesKey: null,
     // 「显示不兼容」是内存态：页面来回切不丢，重启回到默认（隐藏）。
     showIncompatible: false,
     modloaders: [],
@@ -38,8 +37,8 @@ const state = {
     readmes: new Map(),
     readmeLoading: new Set(),
     update: null,
-    queueSignature: "",
-    queueStates: new Map(),
+    // 队列里已经报过错的任务：纯粹是界面状态（同一件事只弹一次），队列数据本身归数据层。
+    failedQueueTasks: new Set(),
     modalAction: null,
     lastToast: null,
     catalogLoading: true,
@@ -398,11 +397,13 @@ function filteredPackages(view) {
 function packageState(pkg) {
     if (pkg.cached) return {label: tr("unavailable"), className: ""};
     if (!pkg.release || !(pkg.install_assets || []).length) return {label: tr("unavailable"), className: ""};
-    if (!pkg.installed) return {label: tr("available"), className: "available"};
-    if (pkg.installed.version !== pkg.release.version) return {label: tr("updateAvailable"), className: "update"};
+    const installed = packageInstalled(pkg);
+    if (!installed) return {label: tr("available"), className: "available"};
+    if (installed.version !== pkg.release.version) return {label: tr("updateAvailable"), className: "update"};
     return {label: tr("installedState"), className: "installed"};
 }
 
 function packageEligible(pkg) {
-    return Boolean(pkg.release && (pkg.install_assets || []).length && !pkg.cached && (!pkg.private || pkg.archive) && (!pkg.installed || pkg.installed.version !== pkg.release.version));
+    const installed = packageInstalled(pkg);
+    return Boolean(pkg.release && (pkg.install_assets || []).length && !pkg.cached && (!pkg.private || pkg.archive) && (!installed || installed.version !== pkg.release.version));
 }

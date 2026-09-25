@@ -1,5 +1,6 @@
 "use strict";
 
+
 function wireEvents() {
     // 只接一次：初始化如果中途失败会被再调一次，接两遍就等于点一下触发两次。
     if (state.wired) return;
@@ -81,6 +82,12 @@ async function initialize() {
         if (!result.ok) throw new Error(result.message || "bootstrap failed");
         state.ready = true;
         reportClientLog("info", `client initialized version=${result.version}`);
+        // 长期显示的数据先建立监听：之后读数由数据层推过来，页面按推送重画。
+        // 订阅时拿回的那份只是初始化用的，不从这里取后续读数。
+        watchData();
+        void callApi("data_subscribe", DATA_KEYS).then((subscribed) => {
+            if (subscribed?.ok) dataApplySnapshot(subscribed.snapshot);
+        });
         state.version = result.version;
         state.settings = result.settings;
         state.languageMode = result.settings.language;
@@ -108,17 +115,14 @@ async function initialize() {
         traceStartup("initial queue loaded");
         void detectGamePathPlaceholder();
         // 注册表随目录一起加载，加载器清单由它给出：目录回来后再读一次环境，左下角才不会
-        // 停在启动时那份「还没有注册表」的读数上。
-        void loadCatalog(false).then(() => refreshEnvironment(false));
+        // 停在启动时那份「还没有注册表」的读数上；认领也在这时候才做得了。
+        void loadCatalog(false).then(() => {
+            void refreshEnvironment(false);
+            void claimExistingMods();
+        });
         window.setTimeout(() => {
             void checkManagerUpdate(true);
         }, 350);
-        window.setInterval(() => {
-            void pollQueue(false);
-        }, 400);
-        window.setInterval(() => {
-            void pollEnvironment();
-        }, 1000);
     } catch (error) {
         reportClientLog("error", `client initialization failed: ${String(error)}`);
         state.ready = false;

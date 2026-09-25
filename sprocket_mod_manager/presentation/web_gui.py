@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import threading
@@ -12,6 +13,16 @@ from urllib.parse import urlparse
 
 from .api_constants import MANAGER_REPOSITORY
 from .controllers import CatalogController, InstallationController, PrivateDistributionController, SettingsController
+from ..application.data_hub import (
+    KEY_CATALOG,
+    KEY_ENVIRONMENT,
+    KEY_INSTALLED,
+    KEY_LOADERS,
+    KEY_QUEUE,
+    KEY_SERVERS,
+    KEYS,
+    DataHub,
+)
 from ..application.identifiers import detected_capabilities, log_sources, mod_directory_paths, runtime_states
 from ..application.install_queue import InstallQueue
 from ..application.service import ModManagerService
@@ -101,6 +112,17 @@ class ClientApi:
         )
         self.install_queue = InstallQueue(self._run_queued_install)
         LOGGER.debug("ClientApi init: install queue created")
+        # 数据层：长期显示的数据在这里只存一份，写进去就推给订阅了它的界面。
+        self.data = DataHub(pusher=self._push_data_event)
+        self.data.register(KEY_INSTALLED, self._refresh_installed)
+        self.data.register(KEY_ENVIRONMENT, self._refresh_environment)
+        self.data.register(KEY_QUEUE, self._refresh_queue)
+        self.data.register(KEY_LOADERS, self._refresh_loaders)
+        self.data.register(KEY_CATALOG, self._refresh_catalog)
+        self.data.register(KEY_SERVERS, self._refresh_servers)
+        self._data_watchers_lock = threading.Lock()
+        self._data_watchers_started = False
+        LOGGER.debug("ClientApi init: data hub created")
         # 指纹要覆盖活跃标识符的目录（含桥接加载器的 `MLLoader/Mods`）。目录名单随环境读数刷新，
         # 指纹每秒只读这份缓存。
         self._mod_directories: tuple[str, ...] = MOD_DIRECTORIES
@@ -284,6 +306,124 @@ class ClientApi:
 
     def bind_window(self, window: Any) -> None:
         self._window = window
+
+    # ---- 数据层 ↔ 界面 ------------------------------------------------------
+
+    def data_subscribe(self, keys: Any = None) -> dict[str, Any]:
+        """界面声明自己长期显示哪些 key，拿回监听建立前的当前快照，并让数据层立刻刷一遍。
+
+        返回的这份只是**初始化**那一份，之后的读数一律由 `_push_data_event` 推过来 ——
+        长期显示的数据不走"调用返回"这条路。
+        """
+        wanted = self._wanted_data_keys(keys)
+        snapshot = self.data.subscribe("ui", wanted)
+        self._ensure_data_watchers()
+        self.data.refresh_many([key for key in wanted if not snapshot[key]["known"]])
+        LOGGER.info("data subscribe keys=%s", wanted)
+        return self._success(keys=list(wanted), snapshot=snapshot)
+
+    def data_changed(self, *keys: str) -> None:
+        """告诉数据层这几个 key 变了，让它自己重算并推给界面。
+
+        没有窗口时不排队：没人收推送的时候去读盘只是白干，无界面的调用方（命令行、测试）
+        照旧同步地拿它要的结果。窗口一绑上，自动刷新就全部生效。
+        """
+        if self._window is None:
+            return
+        for key in keys:
+            self.data.request(key)
+
+    def _ensure_data_watchers(self) -> None:
+        """第一次有界面订阅时才起数据层的监听任务：没人听就不必每秒去读盘。
+
+        监听的是**游戏目录的指纹**（环境监听每秒钟算一次的那份）：目录里文件一动就重算「已安装」
+        与环境读数并推送。这是数据层自己的刷新任务 —— 界面不需要为它写第二套取数逻辑。
+        """
+        if self._window is None:
+            return
+        with self._data_watchers_lock:
+            if self._data_watchers_started:
+                return
+            self._data_watchers_started = True
+        self.data.add_periodic(
+            [KEY_INSTALLED, KEY_ENVIRONMENT],
+            1.0,
+            guard=lambda: self.environment_snapshot().get("revision"),
+            name="game-watch",
+        )
+        # 队列不跟着文件走：它是内存里的一张表，定时问一次就够（便宜），值没变不会推给界面。
+        self.data.add_periodic([KEY_QUEUE], 0.4, name="queue-watch")
+
+    def data_request(self, key: str, args: Any = None) -> dict[str, Any]:
+        """界面发来的刷新命令：立刻回 ack，刷新出来的数据随后经推送回来。"""
+        wanted = dict(args) if isinstance(args, dict) else {}
+        result = self.data.request(str(key), **wanted)
+        if not result.get("ok"):
+            return {"ok": False, "code": str(result.get("code") or "data_request_failed"),
+                    "message": f"no refresher registered for data key: {key}"}
+        return self._success(key=result["key"], revision=result["revision"])
+
+    def data_invalidate(self, keys: Any = None) -> dict[str, Any]:
+        """作废某些 key：换了游戏目录时，上一个目录的读数必须立刻从界面上消失。"""
+        return self._success(invalidated=self.data.invalidate(self._wanted_data_keys(keys)))
+
+    @staticmethod
+    def _wanted_data_keys(keys: Any) -> list[str]:
+        known = set(KEYS)
+        if not isinstance(keys, (list, tuple)):
+            return list(KEYS)
+        return [text for text in (str(item) for item in keys) if text in known]
+
+    def _push_data_event(self, event: dict[str, Any]) -> None:
+        """把数据层的一次变更推给界面。窗口还没起来或已经关了，这次就当没人听。
+
+        由数据层的刷新线程调用（`evaluate_js` 跨线程可用），所以这里只做一件事：把事件送去。
+        """
+        window = self._window
+        if window is None:
+            LOGGER.debug("data push skipped (no window) key=%s", event.get("key"))
+            return
+        payload = json.dumps(event, ensure_ascii=True)
+        window.evaluate_js(f"window.smmBridge && window.smmBridge.deliver({payload})")
+
+    def _refresh_installed(self) -> dict[str, Any]:
+        """已安装页的一整份读数。刷不出来就抛，让数据层留着上一次的值。"""
+        payload = self._catalog_controller.get_installed()
+        if not payload.get("ok"):
+            raise ModManagerError(str(payload.get("message") or "installed refresh failed"))
+        return {key: value for key, value in payload.items() if key != "ok"}
+
+    def _refresh_environment(self, include_latest: bool = False) -> dict[str, Any]:
+        """左下角与状态栏那份环境读数。刷不出来就抛，让数据层留着上一次的值。
+
+        `include_latest` 现去查加载器最新版（HTTP 有缓存），只在用户显式刷新时传。
+        """
+        payload = self._installation_controller.get_environment(bool(include_latest))
+        if not payload.get("ok"):
+            raise ModManagerError(str(payload.get("message") or "environment refresh failed"))
+        return {key: value for key, value in payload.items() if key != "ok"}
+
+    def _refresh_queue(self) -> dict[str, Any]:
+        """安装队列那张表。刷不出来就抛，让数据层留着上一次的值。"""
+        payload = self._installation_controller.get_queue()
+        if not payload.get("ok"):
+            raise ModManagerError(str(payload.get("message") or "queue refresh failed"))
+        return {key: value for key, value in payload.items() if key != "ok"}
+
+    def _refresh_loaders(self) -> dict[str, Any]:
+        """加载器目录。刷不出来就抛，让数据层留着上一次的值。"""
+        payload = self._installation_controller.get_modloaders()
+        if not payload.get("ok"):
+            raise ModManagerError(str(payload.get("message") or "modloaders refresh failed"))
+        return {key: value for key, value in payload.items() if key != "ok"}
+
+    def _refresh_catalog(self) -> dict[str, Any]:
+        """注册表目录（索引里那些包，每条 release 带判定）。刷不出来就抛，留着上一次的值。"""
+        return self._catalog_controller.catalog_payload(False)
+
+    def _refresh_servers(self) -> dict[str, Any]:
+        """开发者服务器那一份读数。刷不出来就抛，让数据层留着上一次的值。"""
+        return self._private_controller.servers_payload()
 
     @property
     def language(self) -> str:
@@ -639,6 +779,7 @@ class ClientApi:
 
     def on_closed(self) -> None:
         LOGGER.info("window closed; draining background work")
+        self.data.close()
         self._environment_monitor.stop()
         self.install_queue.close(timeout=5)
         self._loader_idle.wait(5)

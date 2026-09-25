@@ -135,6 +135,11 @@ def embedded(
     return payload
 
 
+def catalog_packages(api: ClientApi) -> list:
+    """目录读数（`packages`）归数据层：测试从那里读，不从接口返回值拿。"""
+    return (api.data.get("catalog") or {}).get("packages") or []
+
+
 class CatalogVerdictTests(unittest.TestCase):
     def _api(self, root: Path, **kwargs) -> ClientApi:
         app_dir = root / "app"
@@ -148,16 +153,34 @@ class CatalogVerdictTests(unittest.TestCase):
     def _close(self, api: ClientApi) -> None:
         api._environment_monitor.stop()
         api.install_queue.close()
+        api.data.close()
+
+    def test_the_catalog_payload_only_carries_the_catalog(self) -> None:
+        """目录读数归数据层：`load_catalog` 只回 ack，不在返回值里夹带任何一份读数。"""
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                payload = api.load_catalog()
+                packages = catalog_packages(api)
+            finally:
+                self._close(api)
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["count"], len(packages))
+        self.assertTrue(packages, "目录读数在数据层里")
+        for key in ("packages", "installed", "unrecognized", "local_mods", "local_summary", "has_any_mods"):
+            self.assertNotIn(key, payload, f"目录读数不该再带 {key}")
 
     def test_every_release_carries_its_verdict(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api = self._api(Path(directory))
             try:
-                result = api.load_catalog()
+                api.load_catalog()
+                packages = catalog_packages(api)
             finally:
                 self._close(api)
 
-        package = result["packages"][0]
+        package = packages[0]
         self.assertEqual(package["release"]["version"], "1.1.0")
         self.assertEqual(package["release"]["verdict"], "incompatible")
         self.assertEqual(
@@ -165,6 +188,36 @@ class CatalogVerdictTests(unittest.TestCase):
             [("1.1.0", "incompatible"), ("1.0.0", "compatible")],
         )
         self.assertEqual(package["releases"][1]["compatibility"], {"source": "declared"})
+
+    def test_the_detail_axes_agree_with_the_sidebar(self) -> None:
+        """详情各轴里的「本机」值必须能在侧栏那份读数里找到出处：两边读的是同一份环境。
+
+        侧栏报 Sprocket 0.2.55.5 而详情轴写着别的版本，正是"两个目录的读数被拼在一起"的样子。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                package = catalog_packages(api)[0]
+                sidebar = api.get_environment()
+            finally:
+                self._close(api)
+
+        axes = package["releases"][0]["axes"]
+        self.assertIn(
+            sidebar["sprocket"]["version"],
+            {axis["local"] for axis in axes},
+            f"游戏轴要报侧栏那个版本：{axes}",
+        )
+        # 注册表里有加载器包时，加载器那几条轴也走这段：它们的本机值同样得在侧栏里有出处。
+        reported = {sidebar["sprocket"]["version"]} | {
+            str(info.get("used_version") or info.get("version") or "")
+            for info in (sidebar["loaders"] or {}).values()
+        }
+        for axis in axes:
+            if not axis["local"]:
+                continue
+            self.assertIn(axis["local"], reported, f"{axis['id']} 的本机值在侧栏找不到出处")
 
     def test_a_conflicting_environment_caps_the_verdict_at_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -178,11 +231,12 @@ class CatalogVerdictTests(unittest.TestCase):
             api = ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
             try:
                 api._environment_monitor.note_latest_loaders({"lavagang.melonloader": "0.7.3"})
-                result = api.load_catalog()
+                api.load_catalog()
+                packages = catalog_packages(api)
             finally:
                 self._close(api)
 
-        package = result["packages"][0]
+        package = packages[0]
         self.assertEqual(
             [item["verdict"] for item in package["releases"]],
             ["unknown", "incompatible"],
@@ -244,12 +298,13 @@ class EnvironmentChainTests(unittest.TestCase):
             api = self._api(Path(directory), packages)
             try:
                 api.load_catalog()
-                catalog = api.load_catalog()
+                catalog = catalog_packages(api)
             finally:
                 api._environment_monitor.stop()
                 api.install_queue.close()
+                api.data.close()
 
-        entry = catalog["packages"][0]
+        entry = catalog[0]
         self.assertEqual(entry["release"]["verdict"], "not_applicable")
         self.assertEqual([item["verdict"] for item in entry["releases"]], ["not_applicable"])
 

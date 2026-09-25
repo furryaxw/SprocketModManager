@@ -97,7 +97,7 @@ function updateCatalogSelection() {
     const busy = queueActive();
     const states = {
         install: selected.filter((pkg) => packageEligible(pkg)).length,
-        remove: selected.filter((pkg) => Boolean(pkg.installed)).length,
+        remove: selected.filter((pkg) => Boolean(packageInstalled(pkg))).length,
         all: packages.length,
         invert: packages.length,
         clear: selected.length,
@@ -480,12 +480,12 @@ function renderDetail() {
     remove.className = "danger-button";
     remove.type = "button";
     remove.textContent = tr("remove");
-    remove.disabled = !pkg.installed || queueActive();
+    remove.disabled = !packageInstalled(pkg) || queueActive();
     remove.addEventListener("click", () => confirmRemove(pkg));
     const install = document.createElement("button");
     install.className = "primary-button";
     install.type = "button";
-    install.textContent = pkg.installed ? tr("update") : tr("install");
+    install.textContent = packageInstalled(pkg) ? tr("update") : tr("install");
     install.disabled = !packageEligible(pkg);
     install.addEventListener("click", () => beginInstall([pkg.id]));
     actions.append(repo, remove, install);
@@ -493,6 +493,12 @@ function renderDetail() {
     panel.append(topline, heading, actions, readmeDetails, block);
 }
 
+/**
+ * 拉目录并重画。
+ *
+ * 读数归数据层（`catalog` 那个 key），这条只是**刷新命令**；怎么画在 `business.js` 里。
+ * `catalogLoading` 只是这次操作期间的界面状态。
+ */
 async function loadCatalog(refresh = false) {
     const button = $("#refresh-catalog");
     button.disabled = true;
@@ -502,26 +508,16 @@ async function loadCatalog(refresh = false) {
     setRegistryState("loading", tr("connecting"));
     setStatus(tr("loading"));
     try {
-        const result = await callApi("load_catalog", refresh);
+        // 显式刷新让后端现去拉索引；其余场合让数据层按缓存重算。两条都只回 ack。
+        const result = refresh
+            ? await callApi("load_catalog", true)
+            : await callApi("data_request", "catalog");
         if (!result.ok) {
             state.catalogLoading = false;
             renderCatalog();
             setRegistryState("error", tr("connectionFailed"));
             resultError(result, "catalogError");
-            return;
         }
-        state.publicPackages = result.packages || [];
-        state.packages = [...state.publicPackages, ...state.privatePackages];
-        state.catalogLoading = false;
-        state.installed = result.installed || [];
-        state.unrecognized = result.unrecognized || [];
-        state.hasAnyMods = Boolean(result.has_any_mods);
-        state.batch.clear();
-        if (!state.packages.some((pkg) => pkg.id === state.selectedId)) state.selectedId = null;
-        setRegistryState("ready", tr("connected"));
-        setStatus(tr("ready", {count: state.packages.length}), "ready", result.source || "");
-        renderCatalog();
-        renderInstalled();
     } catch (error) {
         state.catalogLoading = false;
         renderCatalog();

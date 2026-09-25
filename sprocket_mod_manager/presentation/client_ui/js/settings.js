@@ -30,7 +30,13 @@ async function saveSettings(values = null) {
     }
     state.settings = result.settings;
     if (previousGamePath !== (result.settings.game_path || "")) {
-        void refreshEnvironment();
+        // 换了游戏目录：上一个目录的读数由**数据层**作废并重取（见 `save_settings`），
+        // 界面只复位自己那份视图状态，再让环境 / 目录 / 已安装各刷一次。
+        state.environmentAxesKey = null;
+        await refreshEnvironment(true);
+        await loadCatalog(false);
+        await refreshInstalled();
+        await refreshModloaders();
     }
     state.languageMode = result.settings.language;
     applyTextScale(result.settings.text_scale);

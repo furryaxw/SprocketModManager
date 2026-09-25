@@ -9,13 +9,14 @@ from urllib.parse import urlparse
 from .base import ApiController
 from ..api_support import release_data as _release_data, source_from_config as _source_from_config
 from ...application.catalog import load_catalog
+from ...application.data_hub import KEY_CATALOG, KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS
 from ...application.identifiers import scan_targets, toggle_directories
 from ...application.integrity import suppression_key, suppression_key_of, suppression_keys
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
 from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import ModManagerError, ModToggleError
-from ...domain.models import RegistryPackage, ReleaseInfo
+from ...domain.models import LOADER_KINDS, RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
 from ...infrastructure.desktop import reveal_in_file_manager
 from ...infrastructure.dll_metadata import MELON_KIND_MODS, flush_metadata_cache
@@ -35,40 +36,54 @@ LOGGER = logging.getLogger(__name__)
 
 
 class CatalogController(ApiController):
+    def catalog_payload(self, refresh: bool = False) -> dict[str, Any]:
+        """重算目录读数：注册表里的包（每条 release 带判定）+ 索引来源。
+
+        给数据层用（`KEY_CATALOG` 的刷新器），也供 `load_catalog` 自己调 —— 两边算的是同一份东西。
+        """
+        if not self._catalog_lock.acquire(blocking=False):
+            raise ModManagerError("catalog load is already running")
+        try:
+            return self._build_catalog(refresh)
+        finally:
+            self._catalog_lock.release()
+
     def load_catalog(self, refresh: bool = False) -> dict[str, Any]:
+        """刷新目录读数。读数归数据层 —— 这条只回 ack。"""
         if not self._catalog_lock.acquire(blocking=False):
             return self._failure(RuntimeError("catalog load is already running"), code="catalog_busy")
         try:
-            self.config = self.config_store.load()
-            service = self._service_factory(self.config_store.app_dir)
-            self._configure_service_network(service)
-            service.environment = self.current_environment()
-            service, latest = load_catalog(
-                service,
-                _source_from_config(self.config),
-                refresh=bool(refresh),
-            )
-            adopted = self._adopt_existing(service)
-            with self._state_lock:
-                self.service = service
-                self.latest = latest
-            # 加载器清单来自注册表：注册表刚换过，环境读数必须重来一次，否则缓存里那份
-            # 还是「没有注册表」时读出来的空清单。
-            self._environment_monitor.invalidate()
-            snapshot = self._snapshot(service)
-            return self._success(
-                packages=self._catalog_data(service, latest, installed=snapshot["installed"]),
-                installed=self._installed_data(service, installed=snapshot["installed"]),
-                unrecognized=self._unrecognized_mods(service, local=snapshot["local"]),
-                local_mods=snapshot["local"]["mods"],
-                local_summary=snapshot["local"]["summary"],
-                has_any_mods=self._has_any_mods(snapshot["local"]),
-                source=effective_index_url(self.config),
-            )
+            payload = self._build_catalog(refresh)
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="catalog_load_failed")
         finally:
             self._catalog_lock.release()
+        self.data.publish(KEY_CATALOG, payload)
+        return self._success(source=payload["source"], count=len(payload["packages"]))
+
+    def _build_catalog(self, refresh: bool) -> dict[str, Any]:
+        self.config = self.config_store.load()
+        service = self._service_factory(self.config_store.app_dir)
+        self._configure_service_network(service)
+        service.environment = self.current_environment()
+        service, latest = load_catalog(
+            service,
+            _source_from_config(self.config),
+            refresh=bool(refresh),
+        )
+        self._adopt_existing(service)
+        with self._state_lock:
+            self.service = service
+            self.latest = latest
+        # 加载器清单来自注册表：注册表刚换过，环境读数必须重来一次，否则缓存里那份
+        # 还是「没有注册表」时读出来的空清单。这几份读数都归数据层 —— 让它自己重算。
+        self._environment_monitor.invalidate()
+        self.data_changed(KEY_ENVIRONMENT, KEY_LOADERS, KEY_INSTALLED)
+        snapshot = self._snapshot(service)
+        return {
+            "packages": self._catalog_data(service, latest, installed=snapshot["installed"]),
+            "source": effective_index_url(self.config),
+        }
 
     def _catalog_data(
             self,
@@ -244,11 +259,38 @@ class CatalogController(ApiController):
             *,
             installed: dict[str, dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        records = self._installed(service) if installed is None else installed
+        target = service or self.service
+        records = self._installed(target) if installed is None else installed
         return [
-            {"id": package_id, **(self._installed_entry(info) or {})}
+            {
+                "id": package_id,
+                **(self._installed_entry(info) or {}),
+                **(self._package_shape(target, package_id, info)),
+            }
             for package_id, info in sorted(records.items())
         ]
+
+    @staticmethod
+    def _package_shape(
+            service: ModManagerService,
+            package_id: str,
+            info: dict[str, Any],
+    ) -> dict[str, Any]:
+        """这一条是什么：加载器还是模组。
+
+        注册表知道就说注册表的（包自己声明的 `kind`），不知道的（私有包、记录里留下的旧条目）退回记录里的
+        `kind`。界面按这个事实分类与筛选 —— 不靠"名字看起来像加载器"这种猜法。
+        """
+        registry = getattr(service, "registry", None)
+        kind = ""
+        package = None
+        if registry is not None and registry.has_package(package_id):
+            package = registry.get(package_id)
+            kind = str(package.kind)
+        if not kind:
+            kind = str(info.get("kind") or "")
+        loader = bool(package.is_loader) if package is not None else kind in LOADER_KINDS
+        return {"kind": kind, "loader": loader}
 
     def _snapshot(self, service: ModManagerService) -> dict[str, Any]:
         """一次刷新只读一次安装记录、只扫一遍磁盘。
@@ -284,10 +326,13 @@ class CatalogController(ApiController):
 
         模组会访问 GitHub Release 挑出该记的发布版本；磁盘上检测到、记录里没有的加载器只查索引
         自带的发布数据。登记后它们和普通安装的没有区别。
-        `changed` 只表示这次有没有改动安装记录，供前端决定是否重画列表。
+        `changed` 只表示这次有没有改动安装记录；读数照旧由数据层重算并推送。
         """
         try:
             adopted = self._adopt_existing(self._current_service())
+            if adopted:
+                # 认领把磁盘上的模组/加载器写进了记录：侧栏那份「装了哪些加载器」也跟着变。
+                self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS)
             return self._success(changed=bool(adopted))
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="adopt_existing_failed")
@@ -315,10 +360,9 @@ class CatalogController(ApiController):
             store.save(kept)
             saved = store.load()
             LOGGER.info("corruption suppression updated path=%s key=%s suppressed=%s", relative, key, suppressed)
-            return self._success(
-                suppressed=saved,
-                installed=self._installed_data(),
-            )
+            # 改的是「已安装」那份数据的完整性状态：让数据层自己重算，不在返回值里另带一份读数。
+            self.data_changed(KEY_INSTALLED)
+            return self._success(suppressed=saved)
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="suppress_integrity_failed")
 
@@ -351,12 +395,14 @@ class CatalogController(ApiController):
                 )
             finally:
                 self._mutation_lock.release()
+            # 校验改的是「已安装」那份数据的完整性状态：让数据层自己重算一遍，
+            # 结果不在这个返回值里另带一份 —— 界面按推送重画，就不会有"两个版本的读数"。
+            self.data_changed(KEY_INSTALLED)
             return self._success(
                 corrupted=result["corrupted"],
                 modified=result.get("modified", []),
                 missing=result["missing"],
                 checked=result["checked"],
-                installed=self._installed_data(),
             )
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="verify_installed_failed")
@@ -403,12 +449,12 @@ class CatalogController(ApiController):
                         LOGGER.warning("could not sync installed state after renaming %s: %s", item.name, exc)
             finally:
                 self._mutation_lock.release()
-            payload = self._local_mods_payload(service)
+            # 改名换的是「已安装」那份读数（扫描行与安装记录一起翻）—— 让数据层自己重算。
+            self.data_changed(KEY_INSTALLED)
             return self._success(
                 toggled=toggled[-1] if toggled else target.relative_to(game_path).as_posix(),
                 toggled_paths=toggled,
                 restart_required=True,
-                **payload,
             )
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="toggle_mod_failed")
