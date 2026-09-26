@@ -516,6 +516,32 @@ class InstallerTests(unittest.TestCase):
                           "强制覆盖后该文件就是受管文件")
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_update_over_a_disabled_file_keeps_it_disabled(self, _running):
+        """`X.dll` 与 `X.dll.disable` 是同一个逻辑文件：更新写进禁用变体本身。
+
+        照规范名去写会在禁用文件旁边多出一份同名 DLL，等于同一个模组在磁盘上有两份。
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            game.mkdir()
+            (game / "Sprocket.exe").touch()
+            store = StateStore(root / "app" / "installed.json")
+            installer = Installer(root / "app", store)
+            installer.apply(prepared(root, "1.0.0", b"first"), game)
+            enabled = game / "Mods" / "TestMod.dll"
+            disabled = enabled.with_name(enabled.name + ".disable")
+            enabled.rename(disabled)
+
+            installer.apply(prepared(root, "1.1.0", b"second"), game)
+
+            self.assertFalse(enabled.exists())
+            self.assertEqual(disabled.read_bytes(), b"second")
+            self.assertEqual(
+                store.load()["files"]["Mods/TestMod.dll"]["sha256"], sha256_file(disabled)
+            )
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_update_removes_dependency_that_becomes_orphaned(self, _running):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

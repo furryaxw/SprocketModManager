@@ -8,7 +8,7 @@ from .base import ApiController
 from ..api_support import GamePathRequiredError
 from ...application.data_hub import KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS, KEY_QUEUE
 from ...application.install_queue import ACTIVE_STATES, InstallQueueEntry
-from ...application.preparer import PlanPreparer
+from ...application.preparer import PlanPreparer, satisfied_versions
 from ...application.private_install import prepare_private_package
 from ...application.service import ModManagerService
 from ...domain.compatibility import COMPATIBLE, CapabilityEnvironment, loader_table_decision, release_verdict
@@ -717,14 +717,20 @@ class InstallationController(ApiController):
     ) -> None:
         service = self._current_service()
         if service.registry is not None:
+            installed = service.installed(game_path)
             _client, plan, downloaders = self._private_resolution(
-                package_id, frozenset(service.installed(game_path))
+                package_id, frozenset(installed)
             )
             prepared = PlanPreparer(
                 self.config_store.app_dir,
                 service.http,
                 service.github,
-            ).prepare(plan, progress, private_downloaders=downloaders)
+            ).prepare(
+                plan,
+                progress,
+                private_downloaders=downloaders,
+                satisfied=satisfied_versions(installed),
+            )
             try:
                 service._installer_for(game_path).apply(
                     prepared,
