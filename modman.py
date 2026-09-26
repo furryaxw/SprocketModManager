@@ -26,7 +26,7 @@ from sprocket_mod_manager.infrastructure.self_update import (
     self_update_mode,
 )
 
-APP_VERSION = "0.6.0-fix1"
+APP_VERSION = "0.6.0-fix2"
 LOGGER = logging.getLogger(__name__)
 
 
