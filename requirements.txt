@@ -1,5 +1,5 @@
 dnfile==0.17.0
 pefile==2024.8.26
 pywebview==6.2.1
-cryptography>=42,<46
+cryptography>=50.0.0,<51
 pyinstaller>=6.0,<7.0
