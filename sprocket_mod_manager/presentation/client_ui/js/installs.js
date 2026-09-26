@@ -4,8 +4,11 @@
  * 解析并展示安装计划；用户在计划里改版本时重新解析那一个包。
  *
  * 版本选择器只给根包（用户点的那些）；依赖的版本由求解器按环境定，不给挑。
+ *
+ * `includeInstalled` 同时是「重装」的意思：计划照给（不看它有几个版本可挑），入队也不因为
+ * 「解析出来的版本就是装着的那版」被跳过。`force` 再多给一层：连被外部改动过的文件也一并覆盖。
  */
-async function beginInstall(packageIds, presetVersions = null, includeInstalled = false) {
+async function beginInstall(packageIds, presetVersions = null, includeInstalled = false, force = false) {
     if (!packageIds.length) return;
     const versions = {...installVersions(packageIds), ...(presetVersions || {})};
     setStatus(tr("resolving"));
@@ -88,8 +91,9 @@ async function beginInstall(packageIds, presetVersions = null, includeInstalled 
             ...planState.plans.map((plan) => plan.id),
             ...planState.recommendedSelection,
         ],
-        false,
+        force,
         planState.versions,
+        includeInstalled,
     );
     if (!queued.ok) {
         resultError(queued);
@@ -222,7 +226,6 @@ async function toggleLocalMod(path, enabled) {
 
 /**
  * 完整性状态芯片：只有「不匹配任何发布版本」才出芯片。
- * 被抑制的文件不出芯片 —— 它靠按钮上的「取消抑制」区分于正常行。
  */
 function appendIntegrityChip(actions, record) {
     if (!record || !record.corrupted) return;
@@ -230,36 +233,6 @@ function appendIntegrityChip(actions, record) {
     corrupted.className = "state-chip corrupted";
     corrupted.textContent = tr("corrupted");
     actions.append(corrupted);
-}
-
-/**
- * 抑制/取消抑制按钮：判断本身永远是实时算的（磁盘 hash vs 发布版本 hash），
- * 这里改的只是"要不要对我报红"，名单存游戏目录的 `SprocketModManager/suppression.json`，不进安装记录。
- */function appendIntegrityButton(actions, record, path) {
-    if (!record || (!record.corrupted && !record.suppressed)) return;
-    const suppress = document.createElement("button");
-    suppress.className = "secondary-button";
-    suppress.type = "button";
-    suppress.textContent = tr(record.corrupted ? "suppressCorruption" : "unsuppressCorruption");
-    suppress.disabled = queueActive();
-    suppress.addEventListener("click", () => setIntegritySuppressed(path, Boolean(record.corrupted)));
-    actions.append(suppress);
-}
-
-/**
- * 抑制/取消抑制某个文件的「不匹配任何发布版本」提示。
- *
- * 判断本身永远是实时算的（磁盘 hash vs 发布版本 hash），这里改的只是"要不要对我报红"，
- * 名单存游戏目录的 `SprocketModManager/suppression.json`，不进安装记录。
- */
-async function setIntegritySuppressed(path, suppressed) {
-    const result = await callApi("set_integrity_suppressed", String(path || ""), Boolean(suppressed));
-    if (!result.ok) {
-        resultError(result);
-        return;
-    }
-    toast(tr(suppressed ? "integritySuppressed" : "integrityUnsuppressed", {name: path}));
-    await refreshInstalled();
 }
 
 /** 行的选择键：扫描行按磁盘路径，兜底行按包 id。 */
@@ -353,6 +326,21 @@ function installedRowPackageId(item) {
     return item.unrecognized ? "" : String(item.id || "");
 }
 
+/** 重装要用哪个包：安装记录的归属优先，其次扫描时匹配到的注册表条目。 */
+function installedRowReinstallId(item) {
+    if (item.fromScan) {
+        return String(item.installed_package_id || item.registry_id || "");
+    }
+    return item.unrecognized ? "" : String(item.id || "");
+}
+
+/** 重装按钮只给找得到来源的行：注册表（含私有服务器目录）里没有这个包就没得重装。 */
+function installedRowReinstallSource(item) {
+    const id = installedRowReinstallId(item);
+    if (!id) return "";
+    return (state.packages || []).some((candidate) => candidate.id === id) ? id : "";
+}
+
 /** 比安装记录更新的 Registry 发布版本，没有就返回 null。**环境拦下来的也算** —— 它只负责行上那枚感叹号。
  *
  * 比的是**安装记录里的版本**（与 Registry 同源的 `x.y.z[-pre]`），不是 DLL 自报版本：
@@ -400,13 +388,24 @@ function installedVersionVerdict(record) {
     return releaseVerdict(record.id, record.version);
 }
 
-/** 列表数据源：磁盘扫描优先，拿不到扫描结果时退回「安装记录 + 未识别列表」。 */
+/**
+ * 列表数据源：磁盘扫描结果，加上扫描看不到的补丁包。
+ *
+ * 模组按加载器供给的目录扫描（`Mods`、`BepInEx/plugins` …），但补丁落在 `BepInEx/core` 这类
+ * 不是模组目录的位置：那些包只能按安装记录补一行，否则装完在页面上没有入口。基础运行时
+ * （`modloader`）不在这里 —— 它们在加载器页与左下角环境区。
+ */
 function installedItems() {
-    // 纯扫描模型：磁盘上有什么就显示什么（含 *.dll.disable），安装记录只用来标注归属。
-    const scanned = state.localMods || [];
-    if (scanned.length) return scanned.map((mod) => ({...mod, fromScan: true}));
+    const scanned = (state.localMods || []).map((mod) => ({...mod, fromScan: true}));
+    const covered = new Set(
+        scanned.map((mod) => mod.installed_package_id).filter(Boolean),
+    );
+    const patches = (state.installed || [])
+        .filter((record) => record.kind === "patch" && !covered.has(record.id))
+        .map((record) => ({...record, unrecognized: false, fromScan: false}));
     return [
-        ...(state.installed || []).map((item) => ({...item, unrecognized: false, fromScan: false})),
+        ...scanned,
+        ...patches,
         ...(state.unrecognized || []).map((item) => ({...item, unrecognized: true, fromScan: false})),
     ];
 }
@@ -459,26 +458,11 @@ function invertInstalledSelection() {
  */
 const INSTALLED_FILTERS = {
     all: {label: "installedFilterAll", match: () => true},
-    loaders: {label: "installedFilterLoaders", match: (item) => installedRowIsLoader(item)},
-    mods: {label: "installedFilterMods", match: (item) => !installedRowIsLoader(item)},
     enabled: {label: "installedFilterEnabled", match: (item) => !installedRowDisabled(item)},
     disabled: {label: "installedFilterDisabled", match: (item) => installedRowDisabled(item)},
     outdated: {label: "installedFilterOutdated", match: (item) => Boolean(installableUpdate(item))},
     incompatible: {label: "installedFilterIncompatible", match: (item) => installedRowIncompatible(item)},
 };
-
-/**
- * 这一行是不是加载器。
- *
- * 事实来自数据层（注册表里那个包的 `kind`，或记录里留下的 `kind`），界面不靠文件名去猜 ——
- * 猜法会在加载器和"名字里有 Loader 的模组"之间说不清话。
- */
-function installedRowIsLoader(item) {
-    const record = item.fromScan
-        ? (state.installed || []).find((entry) => entry.id && entry.id === item.installed_package_id)
-        : item;
-    return Boolean(record?.loader);
-}
 
 /**
  * 这一行跟本机环境对不上：装着的那个版本跑不了，或者能看到的更新跑不了。
@@ -643,25 +627,24 @@ function renderInstalled() {
 }
 
 /**
- * 「重装」按钮：文件损坏或被改动时，用注册表里的包覆盖回去。
+ * 「重装」按钮：用来源里的包把文件覆盖回去，装哪一版在确认框里挑（可以选旧版，也可以选环境
+ * 判定不兼容的版本）。
  *
- * 只有注册表（或私有服务器目录）里能找到这个包时才可用——纯本地的手工 DLL 没有来源，
- * 这时按钮禁用并给出原因，而不是假装能重装。
+ * 只有找得到来源的行才有这个按钮（见 `installedRowReinstallSource`）：纯本地的手工 DLL 没有
+ * 来源，不摆一个按不动的按钮。重装不走卸载，所以被别的包依赖也不拦。
+ *
+ * `force` 是"这一行已被外部改动过"的意思：那种文件本来就要覆盖回去，再让用户点一次「强制重试」
+ * 只是多一道手续。
  */
-function reinstallButton(record) {
-    const known = state.packages.some((candidate) => candidate.id === record.id);
+function reinstallButton(packageId, force) {
     const button = document.createElement("button");
-    button.className = "primary-button";
+    button.className = force ? "primary-button" : "secondary-button";
     button.type = "button";
     button.textContent = tr("reinstall");
-    button.disabled = !known || queueActive();
-    if (!known) button.title = tr("reinstallUnavailable");
+    button.disabled = queueActive();
     button.addEventListener("click", () => {
-        if (!known || queueActive()) {
-            if (!known) setStatus(tr("reinstallUnavailable"), "error");
-            return;
-        }
-        void beginInstall([record.id]);
+        if (queueActive()) return;
+        void beginInstall([packageId], null, true, Boolean(force));
     });
     return button;
 }
@@ -799,6 +782,11 @@ function renderScannedModRow(mod) {
         actions.append(toggle);
     }
 
+    const reinstallId = installedRowReinstallSource(mod);
+    if (reinstallId) {
+        actions.append(reinstallButton(reinstallId, Boolean(record?.corrupted)));
+    }
+
     if (record) {
         const removablePackage = state.packages.find((candidate) => candidate.id === record.id)
             || {
@@ -806,12 +794,6 @@ function renderScannedModRow(mod) {
                 name: record.name || record.id,
                 display_name: {en: record.name || record.id, zh: record.name || record.id},
             };
-        if (record.corrupted) {
-            actions.append(reinstallButton(record));
-        }
-        if (mod.path) {
-            appendIntegrityButton(actions, record, mod.path);
-        }
         const remove = document.createElement("button");
         remove.className = "danger-button";
         remove.type = "button";
@@ -826,7 +808,7 @@ function renderScannedModRow(mod) {
     return row;
 }
 
-/** 兜底渲染：拿不到扫描结果时，退回「安装记录 + 未识别列表」。 */
+/** 记录行：没有磁盘条目的包（补丁）与未识别的本地 DLL。 */
 function renderLegacyModRow(item) {
     const pkg = item.unrecognized
         ? null
@@ -854,10 +836,12 @@ function renderLegacyModRow(item) {
     title.append(name, metadata);
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    if (local?.kind) {
+    // 没有磁盘条目的行（补丁）拿安装记录里的种类：那是数据层给出的事实，界面不猜。
+    const kindLabel = local?.kind || item.kind || "";
+    if (kindLabel) {
         const kind = document.createElement("span");
         kind.className = "state-chip";
-        kind.textContent = local.kind;
+        kind.textContent = kindLabel;
         actions.append(kind);
     }
     if (!item.unrecognized) {
@@ -886,16 +870,16 @@ function renderLegacyModRow(item) {
             name: item.name || item.id,
             display_name: {en: item.name || item.id, zh: item.name || item.id},
         } : null);
+        const reinstallId = installedRowReinstallSource(item);
+        if (reinstallId) {
+            actions.append(reinstallButton(reinstallId, Boolean(item.corrupted)));
+        }
         const remove = document.createElement("button");
         remove.className = "danger-button";
         remove.type = "button";
         remove.textContent = tr("remove");
         remove.disabled = !removablePackage || queueActive();
         remove.addEventListener("click", () => removablePackage && confirmRemove(removablePackage));
-        if (item.corrupted) {
-            actions.append(reinstallButton(item));
-        }
-        appendIntegrityButton(actions, item, local?.path || (item.files || [])[0] || "");
         actions.append(remove);
     }
     row.append(selectionCheckbox(item, key), title, actions);
@@ -926,7 +910,6 @@ async function confirmRemove(pkg) {
 /**
  * 多选批量操作：更新 / 禁用 / 启用 / 卸载。
  *
- * 抑制与取消抑制不进多选：那是「这一个文件的提示要不要报」，逐行操作才有意义。
  * 三个操作都复用单行用的端点，逐个调用并把结果汇总成一条提示，不假装整批是原子的。
  */
 

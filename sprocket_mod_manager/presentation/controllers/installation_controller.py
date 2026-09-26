@@ -502,7 +502,14 @@ class InstallationController(ApiController):
             package_ids: list[str],
             force_conflicts: bool = False,
             versions: dict[str, str] | None = None,
+            reinstall: bool = False,
     ) -> dict[str, Any]:
+        """把要装的包排队。
+
+        `reinstall`（或 `force_conflicts`）是「用户明确要求重装」：解析出来的版本就算与装着的那版
+        相同也照常排队 —— 重装要的是把文件覆盖回去，不是换版本。两个都不给时，同版本视为
+        「已经装了」，不入队。
+        """
         try:
             game_path = self._valid_game_path()
             if not self._loader_idle.is_set():
@@ -510,6 +517,7 @@ class InstallationController(ApiController):
             service = self._current_service()
             requested = {str(key): str(value) for key, value in (versions or {}).items()}
             installed = service.installed(game_path)
+            explicit = bool(reinstall or force_conflicts)
             eligible: list[str] = []
             ranges: dict[str, str] = {}
             failed: list[dict[str, str]] = []
@@ -518,7 +526,7 @@ class InstallationController(ApiController):
                     if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
                            self._developer_server_entries()):
                         _entry, _client, manifest = self._private_package_source(package_id)
-                        if installed.get(package_id, {}).get("version") != manifest.version:
+                        if explicit or installed.get(package_id, {}).get("version") != manifest.version:
                             eligible.append(package_id)
                         continue
                     package = self._package(service, package_id)
@@ -530,7 +538,7 @@ class InstallationController(ApiController):
                         installed=frozenset(installed),
                     )
                     root = plan.by_id()[package.id]
-                    if installed.get(package.id, {}).get("version") != str(root.release.version):
+                    if explicit or installed.get(package.id, {}).get("version") != str(root.release.version):
                         eligible.append(package.id)
                         ranges[package.id] = version_range
                 except (ModManagerError, OSError, ValueError) as exc:

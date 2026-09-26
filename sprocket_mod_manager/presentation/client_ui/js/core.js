@@ -185,7 +185,7 @@ function reportClientLog(level, message) {
  */
 function statusbarState() {
     if (environmentProblem()) return "error";
-    if ((state.installed || []).some((item) => item.corrupted && !item.suppressed)) return "error";
+    if ((state.installed || []).some((item) => item.corrupted)) return "error";
     if (state.catalogLoading || state.modloadersLoading || queueActive()) return "busy";
     return "ready";
 }
