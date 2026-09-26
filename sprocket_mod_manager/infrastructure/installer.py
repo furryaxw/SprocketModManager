@@ -157,6 +157,15 @@ def _existing_managed_file(game_dir: Path, canonical: str) -> Path | None:
     return actual_path_for(_safe_game_path(game_dir, canonical))
 
 
+def _write_target(game_dir: Path, relative: str) -> Path:
+    """这次落盘要写的**真实**文件：逻辑文件当前是禁用变体（`X.dll.disable`）就写它。
+
+    落盘、归档、冲突判定都按同一个路径走，否则禁用文件旁边会多出一份同名 DLL，补丁的原件也
+    会归档落空。文件还不在场时就是规范路径。
+    """
+    return _existing_managed_file(game_dir, relative) or _safe_game_path(game_dir, relative)
+
+
 def _patched_backup_dir(game_dir: Path) -> Path:
     """补丁覆盖的原件归档根：`<game>/SprocketModManager/backup/patched`。"""
     return backups_dir(game_dir) / PATCHED_BACKUP_DIR_NAME
@@ -230,6 +239,25 @@ class Installer:
                 raise InstallError(f"install plan has a file conflict at {group[0].target}")
         chosen = patch_files or other_files
         return chosen[0], bool(patch_files)
+
+    @staticmethod
+    def _claimed_by_another_package(
+            state: dict[str, Any],
+            relative: str,
+            sha256: str,
+            package_ids: set[str],
+    ) -> bool:
+        """这个目标被这次计划之外的包占着、内容也不是这次要装的吗。
+
+        基础运行时的载荷不记逐文件清单，重铺整棵树时看不到补丁的归属；判据只能取安装记录里
+        那一条的 owners 与摘要。
+        """
+        state_key = Installer._state_file_key(state, relative)
+        entry = state["files"].get(state_key) if state_key else None
+        if not isinstance(entry, dict):
+            return False
+        outside = set(entry.get("owners", ())) - package_ids
+        return bool(outside) and str(entry.get("sha256") or "") != sha256
 
     @staticmethod
     def _replaced_record(game_dir: Path, relative: str) -> dict[str, str] | None:
@@ -453,7 +481,7 @@ class Installer:
                 continue
             state_key = self._state_file_key(next_state, relative)
             existing_entry = next_state["files"].get(state_key) if state_key else None
-            target = _safe_game_path(game_dir, relative)
+            target = _write_target(game_dir, relative)
             if existing_entry:
                 outside_owners = set(existing_entry.get("owners", ())) - package_ids
                 if outside_owners and existing_entry.get("sha256") != sample.sha256 and not is_patch:
@@ -575,8 +603,15 @@ class Installer:
 
             created_by_package: dict[str, set[str]] = {}
             for files, sample, is_patch in plan_files:
-                target = _safe_game_path(game_dir, sample.target)
+                target = _write_target(game_dir, sample.target)
                 if target.is_file() and sha256_file(target) == sample.sha256:
+                    continue
+                if not is_patch and self._claimed_by_another_package(
+                        next_state, sample.target, sample.sha256, package_ids
+                ):
+                    # 基础运行时的载荷整棵树重铺，但目标已经是别的包（按文件打补丁的补丁）换上去的
+                    # 内容：写回去会让补丁静默失效，安装记录里的摘要也会与磁盘对不上。
+                    warnings.append(f"preserved {sample.target}: owned by another package")
                     continue
                 if is_patch and self._replaced_record(game_dir, sample.target) is None:
                     # 补丁替换别的包的文件：被替换的内容另存一份（与事务无关），卸载时据此还原。
@@ -844,6 +879,9 @@ class Installer:
                 entry = next_state["files"].get(relative)
                 if entry is None:
                     continue
+                if self._other_patch_owner(state, entry):
+                    # 这条路径还归别的补丁包：把归档的原件放回去会连它一起顶掉。
+                    continue
                 target = _existing_managed_file(game_dir, relative)
                 if target is None:
                     continue
@@ -1042,6 +1080,18 @@ class Installer:
     def _state_file_key(state: dict[str, Any], relative: str) -> str | None:
         folded = relative.casefold()
         return next((key for key in state["files"] if key.casefold() == folded), None)
+
+    @staticmethod
+    def _other_patch_owner(state: dict[str, Any], entry: dict[str, Any]) -> bool:
+        """这条文件记录除了正在卸载的补丁，还有别的补丁包占着吗。
+
+        两个补丁改同一条路径时归档里只有最初那份原件：谁先被卸载都不能把原件放回去，
+        否则另一个还在场的补丁会跟着被顶掉。
+        """
+        return any(
+            (state["packages"].get(str(owner)) or {}).get("install_mode") == PATCH_MODE
+            for owner in entry.get("owners", ())
+        )
 
     def _archive_removed_loaders(
             self,

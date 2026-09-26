@@ -20,6 +20,7 @@ from test_installer import registry_package  # noqa: E402
 
 from sprocket_mod_manager.domain.errors import InstallConflictError, ScanError  # noqa: E402
 from sprocket_mod_manager.domain.models import (  # noqa: E402
+    MODLOADER_KIND,
     PreparedFile,
     PreparedPackage,
     PreparedPlan,
@@ -40,9 +41,17 @@ BRIDGE_PATH = "BepInEx/core/Il2CppInterop.Runtime.dll"
 ARCHIVE = Path("SprocketModManager") / "backup" / "patched"
 
 
-def package(package_id: str, *, mode: str = "standard", dependencies: tuple[str, ...] = ()) -> RegistryPackage:
+def package(
+        package_id: str,
+        *,
+        mode: str = "standard",
+        dependencies: tuple[str, ...] = (),
+        kind: str = "",
+) -> RegistryPackage:
+    base = registry_package(package_id)
     return replace(
-        registry_package(package_id),
+        base,
+        kind=kind or base.kind,
         install={"mode": mode},
         dependencies=tuple({"id": item, "version": "*", "when": "*"} for item in dependencies),
     )
@@ -208,6 +217,52 @@ class PatchInstallTests(unittest.TestCase):
 
             self.assertEqual(target.read_bytes(), b"unmanaged")
 
+    def test_standard_package_still_conflicts_on_an_unmanaged_disabled_target(self) -> None:
+        """禁用变体也是"已经存在、内容不同"的文件：不放行、也不吞掉它。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = game_dir(root)
+            store = StateStore(root / "app" / "installed.json")
+            installer = self.installer_for(root, store)
+            disabled = game / "Mods" / "Unmanaged.dll.disable"
+            disabled.parent.mkdir(parents=True)
+            disabled.write_bytes(b"unmanaged")
+
+            with self.assertRaises(InstallConflictError):
+                installer.apply(
+                    plan(root, package("test.mod"), [("Mods/Unmanaged.dll", b"managed")]),
+                    game,
+                )
+
+            self.assertEqual(disabled.read_bytes(), b"unmanaged")
+            self.assertFalse((game / "Mods" / "Unmanaged.dll").exists())
+
+    def test_patch_over_a_disabled_file_writes_it_in_place_and_archives_it(self) -> None:
+        """补丁盖的是禁用的那个变体本身：原件归档、卸载还原，全程只有一份逻辑文件。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = game_dir(root)
+            store = StateStore(root / "app" / "installed.json")
+            installer = self.installer_for(root, store)
+            disabled = game / "Mods" / "Patched.dll.disable"
+            disabled.parent.mkdir(parents=True)
+            disabled.write_bytes(b"original")
+
+            installer.apply(
+                plan(root, package(PATCH_ID, mode="patch"), [("Mods/Patched.dll", b"patch content")]),
+                game,
+            )
+
+            self.assertFalse((game / "Mods" / "Patched.dll").exists())
+            self.assertEqual(disabled.read_bytes(), b"patch content")
+            archive = game / ARCHIVE / "Mods" / "Patched.dll"
+            self.assertEqual(archive.read_bytes(), b"original")
+
+            installer.remove(PATCH_ID, game)
+
+            self.assertEqual(disabled.read_bytes(), b"original")
+            self.assertFalse(archive.exists())
+
     def test_patch_over_unmanaged_target_takes_it_over_and_archives_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -273,6 +328,87 @@ class PatchInstallTests(unittest.TestCase):
                         store.load()["files"][BRIDGE_PATH]["owners"],
                         sorted([LOADER_ID, PATCH_ID]),
                     )
+
+    def test_a_mod_bringing_the_patched_loader_along_keeps_the_patch(self) -> None:
+        """另一个模组把它依赖的加载器带进计划时，加载器载荷不能把补丁的核心文件写回原件。
+
+        加载器（`kind: modloader`）不记逐文件清单，所以它那份载荷落盘时看不到补丁的归属；
+        没有这道保护，补丁会被静默换回原件，而安装记录里的摘要仍是补丁的内容。
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = game_dir(root)
+            store = StateStore(root / "app" / "installed.json")
+            loader = package(LOADER_ID, kind=MODLOADER_KIND)
+            new_mod = package("test.qol")
+            plugin_path = "BepInEx/plugins/QoL.dll"
+            installer = self.installer_for(root, store)
+            installer.apply(plan(root, loader, [(BRIDGE_PATH, b"loader bridge")]), game)
+            installer.apply(
+                plan(
+                    root,
+                    package(PATCH_ID, mode="patch", dependencies=(LOADER_ID,)),
+                    [(BRIDGE_PATH, b"patch bridge")],
+                ),
+                game,
+            )
+
+            installer.apply(
+                combined_plan(
+                    root,
+                    [
+                        (loader, [(BRIDGE_PATH, b"loader bridge")]),
+                        (new_mod, [(plugin_path, b"qol")]),
+                    ],
+                    root_id=new_mod.id,
+                ),
+                game,
+            )
+
+            self.assertEqual((game / BRIDGE_PATH).read_bytes(), b"patch bridge")
+            self.assertEqual((game / plugin_path).read_bytes(), b"qol")
+            archive = game / ARCHIVE / "BepInEx" / "core" / "Il2CppInterop.Runtime.dll"
+            self.assertEqual(archive.read_bytes(), b"loader bridge")
+            self.assertEqual(
+                store.load()["files"][BRIDGE_PATH]["sha256"],
+                sha256_file(game / BRIDGE_PATH),
+                "记录里的摘要必须与磁盘上补丁的内容一致",
+            )
+
+            removed, warnings = installer.remove(PATCH_ID, game)
+
+            self.assertEqual(removed, [PATCH_ID])
+            self.assertEqual(warnings, [])
+            self.assertEqual((game / BRIDGE_PATH).read_bytes(), b"loader bridge")
+            self.assertFalse(archive.exists(), "补丁卸载后归档要清掉")
+
+    def test_removing_one_of_two_patches_keeps_the_other(self) -> None:
+        """两个补丁改同一条路径时，卸载其中一个不能把另一个的内容顶回原件。
+
+        归档里只有最初那份原件（加载器的内容），所以后装的补丁被卸载时才轮到它还原。
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = game_dir(root)
+            store = StateStore(root / "app" / "installed.json")
+            installer = self.install_loader(root, game, store)
+            first = package("test.patch-one", mode="patch")
+            second = package("test.patch-two", mode="patch")
+            installer.apply(plan(root, first, [(BRIDGE_PATH, b"one")]), game)
+            installer.apply(plan(root, second, [(BRIDGE_PATH, b"two")]), game)
+            archive = game / ARCHIVE / "BepInEx" / "core" / "Il2CppInterop.Runtime.dll"
+
+            removed, warnings = installer.remove(first.id, game)
+
+            self.assertEqual(removed, [first.id])
+            self.assertEqual(warnings, [])
+            self.assertEqual((game / BRIDGE_PATH).read_bytes(), b"two")
+            self.assertEqual(archive.read_bytes(), b"loader bridge")
+
+            installer.remove(second.id, game)
+
+            self.assertEqual((game / BRIDGE_PATH).read_bytes(), b"loader bridge")
+            self.assertFalse(archive.exists())
 
 
 class PatchScannerTests(unittest.TestCase):

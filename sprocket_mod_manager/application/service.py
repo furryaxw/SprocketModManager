@@ -8,7 +8,7 @@ from .adoption import AdoptionRecord, ExistingModsAdopter
 from .identifiers import detected_capabilities, runtime_states
 from .integrity import annotate, published_hashes
 from .integrity import BROKEN_STATUSES
-from .preparer import PlanPreparer
+from .preparer import PlanPreparer, satisfied_versions
 from .solver import DependencySolver
 from ..domain.compatibility import CapabilityEnvironment
 from ..domain.errors import ModManagerError, RegistryError, ScanError
@@ -115,21 +115,28 @@ class ModManagerService:
             return frozenset()
         return frozenset(package.id for package in self.registry.modloaders())
 
-    def _installed_ids(self, game_dir: Path) -> frozenset[str]:
-        """安装记录里的包 id；记录读不出来就当作「什么都没装」，让多供给者类型走显式报错。"""
+    def _installed_packages(self, game_dir: Path) -> dict[str, dict[str, Any]]:
+        """安装记录里的包（id -> 记录）；读不出来就当作「什么都没装」，让多供给者类型走显式报错。"""
         try:
             state = StateStore(state_file_path(game_dir)).load()
         except (ModManagerError, OSError, ValueError) as exc:
             LOGGER.warning("could not read installed state for %s: %s", game_dir, exc)
-            return frozenset()
-        return frozenset(str(package_id) for package_id in state["packages"])
+            return {}
+        return state["packages"]
+
+    def _installed_ids(self, game_dir: Path) -> frozenset[str]:
+        """安装记录里的包 id；一个类型有多个供给者时由它决定用哪个安装目录。"""
+        return frozenset(self._installed_packages(game_dir))
 
     def prepare(
             self,
             plan: ResolutionPlan,
             progress: ProgressCallback | None = None,
+            satisfied: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
-        return PlanPreparer(self.app_dir, self.http, self.github).prepare(plan, progress)
+        return PlanPreparer(self.app_dir, self.http, self.github).prepare(
+            plan, progress, satisfied=satisfied
+        )
 
     def install(
             self,
@@ -142,13 +149,15 @@ class ModManagerService:
     ) -> tuple[ResolutionPlan, list[str]]:
         LOGGER.info("install requested identifier=%s game_dir=%s", identifier, game_dir)
         # 入队时就把版本钉死了，所以这里按点名处理：队列不再因为环境变化改主意。
+        records = self._installed_packages(game_dir)
         plan = self.resolve(
             identifier,
             version_range,
             pinned=True,
-            installed=self._installed_ids(game_dir),
+            installed=frozenset(records),
         )
-        prepared = self.prepare(plan, progress)
+        # 已经装着同一个版本的依赖不重取也不重铺：计划照旧供它供给的目录，落盘却没有它。
+        prepared = self.prepare(plan, progress, satisfied=satisfied_versions(records))
         # 载荷取回之后才交还旧加载器：下载或校验失败时，已装的那份原样留在场上。
         self.displace_conflicting_loaders(plan, game_dir)
         installer = self._installer_for(game_dir)

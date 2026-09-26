@@ -4,7 +4,7 @@ import hashlib
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 from ..domain.errors import DownloadError, InstallError
 from ..domain.models import (
@@ -25,6 +25,21 @@ from ..utilities.package_paths import (
     validate_relative_path,
     validate_supply_target,
 )
+
+
+def satisfied_versions(records: Mapping[str, Any]) -> dict[str, str]:
+    """已装读数里的包版本（`installed()` 的返回值 → `prepare(satisfied=...)` 的输入）。
+
+    记录里没有版本的包不给条目：说不出装的是哪一版，就当作没装过，照常重装。
+    """
+    versions: dict[str, str] = {}
+    for package_id, info in records.items():
+        if not isinstance(info, dict):
+            continue
+        version = str(info.get("version") or "")
+        if version:
+            versions[str(package_id)] = version
+    return versions
 
 
 class PlanPreparer:
@@ -60,16 +75,30 @@ class PlanPreparer:
             plan: ResolutionPlan,
             progress: ProgressCallback | None = None,
             private_downloaders: dict[str, Callable[[ReleaseAsset, Path, ProgressCallback | None], Path]] | None = None,
+            satisfied: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
+        """取回并扫描计划里每个包的载荷。
+
+        `satisfied` 是目标游戏目录里已经装着的版本（包 id → 版本）：**已经就是这个版本**的依赖
+        不再取回、也不再落盘 —— 计划里的供给关系照旧（目录表由完整的 `ResolutionPlan` 算出），
+        所以模组的落点不变，只是不用为了重铺一份原样的运行时再下一遍。根包永远准备：用户点它
+        就是在要求重装。
+        """
         work_root = self.app_dir / "work"
         work_root.mkdir(parents=True, exist_ok=True)
         work_dir = Path(tempfile.mkdtemp(prefix="prepare-", dir=work_root))
         prepared_packages: list[PreparedPackage] = []
         directories = self.install_directories(plan)
         scanner = PackageScanner(directories)
+        installed_versions = {str(key): str(value) for key, value in (satisfied or {}).items()}
         try:
             for resolved in plan.packages:
                 package = resolved.package
+                if (
+                        package.id != plan.root_id
+                        and installed_versions.get(package.id) == str(resolved.release.version)
+                ):
+                    continue
                 item = PreparedPackage(resolved=resolved)
                 package_dir = work_dir / hashlib.sha256(package.id.encode("utf-8")).hexdigest()[:20]
                 for asset in self.github.install_assets(package, resolved.release):
