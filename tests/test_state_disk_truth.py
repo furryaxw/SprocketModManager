@@ -150,37 +150,6 @@ class DiskTruthTests(unittest.TestCase):
             self.assertEqual(verified["modified"], [])
             self.assertFalse(api.get_installed()["installed"][0]["corrupted"])
 
-    def test_suppressed_file_is_no_longer_corrupted_but_visible_as_suppressed(self) -> None:
-        """可以显式抑制损坏提示，但界面要能看出是"被抑制"而不是"正常"。"""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            api, game, _service = self._api(root)
-            try:
-                api.adopt_existing()
-                (game / "Mods" / "FixtureMod.dll").write_bytes(b"locally rebuilt payload")
-                self.assertTrue(api.get_installed()["installed"][0]["corrupted"], "先确认它确实被判为损坏")
-
-                # 用端点抑制：已归属的文件键应是「身份」形式，不是路径
-                code = api.set_integrity_suppressed("Mods/FixtureMod.dll", True)
-                self.assertTrue(code["ok"], code)
-                self.assertEqual(code["suppressed"], ["fixture.sprocket-mod:FixtureMod.dll"],
-                                 "抑制键跟着身份走（package id + 文件名）")
-
-                after = api.get_installed()
-            finally:
-                api.install_queue.close()
-                api.data.close()
-
-            row = after["installed"][0]
-            self.assertFalse(row["corrupted"], "被抑制的文件不该再报红")
-            self.assertTrue(row["suppressed"], "但要能看出它是被抑制的，而不是正常")
-            self.assertEqual(row["integrity"], "suppressed")
-            path = game / "SprocketModManager" / "installed.json"
-            self.assertNotIn("suppressed", path.read_text(encoding="utf-8"),
-                             "抑制状态存在**游戏目录**的 suppression.json 里，不进安装记录")
-            listing = game / "SprocketModManager" / "suppression.json"
-            self.assertTrue(listing.is_file(), "名单跟状态一起留在游戏目录（AppData 只放管理器自己的配置）")
-
     def test_a_fileless_modloader_is_neither_corrupted_nor_missing(self) -> None:
         """基础运行时不记逐文件哈希：完整性判定与 `verify` 都不许把它算成损坏或缺文件。"""
         with tempfile.TemporaryDirectory() as directory:
@@ -210,67 +179,6 @@ class DiskTruthTests(unittest.TestCase):
         self.assertEqual(loader["integrity"], "local")
         self.assertEqual(verified["corrupted"], [])
         self.assertEqual(verified["missing"], [])
-
-    def test_suppression_survives_disable_and_enable(self) -> None:
-        """抑制键跟着身份走，禁用/启用（`.dll` ↔ `.dll.disable`）不会丢。"""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            api, game, _service = self._api(root)
-            try:
-                api.adopt_existing()
-                (game / "Mods" / "FixtureMod.dll").write_bytes(b"locally rebuilt payload")
-
-                # 用**禁用后的文件名**去抑制：键仍然是身份形式，且文件名去掉 `.disable`
-                code = api.set_integrity_suppressed("Mods/FixtureMod.dll.disable", True)
-                self.assertTrue(code["ok"], code)
-                self.assertEqual(code["suppressed"], ["fixture.sprocket-mod:FixtureMod.dll"])
-
-                disabled = api.toggle_mod("Mods/FixtureMod.dll", False)
-                self.assertTrue(disabled["ok"], disabled)
-                self.assertTrue((game / "Mods" / "FixtureMod.dll.disable").is_file())
-
-                after_disable = api.get_installed()["installed"][0]
-                self.assertTrue(after_disable["suppressed"], "禁用之后抑制状态必须还在")
-                self.assertFalse(after_disable["corrupted"])
-
-                enabled = api.toggle_mod("Mods/FixtureMod.dll.disable", True)
-                self.assertTrue(enabled["ok"], enabled)
-                after_enable = api.get_installed()["installed"][0]
-                self.assertTrue(after_enable["suppressed"], "启用回来抑制状态仍然在")
-                self.assertFalse(after_enable["corrupted"])
-
-                removed = api.set_integrity_suppressed("Mods/FixtureMod.dll", False)
-                self.assertEqual(removed["suppressed"], [])
-                self.assertTrue(api.get_installed()["installed"][0]["corrupted"], "取消抑制后重新报红")
-            finally:
-                api.install_queue.close()
-                api.data.close()
-
-    def test_stale_suppression_entries_are_dropped_automatically(self) -> None:
-        """失效条目（包记录没了、路径也没了）在下次读取时自动从名单里清掉。"""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            api, game, _service = self._api(root)
-            try:
-                api.adopt_existing()
-                (game / "Mods" / "FixtureMod.dll").write_bytes(b"locally rebuilt payload")
-                self.assertTrue(api.set_integrity_suppressed("Mods/FixtureMod.dll", True)["ok"])
-
-                from sprocket_mod_manager.infrastructure.suppression_store import store_for
-
-                listing = store_for(game)
-                listing.save([*listing.load(), "gone.package:Gone.dll", "Mods/AlsoGone.dll"])
-
-                # 下一次读取（GUI 的 get_installed 路径）就该把死条目清掉
-                after = api.get_installed()
-                pruned = listing.load()
-            finally:
-                api.install_queue.close()
-                api.data.close()
-
-            self.assertEqual(pruned, ["fixture.sprocket-mod:FixtureMod.dll"],
-                             "只剩还有效的那条；包记录没了/路径没了的都被清掉")
-            self.assertTrue(after["installed"][0]["suppressed"], "有效条目继续生效")
 
     def test_disabling_a_mod_does_not_make_it_corrupted(self) -> None:
         """禁用只是改名：判定要照到 `.dll.disable`，不许把它当"读不到"→整包报损坏。

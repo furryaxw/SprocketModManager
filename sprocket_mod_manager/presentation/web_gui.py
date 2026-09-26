@@ -514,9 +514,6 @@ class ClientApi:
     def verify_installed(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.verify_installed(*args, **kwargs)
 
-    def set_integrity_suppressed(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._catalog_controller.set_integrity_suppressed(*args, **kwargs)
-
     def toggle_mod(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.toggle_mod(*args, **kwargs)
 

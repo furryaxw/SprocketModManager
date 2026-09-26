@@ -1,4 +1,4 @@
-"""完整性判定的离线契约：命中发布版本 / 无发布数据 / 损坏 / 抑制 / 读不出来。
+"""完整性判定的离线契约：命中发布版本 / 无发布数据 / 损坏 / 读不出来。
 
 判定是**实时派生**的（`application/integrity.py`），不写进安装记录，所以这里全部是纯函数测试：
 给一份状态视图 + 一份发布版本 hash 表 + 一个磁盘 hash 提供者，断言算出来的状态。
@@ -14,16 +14,11 @@ from sprocket_mod_manager.application.integrity import (
     STATUS_CORRUPTED,
     STATUS_LOCAL,
     STATUS_RELEASE,
-    STATUS_SUPPRESSED,
     STATUS_UNREADABLE,
     annotate,
     classify,
-    is_suppressed,
     package_status,
     published_hashes,
-    suppression_key,
-    suppression_keys,
-    suppression_report,
 )
 from sprocket_mod_manager.domain.models import RegistryPackage
 from sprocket_mod_manager.infrastructure.dll_metadata import cached_sha256
@@ -90,24 +85,19 @@ class ClassifyTests(unittest.TestCase):
         self.published = table[PACKAGE_ID]["fixture.dll"]
 
     def test_matching_any_published_release_is_healthy(self) -> None:
-        self.assertEqual(classify(V1_HASH, self.published, suppressed=False), (STATUS_RELEASE, "1.0.0"))
-        self.assertEqual(classify(V2_HASH.upper(), self.published, suppressed=False), (STATUS_RELEASE, "2.0.0"))
+        self.assertEqual(classify(V1_HASH, self.published), (STATUS_RELEASE, "1.0.0"))
+        self.assertEqual(classify(V2_HASH.upper(), self.published), (STATUS_RELEASE, "2.0.0"))
 
     def test_file_matching_no_release_is_corrupted(self) -> None:
         """本地自行构建的 DLL 也照此报红 。"""
-        self.assertEqual(classify(FOREIGN_HASH, self.published, suppressed=False), (STATUS_CORRUPTED, ""))
+        self.assertEqual(classify(FOREIGN_HASH, self.published), (STATUS_CORRUPTED, ""))
 
     def test_without_published_data_nothing_is_corrupted(self) -> None:
-        self.assertEqual(classify(FOREIGN_HASH, {}, suppressed=False), (STATUS_LOCAL, ""))
-        self.assertEqual(classify(FOREIGN_HASH, None, suppressed=False), (STATUS_LOCAL, ""))
+        self.assertEqual(classify(FOREIGN_HASH, {}), (STATUS_LOCAL, ""))
+        self.assertEqual(classify(FOREIGN_HASH, None), (STATUS_LOCAL, ""))
 
     def test_unreadable_file_is_broken(self) -> None:
-        self.assertEqual(classify(None, self.published, suppressed=False), (STATUS_UNREADABLE, ""))
-
-    def test_suppressed_beats_every_other_state(self) -> None:
-        self.assertEqual(classify(FOREIGN_HASH, self.published, suppressed=True), (STATUS_SUPPRESSED, ""))
-        self.assertEqual(classify(None, self.published, suppressed=True), (STATUS_SUPPRESSED, ""))
-        self.assertEqual(classify(V1_HASH, self.published, suppressed=True), (STATUS_SUPPRESSED, ""))
+        self.assertEqual(classify(None, self.published), (STATUS_UNREADABLE, ""))
 
 
 class PackageStatusTests(unittest.TestCase):
@@ -115,64 +105,9 @@ class PackageStatusTests(unittest.TestCase):
         self.assertEqual(package_status([STATUS_RELEASE, STATUS_CORRUPTED]), STATUS_CORRUPTED)
         self.assertEqual(package_status([STATUS_UNREADABLE]), STATUS_CORRUPTED)
 
-    def test_all_suppressed_is_suppressed(self) -> None:
-        self.assertEqual(package_status([STATUS_SUPPRESSED, STATUS_SUPPRESSED]), STATUS_SUPPRESSED)
-
-    def test_mixed_suppressed_and_local_still_reports_suppressed(self) -> None:
-        self.assertEqual(package_status([STATUS_SUPPRESSED, STATUS_LOCAL]), STATUS_SUPPRESSED)
-
     def test_no_release_match_is_local(self) -> None:
         self.assertEqual(package_status([STATUS_LOCAL, STATUS_LOCAL]), STATUS_LOCAL)
         self.assertEqual(package_status([]), STATUS_LOCAL)
-
-
-class SuppressionKeyTests(unittest.TestCase):
-    def test_key_follows_identity_when_the_file_is_owned(self) -> None:
-        self.assertEqual(suppression_key("Mods/SprocketModAPI.dll", "furryaxw.sprocket-mod-api"),
-                         "furryaxw.sprocket-mod-api:SprocketModAPI.dll")
-        self.assertEqual(suppression_key("Mods/SprocketModAPI.dll.disable", "furryaxw.sprocket-mod-api"),
-                         "furryaxw.sprocket-mod-api:SprocketModAPI.dll",
-                         "启用/禁用是同一个文件，键不变")
-
-    def test_key_falls_back_to_the_canonical_path_without_a_package(self) -> None:
-        self.assertEqual(suppression_key("UserLibs/UniverseLib.ML.IL2CPP.Interop.dll"), "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll")
-        self.assertEqual(suppression_key("Mods/Loose.dll.disable"), "Mods/Loose.dll")
-
-    def test_keys_normalize_both_forms(self) -> None:
-        keys = suppression_keys(["Mods/Loose.dll.disable", "pkg.Name:File.DLL"])
-        self.assertEqual(keys, {"mods/loose.dll", "pkg.name:file.dll"})
-
-    def test_is_suppressed_matches_the_canonical_key_only(self) -> None:
-        """同一个文件只有一把键：已归属用身份键，无归属用路径键，不做跨形式匹配。"""
-        owners = ["furryaxw.sprocket-mod-api"]
-        identity = suppression_keys(["furryaxw.sprocket-mod-api:SprocketModAPI.dll"])
-        self.assertTrue(is_suppressed("Mods/SprocketModAPI.dll", owners, identity))
-        self.assertFalse(is_suppressed("Mods/SprocketModAPI.dll", owners,
-                                       suppression_keys(["Mods/SprocketModAPI.dll"])),
-                         "有归属的文件写在路径上的条目属于失效")
-        self.assertTrue(is_suppressed("Mods/Loose.dll", [], suppression_keys(["Mods/Loose.dll"])),
-                        "无归属的本地文件就该用路径键")
-        self.assertFalse(is_suppressed("Mods/Other.dll", owners, identity))
-
-    def test_report_keeps_entries_whose_package_still_exists(self) -> None:
-        state = {
-            "files": {"Mods/SprocketModAPI.dll": {"owners": [PACKAGE_ID]}},
-            "packages": {PACKAGE_ID: {"files": ["Mods/SprocketModAPI.dll"]}},
-        }
-        report = suppression_report(state, [f"{PACKAGE_ID}:SprocketModAPI.dll", "Mods/Gone.dll"])
-        self.assertEqual(report["valid"], [f"{PACKAGE_ID}:SprocketModAPI.dll"])
-        self.assertEqual(report["stale"], ["Mods/Gone.dll"])
-
-    def test_report_marks_entries_of_removed_packages_stale(self) -> None:
-        state = {"files": {}, "packages": {}}
-        report = suppression_report(state, ["gone.package:Whatever.dll", "Mods/AlsoGone.dll"])
-        self.assertEqual(report["valid"], [])
-        self.assertEqual(report["stale"], ["gone.package:Whatever.dll", "Mods/AlsoGone.dll"])
-
-    def test_report_keeps_a_package_entry_even_if_that_file_moved_away(self) -> None:
-        """文件可能只是被手工挪走、下一次认领会挂回来：包记录还在就别清。"""
-        state = {"files": {}, "packages": {PACKAGE_ID: {"files": []}}}
-        self.assertEqual(suppression_report(state, [f"{PACKAGE_ID}:Anything.dll"])["valid"], [f"{PACKAGE_ID}:Anything.dll"])
 
 
 class DisabledFileTests(unittest.TestCase):
@@ -209,7 +144,6 @@ class DisabledFileTests(unittest.TestCase):
                 state,
                 game_dir=game,
                 published_by_package={PACKAGE_ID: {"disabled.dll": {digest: "1.0.0"}}},
-                suppressed=(),
                 hash_provider=cached_sha256,
             )
 
@@ -226,7 +160,6 @@ class DisabledFileTests(unittest.TestCase):
                 state,
                 game_dir=game,
                 published_by_package={},
-                suppressed=(),
                 hash_provider=cached_sha256,
             )
 
@@ -271,7 +204,6 @@ class AnnotateTests(unittest.TestCase):
                 state,
                 game_dir=Path(directory),
                 published_by_package={PACKAGE_ID: {"fixturemod.dll": {V1_HASH: "1.0.0"}}},
-                suppressed=(),
                 hash_provider=lambda path: V1_HASH if path.name == "FixtureMod.dll" else FOREIGN_HASH,
             )
 
@@ -291,28 +223,11 @@ class AnnotateTests(unittest.TestCase):
                 state,
                 game_dir=Path(directory),
                 published_by_package={PACKAGE_ID: {"fixturemod.dll": {V1_HASH: "1.0.0"}}},
-                suppressed=(),
                 hash_provider=lambda _path: FOREIGN_HASH,
             )
 
         self.assertEqual(state["files"]["Mods/FixtureMod.dll"]["integrity"], STATUS_CORRUPTED)
         self.assertTrue(state["packages"][PACKAGE_ID]["corrupted"])
-
-    def test_suppression_is_recorded_as_its_own_state(self) -> None:
-        state = self._state()
-        with tempfile.TemporaryDirectory() as directory:
-            annotate(
-                state,
-                game_dir=Path(directory),
-                published_by_package={PACKAGE_ID: {"fixturemod.dll": {V1_HASH: "1.0.0"}}},
-                suppressed=[f"{PACKAGE_ID}:FixtureMod.dll"],
-                hash_provider=lambda _path: FOREIGN_HASH,
-            )
-
-        entry = state["files"]["Mods/FixtureMod.dll"]
-        self.assertEqual(entry["integrity"], STATUS_SUPPRESSED, "抑制要能看出是'被抑制'而不是'正常'")
-        self.assertFalse(state["packages"][PACKAGE_ID]["corrupted"])
-        self.assertTrue(state["packages"][PACKAGE_ID]["suppressed"])
 
     def test_a_fileless_modloader_is_not_corrupted(self) -> None:
         """基础运行时不记逐文件清单：没有可比的磁盘文件，判定是 `local` 而不是损坏。"""
@@ -333,7 +248,6 @@ class AnnotateTests(unittest.TestCase):
                 state,
                 game_dir=Path(directory),
                 published_by_package={loader_id: {"melonloader.x64.zip": {V1_HASH: "0.7.3"}}},
-                suppressed=(),
                 hash_provider=lambda _path: None,
             )
 
@@ -349,7 +263,6 @@ class AnnotateTests(unittest.TestCase):
                 state,
                 game_dir=Path(directory),
                 published_by_package={PACKAGE_ID: {"fixture.dll.zip": {V1_HASH: "1.0.0"}}},
-                suppressed=(),
                 hash_provider=lambda _path: FOREIGN_HASH,
             )
 
@@ -370,7 +283,6 @@ class AnnotateTests(unittest.TestCase):
                 state,
                 game_dir=Path(directory),
                 published_by_package={PACKAGE_ID: {"fixturemod.dll": {V1_HASH: "1.0.0"}}},
-                suppressed=(),
                 hash_provider=provider,
                 hashes={"Mods/FixtureMod.dll": V1_HASH},
             )

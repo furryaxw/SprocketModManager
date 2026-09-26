@@ -115,8 +115,6 @@ class ConfigStore:
             for server in defaults["developer_servers"]
             if isinstance(server, dict)
         ]
-        # 抑制名单**不属于**管理器配置：它在游戏目录的 `SprocketModManager/suppression.json`
-        # （见 suppression_store，条目形如 `<package id>:<文件名>`）。
         return defaults
 
     def save(self, config: dict[str, Any]) -> None:

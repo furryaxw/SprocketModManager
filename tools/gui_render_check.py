@@ -53,8 +53,7 @@ INSTALLED_PAYLOAD = {
             "requested": True,
             "dependencies": [],
             "corrupted": False,
-            "suppressed": True,
-            "integrity": "suppressed",
+            "integrity": "release",
             "files": ["Mods/SprocketModAPI.dll"],
         },
     ],
@@ -329,7 +328,6 @@ window.tr = (key, values = {}) => {
         missingDepsCount: `${values.count} missing deps`, corrupted: "Corrupted", reinstall: "Reinstall",
         unrecognized: "Unrecognized", requested: "User-installed", dependency: "Installed dependency",
         enableMod: "Enable", disableMod: "Disable", disabledMod: "Disabled",
-        suppressCorruption: "Mute warning", unsuppressCorruption: "Unmute warning", suppressed: "Suppressed",
         requiresLabel: "Requires", missingLabel: "Missing", incompatibleLabel: "Incompatible", localOnly: "Local only",
     };
     return table[key] !== undefined ? table[key] : key;

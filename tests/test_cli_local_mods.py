@@ -141,28 +141,6 @@ class CliLocalModsTests(unittest.TestCase):
             self.assertFalse((game / "SprocketModManager" / "installed.json").read_text(encoding="utf-8").find("corrupted") >= 0,
                              "校验结果不许写回安装记录（判断永远是实时的）")
 
-    def test_suppress_and_unsuppress_write_the_game_side_list(self) -> None:
-        """抑制名单存在**游戏目录**的 `SprocketModManager/suppression.json`（AppData 里不留）。"""
-        with tempfile.TemporaryDirectory() as directory:
-            game, index, app = self._prepare(Path(directory))
-            listing = game / "SprocketModManager" / "suppression.json"
-
-            code, output = self._run(app, index, game, "suppress", "Mods/SprocketModAPI.dll")
-            self.assertEqual(code, 0, output)
-            self.assertEqual(json.loads(listing.read_text(encoding="utf-8"))["suppressed"],
-                             ["Mods/SprocketModAPI.dll"])
-
-            # `.dll.disable` 是同一个逻辑文件：抑制键归一成规范路径
-            code, output = self._run(app, index, game, "suppress", "Mods/FixtureMod.dll.disable")
-            self.assertEqual(code, 0, output)
-            self.assertEqual(json.loads(listing.read_text(encoding="utf-8"))["suppressed"],
-                             ["Mods/FixtureMod.dll", "Mods/SprocketModAPI.dll"])
-
-            code, output = self._run(app, index, game, "unsuppress", "Mods/SprocketModAPI.dll")
-            self.assertEqual(code, 0, output)
-            self.assertEqual(json.loads(listing.read_text(encoding="utf-8"))["suppressed"],
-                             ["Mods/FixtureMod.dll"])
-
     def test_deleted_managed_file_is_pruned_before_listing(self) -> None:
         """本地文件删了就不许再出现在 `installed` 里（纯扫描模型的底线）。"""
         with tempfile.TemporaryDirectory() as directory:

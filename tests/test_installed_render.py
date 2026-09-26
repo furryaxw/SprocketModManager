@@ -26,7 +26,6 @@ NODE = shutil.which("node")
 def payload(
         corrupted: bool = False,
         missing: bool = False,
-        suppressed: bool = False,
         packages: list | None = None,
         selection: list | None = None,
         action: str = "",
@@ -42,10 +41,10 @@ def payload(
         language: str = "",
 ) -> dict:
     """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
-    integrity = "corrupted" if corrupted else "suppressed" if suppressed else "release"
+    integrity = "corrupted" if corrupted else "release"
     installed_record = {
         "id": "furryaxw.sprocket-laser-rangefinder", "name": "SprocketLaserRangefinder", "version": "0.1.3",
-        "requested": True, "corrupted": corrupted, "suppressed": suppressed, "integrity": integrity,
+        "requested": True, "corrupted": corrupted, "integrity": integrity,
         "files": ["Mods/SprocketLaserRangefinder.dll"],
     }
     first_mod_dependencies = ["SprocketDepth"] if missing else []
