@@ -809,13 +809,6 @@ select option {
     color: var(--text-soft);
 }
 
-/* 被抑制 ≠ 正常：用中和色标出来，不跟"损坏"抢眼。 */
-.state-chip.suppressed {
-    color: #b9b3a4;
-    border-color: #5a564c;
-    background: #23231f;
-}
-
 .detail-panel {
     padding: 23px;
 }

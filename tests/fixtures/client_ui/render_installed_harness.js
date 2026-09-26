@@ -81,8 +81,6 @@ const elements = {
     "#installed-list": new FakeElement("div"),
     "#installed-count": new FakeElement("span"),
     "#installed-filter-all": new FakeElement("button"),
-    "#installed-filter-loaders": new FakeElement("button"),
-    "#installed-filter-mods": new FakeElement("button"),
     "#installed-filter-enabled": new FakeElement("button"),
     "#installed-filter-disabled": new FakeElement("button"),
     "#installed-filter-outdated": new FakeElement("button"),
@@ -154,6 +152,9 @@ const sandbox = {
     },
     $: (selector) => elements[selector] || null,
     $$: () => [],
+    // `beginInstall` 收尾会重画目录页；这个 harness 只画已安装页（也没加载 core.js），
+    // 给个没有容器的视图让它早退。
+    packageBrowserView: () => ({container: null, count: {textContent: ""}}),
     // 与 core.js 同一套版本比较：更新提示靠它判断「发布版本比已装版本新」。
     semverParts: (value) => {
         const match = String(value || "").match(/^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/);
@@ -182,12 +183,7 @@ const sandbox = {
             enableMod: "Enable",
             disableMod: "Disable",
             corrupted: "Corrupted",
-            suppressCorruption: "Mute warning",
-            unsuppressCorruption: "Unmute warning",
-            integritySuppressed: "Muted the integrity warning for {{name}}",
-            integrityUnsuppressed: "Restored the integrity warning for {{name}}",
             reinstall: "Reinstall",
-            reinstallUnavailable: "This package is not in the registry; cannot reinstall automatically",
             remove: "Remove",
             requiresLabel: "Requires",
             missingLabel: "Missing",
@@ -199,8 +195,6 @@ const sandbox = {
             invertSelection: "Invert selection",
             selectionCount: `${values.count} selected`,
             installedFilterAll: "All",
-            installedFilterLoaders: "Loaders",
-            installedFilterMods: "Mods",
             installedFilterEnabled: "Enabled",
             installedFilterDisabled: "Disabled",
             installedFilterOutdated: "Updates",
@@ -247,6 +241,21 @@ const sandbox = {
     callApi: async (...args) => {
         apiCalls.push({ kind: "call", args });
         if (args[0] === "toggle_mod") return { ok: true, toggled: args[1], restart_required: true };
+        // 重装按钮点下去会走真实的 `beginInstall`：给它一份能画出确认框的计划，后面的入队才看得见。
+        if (args[0] === "plan_install") {
+            return {
+                ok: true,
+                plans: (args[1] || []).map((id) => ({
+                    id,
+                    name: id,
+                    display_name: {en: id, zh: id},
+                    packages: [],
+                    displaces: [],
+                })),
+                recommendations: [],
+                failed: [],
+            };
+        }
         // 刷新必须回同样的 payload，否则会掩盖"操作后列表被清空"这类问题。
         if (args[0] === "get_installed") return { ok: true, ...payload };
         return { ok: true };
@@ -257,12 +266,20 @@ sandbox.globalThis = sandbox;
 
 const context = vm.createContext(sandbox);
 
-// `data.js`、`compatibility.js`、`modloaders.js` 与 `installs.js` 合成一个脚本再执行：页面上它们是
-// 分开的 `<script>`，但顶层的 `const`（三色常量、数据镜像）不跨脚本共享，合成后才与页面里的可见性一致。
-const source = ["data.js", "compatibility.js", "modloaders.js", "installs.js"]
+// `data.js`、`compatibility.js`、`catalog.js`、`modloaders.js` 与 `installs.js` 合成一个脚本再执行：
+// 页面上它们是分开的 `<script>`，但顶层的 `const`（三色常量、数据镜像）不跨脚本共享，合成后才与
+// 页面里的可见性一致。`catalog.js` 是重装按钮的落点 —— 计划确认框与版本选择器都在那里。
+const source = ["data.js", "compatibility.js", "catalog.js", "modloaders.js", "installs.js"]
     .map((name) => fs.readFileSync(path.join(clientUiDir, "js", name), "utf8"))
     .join("\n");
 vm.runInContext(source, context, { filename: "installs.js" });
+
+// 这个 harness 只画已安装页：双击的跳转去处换成替身 —— 真的 `focusPackage` 要摸目录页的搜索框与
+// 筛选器，那是目录页自己 harness 的事。这里只记下"跳到了哪个包"。
+context.focusPackage = async (packageId) => {
+    apiCalls.push({ kind: "focus", id: String(packageId) });
+    return true;
+};
 
 // 已安装页的读数和线上一样由**数据层推来**：这里用同一条入口写进镜像，页面只读镜像。
 vm.runInContext(
@@ -319,7 +336,7 @@ function serialize(element) {
 
 const rows = elements["#installed-list"].children.map(serialize);
 
-// 触发启用/禁用与抑制按钮，验证它们真的带着正确路径与目标状态调用后端。
+// 触发启用/禁用与重装按钮，验证它们真的带着正确路径与目标状态调用后端。
 function collectButtons(element, found = []) {
     if (!element || element.tagName === "#text") return found;
     if (element.tagName === "button" && Object.keys(element.listeners).length > 0) found.push(element);
@@ -327,7 +344,7 @@ function collectButtons(element, found = []) {
     return found;
 }
 
-const CLICKABLE = new Set(["Enable", "Disable", "Mute warning", "Unmute warning"]);
+const CLICKABLE = new Set(["Enable", "Disable", "Reinstall"]);
 const clicks = [];
 // 批量操作单独跑时不点行内按钮：否则行内点击的 API 调用会和批量操作的混在一起。
 if (!payload.action) {
@@ -371,7 +388,7 @@ setImmediate(() => {
             },
             invertDisabled: Boolean(elements["#invert-selection"].disabled),
             filters: Object.fromEntries(
-                ["all", "loaders", "mods", "enabled", "disabled", "outdated", "incompatible"].map((key) => [
+                ["all", "enabled", "disabled", "outdated", "incompatible"].map((key) => [
                     key,
                     {
                         text: elements[`#installed-filter-${key}`].textContent,

@@ -87,12 +87,12 @@ class ReadingAgreementTests(unittest.TestCase):
 
     @staticmethod
     def _installed_loaders(api: ClientApi) -> set[str]:
-        """已安装页那份读数里被标成加载器的包。"""
+        """已安装那份读数里的基础运行时（种类由数据层给出：`kind`）。"""
         payload = api.data.get("installed") or {}
         return {
             str(item["id"])
             for item in payload.get("installed", [])
-            if item.get("loader")
+            if item.get("kind") == "modloader"
         }
 
     @staticmethod

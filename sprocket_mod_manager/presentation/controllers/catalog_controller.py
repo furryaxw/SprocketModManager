@@ -279,21 +279,18 @@ class CatalogController(ApiController):
             package_id: str,
             info: dict[str, Any],
     ) -> dict[str, Any]:
-        """这一条是什么：加载器还是模组。
+        """这一条是什么种类。
 
         注册表知道就说注册表的（包自己声明的 `kind`），不知道的（私有包、记录里留下的旧条目）退回记录里的
-        `kind`。界面按这个事实分类与筛选 —— 不靠"名字看起来像加载器"这种猜法。
+        `kind`。界面按这个事实分类 —— 不靠"名字看起来像加载器"这种猜法。
         """
         registry = getattr(service, "registry", None)
         kind = ""
-        package = None
         if registry is not None and registry.has_package(package_id):
-            package = registry.get(package_id)
-            kind = str(package.kind)
+            kind = str(registry.get(package_id).kind)
         if not kind:
             kind = str(info.get("kind") or "")
-        loader = bool(package.is_loader) if package is not None else kind in LOADER_KINDS
-        return {"kind": kind, "loader": loader}
+        return {"kind": kind}
 
     def _snapshot(self, service: ModManagerService) -> dict[str, Any]:
         """一次刷新只读一次安装记录、只扫一遍磁盘。

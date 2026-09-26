@@ -240,24 +240,82 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertIn("selected", selected["className"])
         self.assertTrue(selected["children"][0]["checked"])
 
-    def test_corrupted_row_shows_chip_and_reinstall(self) -> None:
-        """已损坏状态：芯片排在形态之前，并提供「重装/更新」和「抑制提示」。"""
-        result = self._render(corrupted=True)
+    def test_corrupted_row_shows_the_chip_and_a_reinstall_button(self) -> None:
+        """已损坏：芯片排在形态之前，重装按钮排在卸载之前。"""
+        result = self._render(
+            corrupted=True,
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
+        )
         actions = result["rows"][0]["children"][2]
         labels = [child["text"] for child in actions["children"]]
-        self.assertEqual(labels, ["Corrupted", "Mods", "Disable", "Reinstall", "Mute warning", "Remove"],
-                         "损坏芯片在形态芯片之前，重装/抑制按钮在卸载之前")
+        self.assertEqual(labels, ["Corrupted", "Mods", "Disable", "Reinstall", "Remove"],
+                         "损坏芯片在形态芯片之前，重装按钮在卸载之前")
         reinstall = next(child for child in actions["children"] if child["text"] == "Reinstall")
-        self.assertTrue(reinstall["disabled"], "注册表里没有这个包时不能假装能重装")
-        mute = next(child for child in actions["children"] if child["text"] == "Mute warning")
-        self.assertIs(mute["disabled"], False, "抑制是纯本地开关，随时可用")
+        self.assertIs(reinstall["disabled"], False, "来源里有这个包就能重装")
+        self.assertEqual(reinstall["className"], "primary-button", "损坏行上重装是主按钮")
 
-    def test_suppressed_row_has_no_chip_but_still_offers_the_unmute_button(self) -> None:
-        """被抑制的行不出芯片，但仍靠「取消抑制」按钮区别于正常行。"""
-        result = self._render(suppressed=True)
-        actions = result["rows"][0]["children"][2]
+    def test_reinstalling_a_corrupted_row_overwrites_in_one_step(self) -> None:
+        """损坏的行点重装：要一份「已装同一版也给」的计划，入队时带上覆盖权限。"""
+        result = self._render(
+            corrupted=True,
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
+        )
+
+        self.assertEqual(self._plan_calls(result), [
+            ["plan_install", ["furryaxw.sprocket-laser-rangefinder"], {"furryaxw.sprocket-laser-rangefinder": "0.1.3"}, True],
+        ])
+        self.assertEqual(self._enqueue_calls(result), [
+            ["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], True, {"furryaxw.sprocket-laser-rangefinder": "0.1.3"}, True],
+        ])
+
+    def test_reinstalling_a_healthy_row_asks_before_overwriting(self) -> None:
+        """没被改动过的行照常重装，但不带覆盖权限：冲突仍由后端拦下来。"""
+        result = self._render(
+            packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
+        )
+
+        self.assertEqual(
+            self._enqueue_calls(result)[0][2], False,
+            "没标记损坏就不该绕过冲突保护",
+        )
+
+    def test_a_row_matched_only_by_its_registry_id_can_be_reinstalled(self) -> None:
+        """没有安装归属、但扫描时对上了注册表的行也有来源，可以重装。"""
+        result = self._render(
+            packages=[{"id": "furryaxw.cannon-sound-pool-fix", "release": {"version": "1.2.0"}}],
+        )
+        actions = result["rows"][1]["children"][2]
         labels = [child["text"] for child in actions["children"]]
-        self.assertEqual(labels, ["Mods", "Disable", "Unmute warning", "Remove"])
+        self.assertIn("Reinstall", labels)
+        self.assertEqual(
+            self._plan_calls(result)[0][1], ["furryaxw.cannon-sound-pool-fix"],
+        )
+
+    def test_a_row_without_any_source_has_no_reinstall_button(self) -> None:
+        """纯本地 DLL（记录与注册表都没有它）没有来源，行上不摆重装按钮。"""
+        result = self._render()
+
+        self.assertEqual([label for label in self._row_labels(result, 2) if label == "Reinstall"], [])
+
+    @staticmethod
+    def _row_labels(result: dict, index: int) -> list:
+        return [child["text"] for child in result["rows"][index]["children"][2]["children"]]
+
+    @staticmethod
+    def _plan_calls(result: dict) -> list:
+        return [
+            entry["args"]
+            for entry in result["apiCalls"]
+            if entry.get("kind") == "call" and entry["args"][0] == "plan_install"
+        ]
+
+    @staticmethod
+    def _enqueue_calls(result: dict) -> list:
+        return [
+            entry["args"]
+            for entry in result["apiCalls"]
+            if entry.get("kind") == "call" and entry["args"][0] == "enqueue_install"
+        ]
 
     def test_newer_release_shows_a_chip_while_an_equal_one_does_not(self) -> None:
         """新版本提示只对「发布版本比安装记录新」的行出芯片。"""
@@ -272,17 +330,6 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         library = self._render(packages=[{"id": "sinai.universelib", "release": {"version": "2.0.0"}}])
         third = [child["text"] for child in library["rows"][2]["children"][2]["children"]]
         self.assertNotIn("Version 2.0.0 available", third, "纯本地库没有安装记录，不该报更新")
-
-    def test_suppress_button_calls_the_api_with_the_path(self) -> None:
-        result = self._render(corrupted=True)
-        self.assertIn("Mute warning", result["clickedButtons"])
-        calls = [
-            entry["args"]
-            for entry in result["apiCalls"]
-            if entry["kind"] == "call" and entry["args"][0] == "set_integrity_suppressed"
-        ]
-        self.assertEqual(calls, [["set_integrity_suppressed", "Mods/SprocketLaserRangefinder.dll", True]])
-        self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
 
     def test_missing_dependency_is_rendered_from_local_metadata(self) -> None:
         """依赖缺口来自 DLL 元数据，行里要看得见，标题也要给总数。"""
@@ -392,66 +439,71 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
         filters = self._render(packages=[package])["toolbar"]["filters"]
         self.assertEqual(filters["all"], {"text": "All (3)", "active": True})
-        self.assertEqual(filters["loaders"], {"text": "Loaders (0)", "active": False})
-        self.assertEqual(filters["mods"], {"text": "Mods (3)", "active": False})
         self.assertEqual(filters["enabled"], {"text": "Enabled (2)", "active": False})
         self.assertEqual(filters["disabled"], {"text": "Disabled (1)", "active": False})
         self.assertEqual(filters["outdated"], {"text": "Updates (1)", "active": False})
         self.assertEqual(filters["incompatible"], {"text": "Incompatible (0)", "active": False})
 
-    def test_the_loaders_filter_keeps_only_what_the_data_layer_calls_a_loader(self) -> None:
-        """加载器与模组分得开：事实来自数据层（每条记录带 `loader`），界面不靠文件名猜。"""
-
-        def record(package_id: str, **overrides) -> dict:
-            base = {
-                "id": package_id, "name": package_id, "version": "1.0.0", "requested": True,
-                "corrupted": False, "suppressed": False, "integrity": "release", "files": [],
-            }
-            base.update(overrides)
-            return base
-
-        mod = {
-            "path": "Mods/SprocketLaserRangefinder.dll",
-            "name": "SprocketLaserRangefinder.dll",
-            "display_name": "Sprocket Laser Rangefinder",
-            "version": "0.1.3",
-            "authors": ["furryAxw"],
-            "kind": "Mods",
-            "disabled": False,
-            "registry_id": "furryaxw.sprocket-laser-rangefinder",
-            "installed_package_id": "furryaxw.sprocket-laser-rangefinder",
-            "assembly_name": "SprocketLaserRangefinder",
-            "required_dependencies": [],
-            "missing_dependencies": [],
-            "incompatible_assemblies": [],
-            "sha256": "",
-            "error": "",
+    def test_a_patch_package_the_scan_cannot_see_still_gets_a_row(self) -> None:
+        """补丁落在 `BepInEx/core` 这类不是模组目录的位置：按安装记录补一行，否则装完没入口。"""
+        package_id = "hans21223.sprocket-mod-loader"
+        record = {
+            "id": package_id, "name": "SprocketModLoader", "version": "1.0.0",
+            "requested": True, "kind": "patch", "corrupted": False, "integrity": "release",
+            "files": ["BepInEx/core/Il2CppInterop.Runtime.dll"],
         }
-        bridge_id = "1499501762.bepinex-melonloader-loader"
-        bridge = {
-            **mod,
-            "path": "BepInEx/plugins/MLLoader.dll",
-            "name": "MLLoader.dll",
-            "display_name": "MLLoader",
-            "registry_id": bridge_id,
-            "installed_package_id": bridge_id,
-        }
-        records = [
-            record("furryaxw.sprocket-laser-rangefinder"),
-            record(bridge_id, kind="loaderbridge", loader=True),
-        ]
+        result = self._render(
+            local_mods=[],
+            installed=[record],
+            packages=[{
+                "id": package_id, "name": "SprocketModLoader",
+                "display_name": {"en": "Sprocket Mod Loader", "zh": "Sprocket 模组加载器"},
+                "release": {"version": "1.0.0"},
+            }],
+        )
 
-        every = self._render(local_mods=[mod, bridge], installed=records)["toolbar"]["filters"]
-        self.assertEqual(every["loaders"]["text"], "Loaders (1)")
-        self.assertEqual(every["mods"]["text"], "Mods (1)")
+        self.assertEqual(len(result["rows"]), 1)
+        row = result["rows"][0]
+        self.assertEqual(row["className"], "data-row selectable")
+        metadata = " | ".join(child["text"] for child in row["children"][1]["children"])
+        self.assertIn(package_id, metadata)
+        self.assertIn("1.0.0", metadata)
+        labels = [child["text"] for child in row["children"][2]["children"]]
+        self.assertIn("patch", labels, "种类芯片来自安装记录")
+        self.assertIn("Reinstall", labels)
+        self.assertIn("Remove", labels)
 
-        only_loaders = self._render(local_mods=[mod, bridge], installed=records, filter_key="loaders")
-        self.assertEqual(len(only_loaders["rows"]), 1, "有 loader 事实的那一行才留下")
-        self.assertIn("MLLoader", json.dumps(only_loaders["rows"], ensure_ascii=False))
+    def test_a_modloader_record_is_not_a_row(self) -> None:
+        """基础运行时只在加载器页与左下角出现：它不进已安装页，扫描为空时也一样。"""
+        result = self._render(
+            local_mods=[],
+            installed=[{
+                "id": "bepinex.bepinex-be", "name": "BepInEx", "version": "6.0.0-be.788",
+                "requested": True, "kind": "modloader", "corrupted": False,
+                "integrity": "local", "files": [],
+            }],
+            packages=[{
+                "id": "bepinex.bepinex-be", "name": "BepInEx",
+                "release": {"version": "6.0.0-be.788"},
+            }],
+        )
 
-        only_mods = self._render(local_mods=[mod, bridge], installed=records, filter_key="mods")
-        self.assertEqual(len(only_mods["rows"]), 1)
-        self.assertIn("Sprocket Laser Rangefinder", json.dumps(only_mods["rows"], ensure_ascii=False))
+        self.assertEqual(len(result["rows"]), 1)
+        self.assertEqual(result["rows"][0]["className"], "empty-list")
+
+    def test_a_patch_the_scan_already_covers_does_not_get_a_second_row(self) -> None:
+        """扫描行已经代表这个包时不补行：同一件事不出现两遍。"""
+        package_id = "furryaxw.sprocket-laser-rangefinder"
+        result = self._render(
+            installed=[{
+                "id": package_id, "name": "SprocketLaserRangefinder", "version": "0.1.3",
+                "requested": True, "kind": "patch", "corrupted": False,
+                "integrity": "release", "files": ["Mods/SprocketLaserRangefinder.dll"],
+            }],
+            packages=[{"id": package_id, "release": {"version": "0.1.3"}}],
+        )
+
+        self.assertEqual(len(result["rows"]), 3, "还是磁盘上那三个文件")
 
     def test_filter_hides_rows_that_do_not_match(self) -> None:
         disabled = self._render(filter_key="disabled")
@@ -478,7 +530,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["className"], "empty-list")
         self.assertEqual(result["rows"][0]["children"][0]["text"], "No mods match this filter")
         self.assertEqual(result["count"], "3 detected mods", "空态也不该说磁盘上没有模组")
-        self.assertEqual(len(result["toolbar"]["filters"]), 7)
+        self.assertEqual(len(result["toolbar"]["filters"]), 5)
 
     def test_double_clicking_a_catalog_row_opens_it_in_the_catalog(self) -> None:
         """双击那一行的去处是模组目录页：切过去并选中这个包。"""

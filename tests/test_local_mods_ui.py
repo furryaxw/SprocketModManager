@@ -22,7 +22,7 @@ class LocalModsClientUiTests(unittest.TestCase):
     def test_installed_page_consumes_local_metadata(self) -> None:
         # 这一份读数由数据层推来、页面只读镜像（不在页面上从接口返回值另存一份）。
         self.assertIn("localMods: () => dataValue(\"installed\")?.local_mods || []", self.data)
-        self.assertIn("const scanned = state.localMods || []", self.installs)
+        self.assertIn("const scanned = (state.localMods || []).map", self.installs)
         self.assertIn("function renderScannedModRow(mod)", self.installs)
         self.assertIn("function renderLegacyModRow(item)", self.installs)
         self.assertIn("local?.display_name", self.installs)

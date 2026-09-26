@@ -361,7 +361,7 @@ class EnvironmentApiTests(unittest.TestCase):
         api.data.close()
 
     def test_installed_rows_say_what_they_are(self) -> None:
-        """已安装读数每条都带 `kind` / `loader`：加载器与模组的分野由数据层给出，界面不猜。"""
+        """已安装读数每条都带 `kind`：种类由数据层给出，界面不猜。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api = self._api(root, None)
@@ -372,7 +372,7 @@ class EnvironmentApiTests(unittest.TestCase):
                     installed={
                         LOADER_ID: {"name": "MelonLoader", "version": "0.7.3", "files": []},
                         "test.mod": {"name": "TestMod", "version": "1.0.0", "files": []},
-                        # 注册表里没有、记录里也没写 kind 的（私有包之类）：说不出是什么，就不假装是加载器。
+                        # 注册表里没有、记录里也没写 kind 的（私有包之类）：说不出是什么，就说空。
                         "someone.private": {"name": "Private", "version": "2.0.0", "files": []},
                         # 记录里留了 kind、但注册表已经不认它了：按记录说。
                         "old.bridge": {
@@ -385,11 +385,8 @@ class EnvironmentApiTests(unittest.TestCase):
 
         by_id = {row["id"]: row for row in rows}
         self.assertEqual(by_id[LOADER_ID]["kind"], "modloader", "注册表说它是基础运行时")
-        self.assertTrue(by_id[LOADER_ID]["loader"])
-        self.assertFalse(by_id["test.mod"]["loader"], "注册表里没有它 → 不是加载器")
-        self.assertEqual(by_id["test.mod"]["kind"], "")
-        self.assertFalse(by_id["someone.private"]["loader"], "什么都不知道时不假装是加载器")
-        self.assertTrue(by_id["old.bridge"]["loader"], "注册表不认了，就按记录里的 kind 说")
+        self.assertEqual(by_id["test.mod"]["kind"], "", "注册表里没有它 → 说不出种类")
+        self.assertEqual(by_id["old.bridge"]["kind"], "loaderbridge", "注册表不认了，就按记录里的 kind 说")
 
     @staticmethod
     def _wait_for_push(pushed: list[dict], timeout: float = 5.0) -> bool:
