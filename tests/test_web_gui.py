@@ -212,7 +212,7 @@ class WebGuiTests(unittest.TestCase):
             service = SimpleNamespace(
                 registry=Registry([package]),
                 github=SimpleNamespace(install_assets=lambda _package, release: release.assets),
-                installed=lambda _game_path, *, suppressed=(): {},
+                installed=lambda _game_path: {},
             )
             api = ClientApi("0.3.2", app_dir=Path(directory))
             try:

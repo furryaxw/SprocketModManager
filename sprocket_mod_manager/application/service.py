@@ -49,8 +49,6 @@ class ModManagerService:
         self.environment: CapabilityEnvironment | None = None
         # 上一次安装落盘的文件数：安装记录不再逐文件记账，调用方从这里拿加载器页要的写入数。
         self.last_install_files = 0
-        # 上一次标注里失效的抑制条目（由调用方写回游戏目录的 suppression.json）。
-        self._stale_suppressions: list[str] = []
 
     def _configure_cache_for(self, game_dir: Path) -> None:
         """把元数据缓存挂到该游戏的独立文件；游戏没变就不重挂（重挂会丢掉内存缓存）。"""
@@ -266,7 +264,7 @@ class ModManagerService:
             table[package.id] = tuple(directories)
         return table
 
-    def installed(self, game_dir: Path, *, suppressed: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
+    def installed(self, game_dir: Path) -> dict[str, dict[str, Any]]:
         """已安装包（磁盘优先），带**实时**的完整性判定。
 
         读取前先与磁盘对账：手工删掉/改名的 DLL 对应的记录会被清掉。这样列表永远来自
@@ -281,7 +279,7 @@ class ModManagerService:
         except (ModManagerError, OSError, ValueError) as exc:
             LOGGER.warning("could not reconcile install state with %s: %s", game_dir, exc)
         state = installer.state_store.load()
-        self._annotate_integrity(state, game_dir, suppressed=suppressed)
+        self._annotate_integrity(state, game_dir)
         return state["packages"]
 
     def modloader_status(self, game_dir: Path | None) -> dict[str, dict[str, Any]]:
@@ -318,16 +316,7 @@ class ModManagerService:
             }
         return status
 
-    def stale_suppressions(self) -> list[str]:
-        """上一次 `installed()` / `verify_installed()` 里**已失效**的抑制条目。
-
-        抑制名单存在**游戏目录**的 `SprocketModManager/suppression.json`（见 `suppression_store`），
-        这一层不写它；调用方（GUI/CLI）拿到这份清单后自己把失效条目从名单里删掉。
-        失效 = 包记录没了、路径也没了。
-        """
-        return list(getattr(self, "_stale_suppressions", ()) or ())
-
-    def verify_installed(self, game_dir: Path, *, suppressed: Iterable[str] = ()) -> dict[str, Any]:
+    def verify_installed(self, game_dir: Path) -> dict[str, Any]:
         """强制重算每个已安装文件的 SHA-256 并报告（**不写状态文件**）。
 
         `corrupted` = 有发布数据、但磁盘内容不匹配任何发布版本；`modified` = 与安装记录不一致；
@@ -337,7 +326,7 @@ class ModManagerService:
         installer.reconcile(game_dir, modloaders=self._modloader_ids())
         report = installer.verify(game_dir)
         state = installer.state_store.load()
-        self._annotate_integrity(state, game_dir, suppressed=suppressed, hashes=report["hashes"])
+        self._annotate_integrity(state, game_dir, hashes=report["hashes"])
         corrupted = sorted(
             relative
             for relative, entry in state["files"].items()
@@ -357,19 +346,15 @@ class ModManagerService:
             state: dict[str, Any],
             game_dir: Path,
             *,
-            suppressed: Iterable[str] = (),
             hashes: Mapping[str, str] | None = None,
     ) -> None:
         annotate(
             state,
             game_dir=game_dir,
             published_by_package=published_hashes(self.registry.packages if self.registry else None),
-            suppressed=suppressed,
             hash_provider=cached_sha256,
             hashes=hashes,
         )
-        report = state.get("suppression")
-        self._stale_suppressions = list(report.get("stale", ())) if isinstance(report, dict) else []
 
     def adopt_existing(self, game_dir: Path) -> tuple[AdoptionRecord, ...]:
         registry = self._require_registry()

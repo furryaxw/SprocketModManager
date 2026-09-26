@@ -11,16 +11,14 @@ from ..api_support import release_data as _release_data, source_from_config as _
 from ...application.catalog import load_catalog
 from ...application.data_hub import KEY_CATALOG, KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS
 from ...application.identifiers import scan_targets, toggle_directories
-from ...application.integrity import suppression_key, suppression_key_of, suppression_keys
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
 from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import CatalogBusyError, ModManagerError, ModToggleError
-from ...domain.models import LOADER_KINDS, RegistryPackage, ReleaseInfo
+from ...domain.models import RegistryPackage, ReleaseInfo
 from ...infrastructure.config import effective_game_path, effective_index_url
 from ...infrastructure.desktop import reveal_in_file_manager
 from ...infrastructure.dll_metadata import MELON_KIND_MODS, flush_metadata_cache
-from ...infrastructure.suppression_store import store_for
 from ...infrastructure.mod_toggle import (
     canonical_relative,
     direct_files,
@@ -202,40 +200,12 @@ class CatalogController(ApiController):
             "requested": bool(info.get("requested")),
             "dependencies": list(info.get("dependencies", ())),
             # `corrupted` 每次刷新现场算出来（磁盘 hash vs 发布版本 hash）；
-            # `integrity` 给出更细的状态（release/local/suppressed/...）。
+            # `integrity` 给出更细的状态（release/local/unreadable/...）。
             "corrupted": bool(info.get("corrupted")),
             "integrity": str(info.get("integrity", "")),
-            "suppressed": bool(info.get("suppressed")),
-            # 受管文件（规范相对路径）。界面用它来"抑制某个文件的损坏提示"——
-            # 抑制是 per-file 的，没有路径就只能看不能操作。
+            # 受管文件（规范相对路径）。
             "files": [str(item) for item in (info.get("files") or ()) if isinstance(item, str)],
         }
-
-    def _suppressed_paths(self) -> list[str]:
-        """用户显式抑制损坏提示的条目：存在**游戏目录**的 `SprocketModManager/suppression.json`。
-
-        条目两种形式：`<package id>:<文件名>`（已归属的文件）与规范相对路径（无归属的本地文件）。
-        """
-        game_path = self._resolved_game_path_or_none()
-        if game_path is None:
-            return []
-        return store_for(game_path).load()
-
-    def _prune_suppressions(self, service: ModManagerService) -> None:
-        """把**已失效**的抑制条目从名单里删掉（包记录没了、路径也没了；见 `integrity.suppression_report`）。"""
-        stale = set(service.stale_suppressions()) if hasattr(service, "stale_suppressions") else set()
-        if not stale:
-            return
-        game_path = self._resolved_game_path_or_none()
-        if game_path is None:
-            return
-        store = store_for(game_path)
-        entries = store.load()
-        kept = [item for item in entries if item.strip() not in stale]
-        if len(kept) == len(entries):
-            return
-        store.save(kept)
-        LOGGER.info("dropped %d stale corruption suppression(s)", len(entries) - len(kept))
 
     def _installed(self, service: ModManagerService | None = None) -> dict[str, dict[str, Any]]:
         value = effective_game_path(self.config)
@@ -245,9 +215,7 @@ class CatalogController(ApiController):
         if not (path / "Sprocket.exe").is_file():
             return {}
         target = service or self.service
-        records = target.installed(path, suppressed=self._suppressed_paths())
-        self._prune_suppressions(target)
-        return records
+        return target.installed(path)
 
     def _current_service(self) -> ModManagerService:
         with self._state_lock:
@@ -337,51 +305,6 @@ class CatalogController(ApiController):
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="adopt_existing_failed")
 
-    def set_integrity_suppressed(self, path: str = "", suppressed: bool = True) -> dict[str, Any]:
-        """把某个文件加入/移出「抑制损坏提示」名单（存**游戏目录**的 `SprocketModManager/suppression.json`）。
-
-        抑制只影响**提示**：判定仍然是实时的，界面要把"被抑制"和"正常"区分开。
-        键跟着**身份**走：文件有归属就用 `<package id>:<文件名>`，无归属才用规范相对路径 ——
-        这样改名、在 `Mods/` 与 `Plugins/` 之间挪动、被重新认领都不会丢抑制。
-        """
-        try:
-            relative = canonical_relative(str(path or "").strip())
-            if not relative:
-                raise ModToggleError("需要给出要抑制的文件路径")
-            game_path = self._resolved_game_path()
-
-            key = suppression_key_of(relative, [self._package_for_file(relative)])
-            store = store_for(game_path)
-            entries = store.load()
-            # 同一个文件的键只有一种写法：删就删那一把键。
-            kept = [item for item in entries if suppression_keys([item]) != suppression_keys([key])]
-            if suppressed:
-                kept.append(key)
-            store.save(kept)
-            saved = store.load()
-            LOGGER.info("corruption suppression updated path=%s key=%s suppressed=%s", relative, key, suppressed)
-            # 改的是「已安装」那份数据的完整性状态：让数据层自己重算，不在返回值里另带一份读数。
-            self.data_changed(KEY_INSTALLED)
-            return self._success(suppressed=saved)
-        except (ModManagerError, OSError, ValueError) as exc:
-            return self._failure(exc, code="suppress_integrity_failed")
-
-    def _package_for_file(self, relative: str) -> str:
-        """这个受管文件属于哪个包（没有归属就返回空，抑制键退回路径形式）。"""
-        try:
-            for package_id, info in self._installed(self._current_service()).items():
-                for item in info.get("files") or ():
-                    if isinstance(item, str) and canonical_relative(item) == relative:
-                        return str(package_id)
-        except (ModManagerError, OSError, ValueError) as exc:
-            LOGGER.warning("could not resolve the owner of %s: %s", relative, exc)
-        return ""
-
-    @staticmethod
-    def _same_suppression(entry: str, key: str, relative: str) -> bool:
-        """`entry` 与 `key` 是否是同一把键（同一个文件的抑制键只有一种写法）。"""
-        return suppression_keys([str(entry).strip()]) == suppression_keys([key])
-
     def verify_installed(self) -> dict[str, Any]:
         """逐文件强制重算 SHA-256 并报告（不写状态文件；判断是实时的）。"""
         try:
@@ -389,10 +312,7 @@ class CatalogController(ApiController):
             if not self._mutation_lock.acquire(blocking=False):
                 raise ModToggleError("另一个模组操作正在进行，请稍后再试")
             try:
-                result = self._current_service().verify_installed(
-                    game_path,
-                    suppressed=self._suppressed_paths(),
-                )
+                result = self._current_service().verify_installed(game_path)
             finally:
                 self._mutation_lock.release()
             # 校验改的是「已安装」那份数据的完整性状态：让数据层自己重算一遍，
@@ -637,7 +557,7 @@ class CatalogController(ApiController):
         return game_path
 
     def _resolved_game_path_or_none(self) -> Path | None:
-        """读抑制名单时用：路径还没配好就当作"没有名单"，不抛异常。"""
+        """路径还没配好就返回 `None`，不抛异常（调用方多半只是想读一份可选的读数）。"""
         try:
             return self._resolved_game_path()
         except ModToggleError:

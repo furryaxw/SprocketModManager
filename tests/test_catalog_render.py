@@ -122,7 +122,6 @@ def installed_record(package_id: str, version: str = "1.0.0", **overrides) -> di
         "requested": True,
         "corrupted": False,
         "integrity": "release",
-        "suppressed": False,
         "files": [],
     }
     record.update(overrides)
@@ -679,7 +678,7 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         """持久的问题（文件损坏）留在状态栏上；一次操作失败只走 toast。"""
         broken = self._render(installed=[{
             "id": "test.fine", "name": "test.fine", "version": "1.0.0", "requested": True,
-            "corrupted": True, "suppressed": False, "integrity": "corrupted", "files": [],
+            "corrupted": True, "integrity": "corrupted", "files": [],
         }])["statusbar"]
 
         self.assertEqual(broken["text"], "Error")
