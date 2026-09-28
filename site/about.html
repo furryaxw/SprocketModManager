@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <meta name="theme-color" content="#111415"/>
+    <title>About · SprocketModManager</title>
+    <link rel="icon" type="image/png" href="./favicon.png"/>
+    <link rel="apple-touch-icon" href="./favicon.png"/>
+    <link rel="preconnect" href="https://github.com"/>
+    <link rel="stylesheet" href="./styles.css"/>
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+    <script src="./js/i18n.js" defer></script>
+    <script src="./js/about.js" defer></script>
+</head>
+<body class="about-page">
+<header class="topbar">
+    <a class="brand" href="./" aria-label="SprocketModManager">
+        <span class="brand-mark"><img src="./favicon.png" alt=""/></span>
+        <span class="brand-copy"><strong>SPROCKET</strong><small>MODMANAGER</small></span>
+    </a>
+    <nav class="top-actions" aria-label="Primary navigation" data-i18n-aria="primaryNav">
+        <div class="language-switch" role="group" aria-label="Language" data-i18n-aria="language">
+            <button type="button" data-language="zh">中文</button>
+            <button type="button" data-language="en">EN</button>
+        </div>
+        <a class="icon-command" href="./" title="Mod catalog" data-i18n-title="catalogTitle">
+            <i data-lucide="layout-list"></i><span class="desktop-label" data-i18n="catalogTitle">Mod catalog</span>
+        </a>
+        <a class="icon-command" href="https://github.com/furryaxw/SprocketModManager/releases/latest/download/SprocketModManager.exe"
+           target="_blank" rel="noreferrer" title="Download client" data-i18n-title="downloadClient">
+            <i data-lucide="download"></i><span class="desktop-label" data-i18n="downloadClient">Download client</span>
+        </a>
+    </nav>
+</header>
+
+<main class="workspace about-workspace">
+    <section class="catalog-pane">
+        <header class="catalog-header">
+            <div>
+                <p class="eyebrow" data-i18n="openSourceDistribution">OPEN-SOURCE DISTRIBUTION</p>
+                <h1 data-i18n="aboutTitle">About the registry</h1>
+                <p class="catalog-intro" data-i18n="aboutIntro">A versioned catalog of Sprocket mods.</p>
+            </div>
+        </header>
+
+        <div>
+            <dl class="about-facts">
+                <div>
+                    <dt data-i18n="aboutRepository">Repository</dt>
+                    <dd><a href="https://github.com/furryaxw/SprocketModManager" target="_blank"
+                           rel="noreferrer">furryaxw/SprocketModManager</a></dd>
+                </div>
+                <div>
+                    <dt data-i18n="aboutRegistry">Registry address</dt>
+                    <dd><a href="./index.json">sprocketmods.furryaxw.top</a></dd>
+                </div>
+                <div>
+                    <dt data-i18n="aboutClient">Client</dt>
+                    <dd>SprocketModManager.exe</dd>
+                </div>
+                <div>
+                    <dt data-i18n="aboutPlatform">Platform</dt>
+                    <dd data-i18n="aboutPlatformValue">Windows · Edge WebView2</dd>
+                </div>
+                <div>
+                    <dt data-i18n="aboutRefresh">Index refresh</dt>
+                    <dd data-i18n="aboutRefreshValue">Hourly via GitHub Actions</dd>
+                </div>
+                <div>
+                    <dt data-i18n="license">License</dt>
+                    <dd><a href="https://github.com/furryaxw/SprocketModManager/blob/main/LICENSE" target="_blank"
+                           rel="noreferrer">AGPL-3.0</a></dd>
+                </div>
+            </dl>
+
+            <div class="about-sections">
+                <section class="about-section">
+                    <h2 data-i18n="aboutSourcesTitle">Data sources</h2>
+                    <p data-i18n="aboutSourceIndex">GitHub Actions reads mod releases every hour.</p>
+                    <p data-i18n="aboutSourceAssets">The catalog reads the generated index.</p>
+                    <p data-i18n="aboutSourceMetadata">Metadata lives in this repository.</p>
+                </section>
+
+                <section class="about-section">
+                    <h2 data-i18n="aboutPoliciesTitle">Policies</h2>
+                    <div class="about-links">
+                        <a class="secondary-command"
+                           target="_blank" rel="noreferrer"
+                           data-href-en="https://github.com/furryaxw/SprocketModManager/blob/main/README.en.md#code-signing-policy"
+                           data-href-zh="https://github.com/furryaxw/SprocketModManager/blob/main/README.md#code-signing-policy">
+                            <i data-lucide="shield-check"></i><span data-i18n="codeSigningPolicy">Code signing policy</span>
+                        </a>
+                        <a class="secondary-command"
+                           target="_blank" rel="noreferrer"
+                           data-href-en="https://github.com/furryaxw/SprocketModManager/blob/main/README.en.md#privacy-policy"
+                           data-href-zh="https://github.com/furryaxw/SprocketModManager/blob/main/README.md#隐私政策">
+                            <i data-lucide="lock"></i><span data-i18n="aboutPolicyPrivacy">Privacy policy</span>
+                        </a>
+                        <a class="secondary-command" href="https://github.com/furryaxw/SprocketModManager/blob/main/LICENSE"
+                           target="_blank" rel="noreferrer">
+                            <i data-lucide="scale"></i><span>AGPL-3.0</span>
+                        </a>
+                    </div>
+                </section>
+
+                <section class="about-section">
+                    <h2 data-i18n="aboutContributeTitle">Contributing</h2>
+                    <div class="about-links">
+                        <a class="secondary-command" href="https://github.com/furryaxw/SprocketModManager/blob/main/CONTRIBUTING.md"
+                           target="_blank" rel="noreferrer">
+                            <i data-lucide="git-pull-request"></i><span data-i18n="aboutContribute">Submit a mod</span>
+                        </a>
+                        <a class="secondary-command" href="https://github.com/furryaxw/SprocketModManager/blob/main/sprocket-mod-spec.md"
+                           target="_blank" rel="noreferrer">
+                            <i data-lucide="file-text"></i><span data-i18n="aboutSpec">Metadata spec</span>
+                        </a>
+                    </div>
+                </section>
+
+                <section class="about-section">
+                    <h2 data-i18n="communityTitle">Community</h2>
+                    <p data-i18n="aboutCommunityIntro">Release announcements go to the #mod-releases channel of the official Sprocket Discord server.</p>
+                    <div class="about-links">
+                        <a class="secondary-command" href="https://discord.com/invite/baFH43keyR"
+                           target="_blank" rel="noreferrer">
+                            <i data-lucide="message-circle"></i><span data-i18n="aboutDiscord">Join the official Discord</span>
+                        </a>
+                        <a class="secondary-command" href="https://discord.com/channels/788349365466038283/1531947654957891614"
+                           target="_blank" rel="noreferrer">
+                            <i data-lucide="megaphone"></i><span data-i18n="aboutReleasesChannel">#mod-releases</span>
+                        </a>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </section>
+</main>
+</body>
+</html>

@@ -26,7 +26,7 @@ ALLOWED_HTML_IDS = {"page-subtitle"}
 ALLOWED_JS_LITERALS = {"..."}
 # 品牌名与常量不是文案。
 BRAND = re.compile(
-    r"^(Sprocket|MelonLoader|GitHub|Registry|Mod Manager|Sprocket Mod Manager|"
+    r"^(Sprocket|MelonLoader|GitHub|Registry|Mod Manager|"
     r"\.dll|\.zip|DLL|ZIP|AGPL|https?://|\d)",
 )
 

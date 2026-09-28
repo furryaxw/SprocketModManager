@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sprocketmods.furryaxw.top/schemas/sprocket-mod.schema.json",
-  "title": "Sprocket Mod Registry Entry",
+  "title": "SprocketModManager Registry Entry",
   "type": "object",
   "additionalProperties": false,
   "required": [
