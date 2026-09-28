@@ -104,7 +104,7 @@ jobs:
             gh release create $tag `
               --verify-tag `
               --draft `
-              --title "Sprocket Mod Manager $tag" `
+              --title "SprocketModManager $tag" `
               --notes "Write release notes before publishing."
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to create draft Release $tag"

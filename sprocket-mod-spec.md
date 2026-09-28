@@ -1,4 +1,4 @@
-# Sprocket Mod Registry 规范 v1
+# SprocketModManager 注册表规范 v1
 
 **中文** | [English](sprocket-mod-spec.en.md)
 

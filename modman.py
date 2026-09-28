@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sprocket Mod Manager CLI and GUI entry point."""
+"""SprocketModManager CLI and GUI entry point."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def _local_mods(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Sprocket Mod Manager")
+    parser = argparse.ArgumentParser(description="SprocketModManager")
     parser.add_argument("--version", action="version", version=APP_VERSION)
     parser.add_argument("--debug", action="store_true", help="enable verbose diagnostic logging")
     parser.add_argument("--app-dir", help="manager data directory")
@@ -373,7 +373,7 @@ def main() -> int:
     if executable is not None:
         cleanup_staged(executable)
     LOGGER.info(
-        "Sprocket Mod Manager %s starting mode=%s debug=%s debug_flag=%s config_debug=%s app_dir=%s",
+        "SprocketModManager %s starting mode=%s debug=%s debug_flag=%s config_debug=%s app_dir=%s",
         APP_VERSION,
         "cli" if is_cli else "gui",
         debug,
@@ -394,7 +394,7 @@ def main() -> int:
     except Exception:
         LOGGER.exception("GUI terminated with an unhandled error")
         raise
-    LOGGER.info("Sprocket Mod Manager stopped")
+    LOGGER.info("SprocketModManager stopped")
     return 0
 
 

@@ -226,7 +226,7 @@ def github_gist_sync(
         if remote_time > local_time:
             local[server_id] = remote_item
     document = {"schema_version": 1, "servers": sorted(local.values(), key=lambda item: str(item.get("server_id", "")))}
-    body = {"description": "Sprocket Mod Manager private server recovery", "public": False,
+    body = {"description": "SprocketModManager private server recovery", "public": False,
             "files": {GITHUB_GIST_FILENAME: {"content": json.dumps(document, ensure_ascii=False, indent=2) + "\n"}}}
     if resolved_id:
         _github_json_request("PATCH", f"https://api.github.com/gists/{resolved_id}", access_token, body,

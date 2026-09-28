@@ -30,7 +30,7 @@ def run_gui(version: str, *, debug: bool = False, debug_override: bool = False) 
     api: ClientApi = ClientApi(version, debug_override=debug_override)
     LOGGER.debug("creating WebView window")
     window = webview.create_window(
-        "Sprocket Mod Manager",
+        "SprocketModManager",
         url=index_path.resolve().as_uri(),
         js_api=api,
         width=1240,

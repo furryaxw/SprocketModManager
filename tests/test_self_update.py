@@ -32,7 +32,7 @@ def release(version: str = "0.6.0", *, assets: tuple[ReleaseAsset, ...] = (), no
     return RepositoryRelease(
         tag=f"v{version}",
         version=Version.parse(version),
-        page_url=f"https://github.com/furryaxw/sprocket-mods/releases/tag/v{version}",
+        page_url=f"https://github.com/furryaxw/SprocketModManager/releases/tag/v{version}",
         notes=notes,
         assets=assets,
     )
@@ -41,7 +41,7 @@ def release(version: str = "0.6.0", *, assets: tuple[ReleaseAsset, ...] = (), no
 def executable_asset(*, digest: str = f"sha256:{PAYLOAD_SHA}") -> ReleaseAsset:
     return asset(
         self_update.MANAGER_EXE_NAME,
-        url=f"https://github.com/furryaxw/sprocket-mods/releases/download/v0.6.0/{self_update.MANAGER_EXE_NAME}",
+        url=f"https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/{self_update.MANAGER_EXE_NAME}",
         size=len(PAYLOAD),
         digest=digest,
     )
@@ -115,7 +115,7 @@ class UpdateSelectionTests(unittest.TestCase):
         update = self_update.update_from_release(
             release("0.6.0", assets=(executable_asset(), asset(
                 f"{self_update.MANAGER_EXE_NAME}.sha256",
-                url="https://github.com/furryaxw/sprocket-mods/releases/download/v0.6.0/x.sha256",
+                url="https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/x.sha256",
             ))),
             "0.5.1",
         )
