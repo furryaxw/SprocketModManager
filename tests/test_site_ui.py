@@ -53,7 +53,7 @@ class SiteUiTests(unittest.TestCase):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn(
-            'href="https://github.com/furryaxw/sprocket-mods/releases/latest/download/SprocketModManager.exe"',
+            'href="https://github.com/furryaxw/SprocketModManager/releases/latest/download/SprocketModManager.exe"',
             html,
         )
         self.assertIn('data-i18n="downloadClient"', html)
