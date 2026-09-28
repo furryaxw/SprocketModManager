@@ -1,4 +1,4 @@
-# Sprocket Mod Manager
+# SprocketModManager
 
 **中文** | [English](README.en.md)
 
@@ -9,6 +9,13 @@ Sprocket 模组注册表、GitHub Pages 目录与 Windows GUI 客户端。
 GitHub API 配额。二进制仍始终来自模组自己的 GitHub Release。客户端使用快照求解依赖、
 验证可用的发布者 SHA-256、按安装规则与 PE 元数据判断文件类型，再将文件事务式安装到供给
 该类型的加载器声明的目录（`{Sprocket}/Mods`、`{Sprocket}/BepInEx/plugins` 等）。
+
+## 社区
+
+模组发布公告发在 Sprocket 官方 Discord 服务器的 `#mod-releases` 频道：
+
+- 服务器邀请：https://discord.com/invite/baFH43keyR
+- 发布频道：https://discord.com/channels/788349365466038283/1531947654957891614
 
 ## 当前纵向场景
 
@@ -99,6 +106,15 @@ CLI 使用本地 Registry：
 CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 `https://sprocketmods.furryaxw.top/index.json`。
 
+## 卸载
+
+模组、加载器与补丁包都在客户端的“已安装”页卸载；卸载按安装记录交还文件，受保护或被用户改过的
+文件保留。
+
+程序本体不写注册表、不建快捷方式，删除 `SprocketModManager.exe` 即完成卸载。管理器另有两处状态
+目录，可以按需清理：`%LOCALAPPDATA%\SprocketModManager`（配置、日志与 WebView 存储），以及
+`<游戏目录>\SprocketModManager`（安装记录、DLL 元数据缓存与被覆盖文件的备份）。
+
 ## 验证
 
 ```powershell
@@ -150,6 +166,29 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 
 这条链路的信任到「GitHub 的 HTTPS + GitHub 自己算的资产摘要」为止。要防到「发布账号被拿走」这一层，
 还需要固定公钥验证的更新清单或可验证的 Windows 代码签名。
+
+## Code signing policy
+
+Windows 发布产物采用 SignPath Foundation 的免费开源代码签名（申请中）：构建由 SignPath.io
+签名，证书由 SignPath Foundation 持有。
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation
+
+- 提交者与审查者（Committers and reviewers）：[@furryaxw](https://github.com/furryaxw)
+- 批准者（Approvers）：[@furryaxw](https://github.com/furryaxw)
+- 隐私政策：见[隐私政策](#隐私政策)。
+
+## 隐私政策
+
+本程序不含遥测与使用统计，不收集用户数据。发送数据的场景只有两处：用户在侧栏「上传日志」
+中主动选定日志后，日志原文发往 `https://paste.furryaxw.top/api/q/`（无后台自动上传，见
+[日志上传](docs/log-upload-design.md)）；用户配置的私有服务器按用户操作收发数据。
+
+其余网络访问只读取数据——自身 Release 与更新、Registry 索引与模组 Release 元数据、模组 README——
+请求发往 GitHub 或本项目 Pages 站点，受
+[GitHub 隐私声明](https://docs.github.com/site-policy/privacy-policies/github-privacy-statement)
+约束。GUI 由 Microsoft Edge WebView2 渲染，该组件自身可能按
+[Microsoft 隐私声明](https://privacy.microsoft.com/privacystatement)访问网络。
 
 ## Registry
 

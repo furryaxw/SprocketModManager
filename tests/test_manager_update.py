@@ -29,9 +29,9 @@ HARNESS = Path(__file__).resolve().parent / "fixtures" / "client_ui" / "render_u
 CLIENT_UI = Path(__file__).resolve().parent.parent / "sprocket_mod_manager" / "presentation" / "client_ui"
 NODE = shutil.which("node")
 
-PAGE_URL = "https://github.com/furryaxw/sprocket-mods/releases/tag/v0.6.0"
+PAGE_URL = "https://github.com/furryaxw/SprocketModManager/releases/tag/v0.6.0"
 EXE_URL = (
-    "https://github.com/furryaxw/sprocket-mods/releases/download/v0.6.0/SprocketModManager.exe"
+    "https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/SprocketModManager.exe"
 )
 
 
@@ -49,7 +49,7 @@ def manager_release(*, version: str = "0.6.0", notes: str = "修了几个崩溃"
     return RepositoryRelease(
         tag=f"v{version}",
         version=Version.parse(version),
-        page_url=f"https://github.com/furryaxw/sprocket-mods/releases/tag/v{version}",
+        page_url=f"https://github.com/furryaxw/SprocketModManager/releases/tag/v{version}",
         notes=notes,
         assets=(
             ReleaseAsset(id=1, name="SprocketModManager.exe", size=4096, download_url=EXE_URL,

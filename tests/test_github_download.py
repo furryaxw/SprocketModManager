@@ -153,23 +153,23 @@ class GitHubDownloadTests(unittest.TestCase):
                 self.calls.append((url, cache_seconds))
                 return {
                     "tag_name": "v0.2.0",
-                    "html_url": "https://github.com/furryaxw/sprocket-mods/releases/tag/v0.2.0",
+                    "html_url": "https://github.com/furryaxw/SprocketModManager/releases/tag/v0.2.0",
                     "draft": False,
                     "prerelease": False,
                 }
 
         http = JsonHttp()
-        release = GitHubClient(http).latest_repository_release("furryaxw/sprocket-mods")
+        release = GitHubClient(http).latest_repository_release("furryaxw/SprocketModManager")
 
         self.assertEqual(str(release.version), "0.2.0")
         self.assertEqual(release.tag, "v0.2.0")
         self.assertEqual(
             release.page_url,
-            "https://github.com/furryaxw/sprocket-mods/releases/tag/v0.2.0",
+            "https://github.com/furryaxw/SprocketModManager/releases/tag/v0.2.0",
         )
         self.assertEqual(
             http.calls,
-            [("https://api.github.com/repos/furryaxw/sprocket-mods/releases/latest", 3600)],
+            [("https://api.github.com/repos/furryaxw/SprocketModManager/releases/latest", 3600)],
         )
 
     def test_latest_repository_release_rejects_unexpected_page_url(self):
@@ -184,7 +184,7 @@ class GitHubDownloadTests(unittest.TestCase):
                 }
 
         with self.assertRaisesRegex(DownloadError, "release page URL"):
-            GitHubClient(JsonHttp()).latest_repository_release("furryaxw/sprocket-mods")
+            GitHubClient(JsonHttp()).latest_repository_release("furryaxw/SprocketModManager")
 
     def test_repository_readme_uses_github_rendered_html(self):
         class ReadmeHttp:

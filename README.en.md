@@ -1,4 +1,4 @@
-# Sprocket Mod Manager
+# SprocketModManager
 
 [中文](README.md) | **English**
 
@@ -12,6 +12,14 @@ GitHub Release. The client resolves the cached snapshot, verifies publisher-prov
 SHA-256 digests when available, derives each file's type from the install rules and PE
 metadata, and transactionally installs files into the directory declared by the loader
 that supplies that type (`{Sprocket}/Mods`, `{Sprocket}/BepInEx/plugins`, and so on).
+
+## Community
+
+Release announcements go to the `#mod-releases` channel of the official Sprocket
+Discord server:
+
+- Server invite: https://discord.com/invite/baFH43keyR
+- Release channel: https://discord.com/channels/788349365466038283/1531947654957891614
 
 ## Current Vertical Slice
 
@@ -104,6 +112,17 @@ Use a local Registry with the CLI:
 Global CLI options must appear before the subcommand. The default remote Registry
 is `https://sprocketmods.furryaxw.top/index.json`.
 
+## Uninstalling
+
+Mods, loaders, and patch packages are removed from the client's Installed page; removal hands back
+the files listed in the install record, and files that are protected or changed by the user stay.
+
+The client itself writes no registry keys and creates no shortcuts, so deleting
+`SprocketModManager.exe` uninstalls it. It leaves two state directories that can be deleted
+separately: `%LOCALAPPDATA%\SprocketModManager` (configuration, logs, and WebView storage) and
+`<game>\SprocketModManager` (install records, the DLL metadata cache, and backups of replaced
+files).
+
 ## Validate
 
 ```powershell
@@ -178,6 +197,34 @@ the release page instead.
 
 That chain trusts GitHub's HTTPS plus the asset digest GitHub computes. Guarding against a stolen
 release account needs a fixed-public-key update manifest or verifiable Windows code signing.
+
+## Code signing policy
+
+Windows release artifacts use free open-source code signing provided by SignPath
+Foundation (application in progress): builds are signed through SignPath.io and the
+certificate is held by SignPath Foundation.
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation
+
+- Committers and reviewers: [@furryaxw](https://github.com/furryaxw)
+- Approvers: [@furryaxw](https://github.com/furryaxw)
+- Privacy policy: see [Privacy policy](#privacy-policy).
+
+## Privacy policy
+
+The program contains no telemetry or usage analytics and collects no user data. Two
+situations send data: after the user picks a log file in the sidebar's log upload menu, the
+text of that file goes to `https://paste.furryaxw.top/api/q/` with no background upload (see
+[log upload](docs/log-upload-design.md)); and a user-configured private server receives data
+under the user's actions.
+
+Every other network request only reads data — its own Release and updates, the Registry
+index and mod Release metadata, mod READMEs — and goes to GitHub or this project's Pages
+site, subject to the
+[GitHub Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-privacy-statement).
+The GUI is rendered by Microsoft Edge WebView2, a component that may itself reach the
+network under the
+[Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
 
 ## Registry
 
