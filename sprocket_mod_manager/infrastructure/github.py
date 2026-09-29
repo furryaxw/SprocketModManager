@@ -28,6 +28,27 @@ class RepositoryReadme:
     page_url: str
 
 
+# 仓库改过名后 GitHub 只在新名字下回答，响应体里的 URL 也全是新名字，所以要问一次现状。
+CANONICAL_REPOSITORY_CACHE_SECONDS = 86400
+
+
+def _split_repository(repository: str) -> tuple[str, str]:
+    parts = repository.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise DownloadError(f"invalid GitHub repository: {repository}")
+    return parts[0], parts[1]
+
+
+def _page_url_belongs_to(page_url: str, repository: str) -> bool:
+    """发布页 URL 是否挂在这个仓库名下。"""
+    parsed = urlparse(page_url)
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").casefold() == "github.com"
+        and parsed.path.casefold().startswith(f"/{repository}/releases/tag/".casefold())
+    )
+
+
 def _release_assets(record: dict[str, Any], repository: str) -> tuple[ReleaseAsset, ...]:
     """只收挂在这个仓库自己的 `releases/download/` 下的资产，其余（外链）一律丢掉。"""
     assets: list[ReleaseAsset] = []
@@ -135,10 +156,7 @@ class GitHubClient:
         return self._release_cache[package.id]
 
     def latest_repository_release(self, repository: str) -> RepositoryRelease:
-        parts = repository.split("/")
-        if len(parts) != 2 or not all(parts):
-            raise DownloadError(f"invalid GitHub repository: {repository}")
-        owner, name = parts
+        owner, name = _split_repository(repository)
         url = (
             "https://api.github.com/repos/"
             f"{quote(owner, safe='')}/{quote(name, safe='')}/releases/latest"
@@ -155,13 +173,10 @@ class GitHubClient:
             raise DownloadError(f"latest Release tag is not SemVer: {tag or '-'}") from exc
 
         page_url = str(record.get("html_url", ""))
-        parsed = urlparse(page_url)
-        expected_path = f"/{repository}/releases/tag/".casefold()
-        if (
-                parsed.scheme != "https"
-                or (parsed.hostname or "").casefold() != "github.com"
-                or not parsed.path.casefold().startswith(expected_path)
-        ):
+        # 改名后响应体里只有新名字：按声明的名字对不上时问一次现状，再照它校验页面与资产。
+        if not _page_url_belongs_to(page_url, repository):
+            repository = self._canonical_repository(repository) or repository
+        if not _page_url_belongs_to(page_url, repository):
             raise DownloadError(f"invalid GitHub release page URL: {page_url or '-'}")
         return RepositoryRelease(
             tag=tag,
@@ -170,6 +185,18 @@ class GitHubClient:
             notes=str(record.get("body") or ""),
             assets=_release_assets(record, repository),
         )
+
+    def _canonical_repository(self, repository: str) -> str:
+        """这个仓库现在的名字；问不到就返回空串，调用方保留原来的名字。"""
+        owner, name = _split_repository(repository)
+        url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
+        try:
+            record = self.http.get_json(url, cache_seconds=CANONICAL_REPOSITORY_CACHE_SECONDS)
+        except DownloadError:
+            return ""
+        if not isinstance(record, dict):
+            return ""
+        return str(record.get("full_name") or "").strip()
 
     def repository_readme(
             self,
