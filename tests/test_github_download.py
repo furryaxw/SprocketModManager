@@ -186,6 +186,54 @@ class GitHubDownloadTests(unittest.TestCase):
         with self.assertRaisesRegex(DownloadError, "release page URL"):
             GitHubClient(JsonHttp()).latest_repository_release("furryaxw/SprocketModManager")
 
+    def test_latest_repository_release_follows_a_renamed_repository(self):
+        """仓库改过名时 GitHub 只回答新名字，响应体里的 URL 也全是新名字。"""
+        class RenamedHttp:
+            def __init__(self):
+                self.calls = []
+
+            def get_json(self, url, *, cache_seconds=600):
+                self.calls.append((url, cache_seconds))
+                if url.endswith("/releases/latest"):
+                    return {
+                        "tag_name": "v0.6.0-fix2",
+                        "html_url": (
+                            "https://github.com/furryaxw/SprocketModManager"
+                            "/releases/tag/v0.6.0-fix2"
+                        ),
+                        "draft": False,
+                        "prerelease": False,
+                        "assets": [
+                            {
+                                "id": 1,
+                                "name": "SprocketModManager.exe",
+                                "size": 10,
+                                "browser_download_url": (
+                                    "https://github.com/furryaxw/SprocketModManager"
+                                    "/releases/download/v0.6.0-fix2/SprocketModManager.exe"
+                                ),
+                            }
+                        ],
+                    }
+                return {"full_name": "furryaxw/SprocketModManager"}
+
+        http = RenamedHttp()
+        release = GitHubClient(http).latest_repository_release("furryaxw/sprocket-mods")
+
+        self.assertEqual(release.tag, "v0.6.0-fix2")
+        self.assertEqual(
+            release.page_url,
+            "https://github.com/furryaxw/SprocketModManager/releases/tag/v0.6.0-fix2",
+        )
+        self.assertEqual([asset.name for asset in release.assets], ["SprocketModManager.exe"])
+        self.assertEqual(
+            http.calls,
+            [
+                ("https://api.github.com/repos/furryaxw/sprocket-mods/releases/latest", 3600),
+                ("https://api.github.com/repos/furryaxw/sprocket-mods", 86400),
+            ],
+        )
+
     def test_repository_readme_uses_github_rendered_html(self):
         class ReadmeHttp:
             def __init__(self):
