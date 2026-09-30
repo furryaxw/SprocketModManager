@@ -17,6 +17,8 @@ Pages index.json
   -> 加载器类：按 install.payload 的 target、subpath 与 layout，或按 install.files 的类型落进供给目录
 ```
 
+索引的 `packages` 按各条的最新发布版本从新到旧排列：消费者照这份次序排序，不自己解析版本号。
+
 默认 GitHub 来源的条目，Pages 不保存以下字段：
 
 - 当前或历史版本号
