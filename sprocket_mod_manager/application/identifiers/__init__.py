@@ -51,14 +51,27 @@ class ModDirectory:
 
 @dataclass(frozen=True)
 class LogSource:
-    """运行时写的一份日志：稳定的 `id`、界面用的运行时可读名、相对游戏根目录的路径。
+    """一份日志：稳定的 `id`、界面用的可读名、以及它的位置。
 
-    路径按检测到的 `home` 拼（桥接布局的运行时不在游戏根目录）；文件在不在由调用方判断。
+    路径按检测到的 `home` 拼（桥接布局的运行时不在游戏根目录）；游戏自己写的日志不在游戏
+    目录里，那种情况下 `path` 是绝对路径。文件在不在由调用方判断，用 `log_target()` 解出位置。
     """
 
     id: str
     loader: str
     path: str
+
+
+def log_target(game_path: Path | None, source: LogSource) -> Path:
+    """一份日志在磁盘上的位置。
+
+    绝对路径直接用（Unity 的日志在 `%LOCALAPPDATA%` 那边）：Windows 上 `Path / 绝对路径`
+    恰好也会丢掉左边，但那是碰巧对的，不能靠它。
+    """
+    path = Path(source.path)
+    if path.is_absolute() or game_path is None:
+        return path
+    return Path(game_path) / path
 
 
 @dataclass(frozen=True)
@@ -352,6 +365,7 @@ __all__ = [
     "first_pe_file_version",
     "is_active",
     "log_sources",
+    "log_target",
     "mod_directory_paths",
     "runtime_states",
     "scan_targets",

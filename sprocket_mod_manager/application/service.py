@@ -18,6 +18,7 @@ from ..domain.registry import Registry
 from ..infrastructure.defaults import default_app_dir
 from ..infrastructure.dll_metadata import cached_sha256, configure_metadata_backend
 from ..infrastructure.providers_cache import write_providers_table
+from ..infrastructure.diagnosis_cache import write_diagnosis_pack
 from ..infrastructure.github import GitHubClient
 from ..infrastructure.http_client import HttpClient
 from ..infrastructure.installer import Installer
@@ -70,6 +71,8 @@ class ModManagerService:
         self.registry = registry
         # 供给表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。
         write_providers_table(self.app_dir, registry.provider_table)
+        # 诊断规则包同理：它靠发索引在线更新，缓存是索引还没拉下来时的那一份。
+        write_diagnosis_pack(self.app_dir, registry.diagnosis)
         LOGGER.info("registry loaded packages=%d", len(registry.packages))
         return registry
 

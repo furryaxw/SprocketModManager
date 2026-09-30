@@ -12,7 +12,13 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .api_constants import MANAGER_REPOSITORY
-from .controllers import CatalogController, InstallationController, PrivateDistributionController, SettingsController
+from .controllers import (
+    CatalogController,
+    DiagnosisController,
+    InstallationController,
+    PrivateDistributionController,
+    SettingsController,
+)
 from ..application.data_hub import (
     KEY_CATALOG,
     KEY_ENVIRONMENT,
@@ -23,9 +29,16 @@ from ..application.data_hub import (
     KEYS,
     DataHub,
 )
-from ..application.identifiers import detected_capabilities, log_sources, mod_directory_paths, runtime_states
+from ..application.identifiers import (
+    detected_capabilities,
+    log_sources,
+    log_target,
+    mod_directory_paths,
+    runtime_states,
+)
 from ..application.install_queue import InstallQueue
 from ..application.service import ModManagerService
+from ..application.unity_logs import unity_log_sources
 from ..domain.compatibility import DEFAULT_GAME_CAPABILITY, CapabilityEnvironment
 from ..domain.errors import ModManagerError
 from ..domain.models import ReleaseInfo, VERSION_TEMPLATE
@@ -104,11 +117,13 @@ class ClientApi:
         self._private_controller = PrivateDistributionController(self)
         self._catalog_controller = CatalogController(self)
         self._installation_controller = InstallationController(self)
+        self._diagnosis_controller = DiagnosisController(self)
         self._controllers = (
             self._settings_controller,
             self._private_controller,
             self._catalog_controller,
             self._installation_controller,
+            self._diagnosis_controller,
         )
         self.install_queue = InstallQueue(self._run_queued_install)
         LOGGER.debug("ClientApi init: install queue created")
@@ -562,6 +577,9 @@ class ClientApi:
     def clear_completed(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.clear_completed(*args, **kwargs)
 
+    def run_diagnosis(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._diagnosis_controller.run_diagnosis(*args, **kwargs)
+
     def _log_source_entries(self) -> list[dict[str, Any]]:
         """可上传的日志：管理器那份永远在，运行时那份来自活跃标识符。
 
@@ -590,10 +608,21 @@ class ClientApi:
                 tuple(installed),
                 capabilities if isinstance(capabilities, dict) else {},
         ):
-            target = game_path / source.path
+            target = log_target(game_path, source)
             entries.append({
                 "id": source.id,
                 "kind": "loader",
+                "loader": source.loader,
+                "path": source.path,
+                "target": target,
+                "available": target.is_file(),
+            })
+        # 游戏自己那份日志不在游戏目录里；定位不出来时一个都不列。
+        for source in unity_log_sources(game_path):
+            target = log_target(game_path, source)
+            entries.append({
+                "id": source.id,
+                "kind": "game",
                 "loader": source.loader,
                 "path": source.path,
                 "target": target,

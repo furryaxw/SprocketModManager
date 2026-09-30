@@ -17,6 +17,7 @@
     <script src="./js/private_servers.js" defer></script>
     <script src="./js/settings.js" defer></script>
     <script src="./js/logs.js" defer></script>
+    <script src="./js/diagnosis.js" defer></script>
     <script src="./js/modloaders.js" defer></script>
     <script src="./js/business.js" defer></script>
     <script src="./js/dialogs.js" defer></script>
@@ -50,11 +51,14 @@
                 <span class="nav-index">05</span><span data-i18n="downloads">下载队列</span>
                 <b id="queue-badge" hidden>0</b>
             </button>
+            <button class="nav-item" type="button" data-page-target="diagnosis">
+                <span class="nav-index">06</span><span data-i18n="diagnosis">错误修复</span>
+            </button>
             <button class="nav-item" type="button" data-page-target="settings">
-                <span class="nav-index">06</span><span data-i18n="settings">设置</span>
+                <span class="nav-index">07</span><span data-i18n="settings">设置</span>
             </button>
             <button class="nav-item" type="button" data-page-target="about">
-                <span class="nav-index">07</span><span data-i18n="about">关于</span>
+                <span class="nav-index">08</span><span data-i18n="about">关于</span>
             </button>
         </nav>
 
@@ -76,9 +80,6 @@
                     <option value="en">English</option>
                 </select>
             </label>
-            <button class="secondary-button" id="upload-logs" type="button"
-                    aria-haspopup="dialog" data-i18n="uploadLogs">上传日志
-            </button>
             <div class="registry-state" id="registry-state">
                 <span class="state-dot" aria-hidden="true"></span>
                 <span id="registry-state-text" data-i18n="connecting">正在连接</span>
@@ -416,6 +417,20 @@
                     </button>
                 </div>
             </div>
+        </section>
+
+        <section class="page" id="page-diagnosis" data-page="diagnosis" hidden>
+            <!-- 两个入口并排：看不出问题在哪的时候，把日志交上去是第二条路。 -->
+            <div class="diagnosis-actions">
+                <button class="primary-button" id="run-diagnosis" type="button" data-i18n="runDiagnosis">诊断游戏错误
+                </button>
+                <button class="secondary-button" id="diagnosis-upload-logs" type="button"
+                        aria-haspopup="dialog" data-i18n="uploadLogs">上传日志
+                </button>
+                <span class="diagnosis-meta" id="diagnosis-meta"></span>
+            </div>
+            <p class="diagnosis-note" id="diagnosis-note" hidden></p>
+            <div class="diagnosis-report" id="diagnosis-report" aria-live="polite"></div>
         </section>
 
         <footer class="statusbar">

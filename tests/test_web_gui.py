@@ -644,7 +644,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn("if (item.unrecognized)", javascript)
         self.assertIn('class="brand-line" aria-hidden="true"', html)
         self.assertIn('id="open-manager-directory"', html)
-        self.assertIn('id="upload-logs"', html)
+        self.assertIn('id="diagnosis-upload-logs"', html)
         self.assertIn('id="debug-mode"', html)
         self.assertIn('callApi("open_manager_directory")', javascript)
         self.assertIn('"upload_log"', javascript)
