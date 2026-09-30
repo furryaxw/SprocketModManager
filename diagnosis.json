@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "pack_version": 1,
+  "entries": [
+    {
+      "id": "loader-does-not-support-game",
+      "check": "environment_conflict",
+      "bucket": "required",
+      "level": 1,
+      "title": {
+        "zh": "加载器跟不上这个游戏版本",
+        "en": "The loader does not support this game version"
+      },
+      "evidence": {
+        "zh": "{loader} 与 Sprocket {sprocket} 对不上",
+        "en": "{loader} does not match Sprocket {sprocket}"
+      },
+      "explain": {
+        "zh": "装着的加载器版本命中不了「加载器 ↔ 游戏」表里覆盖本机游戏版本的那一行。加载器跑在游戏启动的最前排，对不上时游戏可能在启动阶段就失败。",
+        "en": "The installed loader version matches no row of the loader-to-game table that covers this game version. The loader runs first during startup, so a mismatch can make the game fail before it opens."
+      },
+      "tutorial": {
+        "zh": [
+          "打开「加载器」页，确认现在装的是哪个加载器、哪个版本",
+          "换成支持 Sprocket {sprocket} 的版本；那一页每条都写着它支持哪些游戏版本",
+          "换完回到这里重新诊断一次"
+        ],
+        "en": [
+          "Open the Loaders page and check which loader and version is installed",
+          "Move to a release that supports Sprocket {sprocket}; every entry there lists the game versions it supports",
+          "Come back here and run the diagnosis again"
+        ]
+      },
+      "go_to": {
+        "page": "modloaders"
+      }
+    },
+    {
+      "id": "loader-files-damaged",
+      "check": "loader_files_broken",
+      "bucket": "required",
+      "level": 1,
+      "title": {
+        "zh": "加载器文件损坏或被改过",
+        "en": "Loader files are damaged or modified"
+      },
+      "evidence": {
+        "zh": "{name} 的文件和它任何一次发布都对不上（这一类共 {count} 个包）",
+        "en": "Files in {name} match none of its released versions ({count} package(s) in this group)"
+      },
+      "explain": {
+        "zh": "磁盘上的加载器二进制和它任何一次发布的内容都不一样了。加载器坏了游戏可能直接起不来，这条按最严重处理。",
+        "en": "The loader binary on disk matches none of its released versions. A damaged loader can stop the game from starting, so this is treated as blocking."
+      },
+      "tutorial": {
+        "zh": [
+          "打开「已安装」页，找到 {name}",
+          "点「重装」，让管理器重新下载并覆盖这些文件",
+          "重装完回到这里重新诊断一次"
+        ],
+        "en": [
+          "Open the Installed page and find {name}",
+          "Choose Reinstall so the manager downloads and overwrites these files",
+          "Come back here and run the diagnosis again"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
+      "id": "mod-files-damaged",
+      "check": "mod_files_broken",
+      "bucket": "optional",
+      "level": 2,
+      "title": {
+        "zh": "模组文件损坏或被改过",
+        "en": "Mod files are damaged or modified"
+      },
+      "evidence": {
+        "zh": "{name} 的文件和它任何一次发布都对不上（这一类共 {count} 个包）",
+        "en": "Files in {name} match none of its released versions ({count} package(s) in this group)"
+      },
+      "explain": {
+        "zh": "磁盘上的模组二进制和它任何一次发布都不一样。你自己动手改过的模组也会落在这里，那属于正常，不用处理。从来没有发布过数据的模组不会被报。",
+        "en": "The mod binary on disk matches none of its released versions. A mod you edited yourself lands here too, which is expected and needs no action. Mods that were never published have no hashes to compare and are not reported."
+      },
+      "tutorial": {
+        "zh": [
+          "打开「已安装」页，找到 {name}",
+          "不是你改过的话，点「重装」覆盖掉这些文件",
+          "是你自己改过的话，忽略这条"
+        ],
+        "en": [
+          "Open the Installed page and find {name}",
+          "If you did not edit it, choose Reinstall to overwrite these files",
+          "If you did edit it, ignore this finding"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
+      "id": "no-loader-installed",
+      "check": "loader_missing",
+      "bucket": "optional",
+      "level": 2,
+      "title": {
+        "zh": "还没有装加载器",
+        "en": "No loader is installed"
+      },
+      "evidence": {
+        "zh": "Sprocket {sprocket} 里没有检测到加载器",
+        "en": "No loader was detected in Sprocket {sprocket}"
+      },
+      "explain": {
+        "zh": "模组要靠加载器才会被游戏读到。没装加载器时游戏照常启动，但装的模组一个都不会生效。",
+        "en": "The game only reads mods through a loader. Without one the game starts normally, but none of your mods take effect."
+      },
+      "tutorial": {
+        "zh": [
+          "打开「加载器」页",
+          "挑一个装上；那一页会按你当前的 Sprocket 版本标出能用的",
+          "装完回到这里重新诊断一次"
+        ],
+        "en": [
+          "Open the Loaders page",
+          "Pick one and install it; that page marks the ones that work with your Sprocket version",
+          "Come back here and run the diagnosis again"
+        ]
+      },
+      "go_to": {
+        "page": "modloaders"
+      }
+    },
+    {
+      "id": "mod-hook-signature-missing",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "Could not find any iCall with the signature '([^']+)'",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 3,
+      "title": {
+        "zh": "某个模组的运行时挂钩没接上",
+        "en": "A mod hook could not be attached"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "有模组按旧版 Unity 的内部签名去挂钩游戏方法，当前版本里没有这个签名（{group1}）。这通常只影响那个模组的一个功能，游戏本身能正常启动。",
+        "en": "A mod hooked a game method by an internal signature from an older Unity version, and this version does not have that signature ({group1}). It usually breaks one feature of that mod; the game itself still starts."
+      },
+      "tutorial": {
+        "zh": [
+          "打开「已安装」页，找到报这条的模组（带运行时挂钩的多半是 UnityExplorer 这类）",
+          "点「重装」换到最新版本",
+          "换完还有这条，说明这个模组还没支持当前 Unity 版本，换版本或先禁用它"
+        ],
+        "en": [
+          "Open the Installed page and find the mod that reported this (runtime-hook mods such as UnityExplorer are the usual source)",
+          "Choose Reinstall to move to the latest release",
+          "If it is still there afterwards, the mod does not support this Unity version yet; switch versions or disable it"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
+      "id": "il2cppinterop-substitute-signature",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "\\[Il2CppInterop\\] Class::Init signatures have been exhausted",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 5,
+      "title": {
+        "zh": "Il2CppInterop 用了替代签名",
+        "en": "Il2CppInterop used a substitute signature"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "MelonLoader 的 Il2CppInterop 找不到某个内部签名时会退到替代实现。正常启动也会打这条，不影响使用。",
+        "en": "MelonLoader's Il2CppInterop falls back to a substitute implementation when an internal signature is missing. A normal start prints this too and nothing is affected."
+      },
+      "tutorial": {
+        "zh": ["这条是正常输出，不用处理"],
+        "en": ["This is normal output and needs no action"]
+      }
+    },
+    {
+      "id": "unity-online-services-unreachable",
+      "match": {
+        "sources": ["unity_log", "loader_log"],
+        "pattern": "Could not resolve host: [^ ]*unity3d\\.com",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 5,
+      "title": {
+        "zh": "Unity 的在线服务连不上",
+        "en": "Unity online services are unreachable"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "Unity 的统计和云端诊断域名解析不了，通常是被 hosts 规则挡了或者当时没网。游戏本身不依赖这些服务。",
+        "en": "Unity's analytics and cloud diagnostics hostnames do not resolve, usually because a hosts rule blocks them or the machine was offline. The game does not depend on these services."
+      },
+      "tutorial": {
+        "zh": [
+          "这条不影响游戏，可以忽略",
+          "想让它不再出现的话，检查 hosts 和网络设置里有没有挡掉 unity3d.com 的规则"
+        ],
+        "en": [
+          "This does not affect the game and can be ignored",
+          "To stop it, check hosts and network settings for a rule blocking unity3d.com"
+        ]
+      }
+    }
+  ]
+}

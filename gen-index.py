@@ -17,6 +17,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+from sprocket_mod_manager.domain.diagnosis import (
+    BUCKETS,
+    CHECKS,
+    GO_TO_PAGES,
+    LOG_ROLES,
+    MAX_LEVEL,
+    MIN_LEVEL,
+    diagnosis_pack,
+)
 from sprocket_mod_manager.domain.semver import Version, validate_range
 
 REQUIRED_FIELDS = {
@@ -91,6 +100,13 @@ COMPAT_BLOCK_RE = re.compile(r"<!--\s*sp-compat\s*(?P<body>.*?)-->", re.DOTALL |
 # 供给表：加载器包版本区间 -> 该包能跑的游戏版本区间。构建时规范化后一并写进索引，客户端解析索引即可拿到，不必额外请求。
 PROVIDERS_FILE_NAME = "providers.json"
 PROVIDERS_FILE = Path(__file__).resolve().parent / PROVIDERS_FILE_NAME
+# 诊断规则包：日志签名与环境检查。改动靠发索引生效，所以坏条目在这里挡住，别留着让客户端猜。
+DIAGNOSIS_FILE_NAME = "diagnosis.json"
+DIAGNOSIS_FILE = Path(__file__).resolve().parent / DIAGNOSIS_FILE_NAME
+DIAGNOSIS_ENTRY_KEYS = frozenset(
+    {"id", "bucket", "level", "title", "explain", "evidence", "tutorial", "go_to", "check", "match"}
+)
+DIAGNOSIS_TEXT_KEYS = ("title", "explain", "evidence", "tutorial")
 
 
 def is_loader_kind(kind: object) -> bool:
@@ -1263,6 +1279,172 @@ def load_providers_table(
     return {"schema_version": schema_version, "entries": normalized}, warnings
 
 
+def _diagnosis_text_problems(value: Any, name: str) -> list[str]:
+    """两种语言都要有：界面语言只有这两种，缺一种就会让另一种语言的使用者看到别的语言。"""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{name} 必须是对象"]
+    problems = [
+        f"{name} 缺少 {language}"
+        for language in ("zh", "en")
+        if not isinstance(value.get(language), str) or not value[language].strip()
+    ]
+    return problems
+
+
+def _diagnosis_tutorial_problems(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return ["tutorial 必须是对象"]
+    problems = []
+    for language in ("zh", "en"):
+        steps = value.get(language)
+        if isinstance(steps, str) and steps.strip():
+            problems.append(f"tutorial.{language} 必须是步骤列表")
+            continue
+        if not isinstance(steps, list) or not steps:
+            problems.append(f"tutorial 缺少 {language}")
+            continue
+        if not all(isinstance(step, str) and step.strip() for step in steps):
+            problems.append(f"tutorial.{language} 里有空步骤")
+    return problems
+
+
+def _diagnosis_match_problems(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return ["match 必须是对象"]
+    problems = []
+    unknown = sorted(set(value) - {"sources", "pattern", "min_count"})
+    if unknown:
+        problems.append(f"match 里有未知键 {', '.join(unknown)}")
+    sources = value.get("sources")
+    if not isinstance(sources, list) or not sources:
+        problems.append("match.sources 必须是非空列表")
+    else:
+        unknown_roles = [str(role) for role in sources if str(role) not in LOG_ROLES]
+        if unknown_roles:
+            problems.append(f"未知的日志来源 {', '.join(unknown_roles)}（可用 {', '.join(LOG_ROLES)}）")
+    pattern = value.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        problems.append("match.pattern 必须是非空字符串")
+    else:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            problems.append(f"match.pattern 不是合法正则（{exc}）")
+    minimum = value.get("min_count")
+    if minimum is not None and (not isinstance(minimum, int) or minimum < 1):
+        problems.append("match.min_count 必须是正整数")
+    return problems
+
+
+def _diagnosis_go_to_problems(value: Any, package_ids: set[str] | None) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return ["go_to 必须是对象"]
+    problems = []
+    page = str(value.get("page") or "")
+    if page not in GO_TO_PAGES:
+        problems.append(f"go_to.page 只能是 {' / '.join(GO_TO_PAGES)}")
+    package = str(value.get("package") or "")
+    if package and package_ids is not None and package not in package_ids:
+        problems.append(f"go_to.package 不是注册表里的包：{package}")
+    return problems
+
+
+def _diagnosis_entry_problems(entry: Any, package_ids: set[str] | None) -> list[str]:
+    if not isinstance(entry, dict):
+        return ["必须是对象"]
+    unknown = sorted(set(entry) - DIAGNOSIS_ENTRY_KEYS)
+    if unknown:
+        return [f"未知键 {', '.join(unknown)}"]
+    missing = sorted(key for key in ("id", "bucket", "level", "title") if not entry.get(key))
+    if missing:
+        return [f"缺少 {', '.join(missing)}"]
+
+    problems: list[str] = []
+    rule_id = str(entry["id"])
+    if rule_id != entry["id"] or any(char.isspace() for char in rule_id):
+        problems.append("id 必须是无空白的字符串")
+    if entry["bucket"] not in BUCKETS:
+        problems.append(f"bucket 只能是 {' / '.join(BUCKETS)}")
+    level = entry.get("level")
+    if not isinstance(level, int) or isinstance(level, bool) or not MIN_LEVEL <= level <= MAX_LEVEL:
+        problems.append(f"level 必须是 {MIN_LEVEL}..{MAX_LEVEL} 的整数")
+
+    has_check = bool(str(entry.get("check") or "").strip())
+    has_match = entry.get("match") is not None
+    if has_check == has_match:
+        problems.append("check 与 match 必须恰好给一个")
+    if has_check and str(entry["check"]) not in CHECKS:
+        problems.append(f"未知的 check {entry['check']}（代码里有 {', '.join(CHECKS)}）")
+    if has_match:
+        problems.extend(_diagnosis_match_problems(entry["match"]))
+
+    for name in DIAGNOSIS_TEXT_KEYS:
+        if name == "tutorial":
+            problems.extend(_diagnosis_tutorial_problems(entry.get(name)))
+        else:
+            problems.extend(_diagnosis_text_problems(entry.get(name), name))
+    problems.extend(_diagnosis_go_to_problems(entry.get("go_to"), package_ids))
+    return problems
+
+
+def load_diagnosis_pack(
+        path: Path,
+        package_ids: set[str] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """读诊断规则包：整包坏了就是空包，单条坏了只跳过那一条并留告警。
+
+    比客户端那份规范化严一档：文案要求中英齐全、`go_to.package` 必须对上注册表里的包 id。
+    规则包走索引在线生效，这里是唯一的闸门 —— 客户端拿到手的必须是已经站得住的规则。
+    """
+    warnings: list[str] = []
+    empty: dict[str, Any] = {"schema_version": 1, "pack_version": 0, "entries": []}
+    if not path.is_file():
+        return empty, warnings
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return empty, [f"{path.name}: 无法读取（{exc}）"]
+
+    if not isinstance(raw, dict):
+        return empty, [f"{path.name}: 顶层必须是对象"]
+    unknown = sorted(set(raw) - {"schema_version", "pack_version", "entries"})
+    if unknown:
+        warnings.append(f"{path.name}: 忽略了未知键 {', '.join(unknown)}")
+    entries = raw.get("entries")
+    if not isinstance(entries, list) or not entries:
+        warnings.append(f"{path.name}: entries 必须是非空列表")
+        return empty, warnings
+
+    kept: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for position, entry in enumerate(entries, start=1):
+        problems = _diagnosis_entry_problems(entry, package_ids)
+        rule_id = str(entry.get("id") or "") if isinstance(entry, dict) else ""
+        if not problems and rule_id in seen:
+            problems = ["id 与前面某一条重复"]
+        if problems:
+            warnings.extend(f"{path.name} 第 {position} 条：{problem}" for problem in problems)
+            continue
+        seen.add(rule_id)
+        kept.append(entry)
+
+    if not kept:
+        return empty, warnings
+    pack = diagnosis_pack({**raw, "entries": kept})
+    if len(pack["entries"]) != len(kept):
+        # 显式校验会比规范化宽松一天两天，那等于放过了一条规则；宁可在这里炸出来。
+        warnings.append(
+            f"{path.name}: {len(kept) - len(pack['entries'])} 条规则通过了校验却没通过规范化"
+        )
+    return pack, warnings
+
+
 def generate_index(
     mods_dir: Path,
     output: Path,
@@ -1271,6 +1453,7 @@ def generate_index(
     baseline_releases: dict[str, list[dict[str, Any]]] | None = None,
     fallback_index_url: str = FALLBACK_INDEX_URL,
     providers_file: Path | None = None,
+    diagnosis_file: Path | None = None,
     refresh: bool = False,
 ) -> dict:
     packages = scan_mods(mods_dir)
@@ -1342,11 +1525,20 @@ def generate_index(
     for warning in providers_warnings:
         print(f"warning: {warning}", file=sys.stderr)
 
+    diagnosis, diagnosis_warnings = load_diagnosis_pack(
+        diagnosis_file if diagnosis_file is not None else DIAGNOSIS_FILE,
+        set(by_id),
+    )
+    for warning in diagnosis_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
     index = {
         "schema_version": 1,
         "game": {"id": GAME_CAPABILITY_ID, "name": GAME_NAME},
         "providers": providers,
         "providers_warnings": providers_warnings,
+        "diagnosis": diagnosis,
+        "diagnosis_warnings": diagnosis_warnings,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
             "+00:00", "Z"
         ),
@@ -1385,6 +1577,11 @@ def main() -> int:
         help=f"loader-package/game compatibility table (default: {PROVIDERS_FILE_NAME} in the repository root)",
     )
     parser.add_argument(
+        "--diagnosis",
+        default="",
+        help=f"diagnosis rule pack (default: {DIAGNOSIS_FILE_NAME} in the repository root)",
+    )
+    parser.add_argument(
         "--fallback-index-url",
         default=FALLBACK_INDEX_URL,
         help="index URL used when no previous index is available",
@@ -1408,6 +1605,7 @@ def main() -> int:
             baseline_releases=baseline,
             fallback_index_url=args.fallback_index_url,
             providers_file=Path(args.providers) if args.providers else None,
+            diagnosis_file=Path(args.diagnosis) if args.diagnosis else None,
             refresh=args.refresh,
         )
     except RegistryError as exc:
