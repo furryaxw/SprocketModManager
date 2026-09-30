@@ -23,6 +23,28 @@ CLIENT_UI = Path(__file__).resolve().parent.parent / "sprocket_mod_manager" / "p
 NODE = shutil.which("node")
 
 
+def install_target(pkg: dict) -> str:
+    """后端按当前环境挑好的安装版本：兼容的里面最高的，一个兼容的都没有才退到最新那版。
+
+    挑哪一版是后端的判定（Python 侧单独测）；这里只是让夹具长得像后端真发过来的那份读数。
+    """
+    releases = pkg.get("releases") or []
+    for release in releases:
+        if release.get("verdict") == "compatible":
+            return str(release.get("version", ""))
+    if releases:
+        return str(releases[0].get("version", ""))
+    return str((pkg.get("release") or {}).get("version", ""))
+
+
+def with_install_target(packages: list) -> list:
+    """目录读数的每一条都带 `install_target`（没写就按后端口径补上）。"""
+    return [
+        package if "install_target" in package else {"install_target": install_target(package), **package}
+        for package in packages
+    ]
+
+
 def payload(
         corrupted: bool = False,
         missing: bool = False,
@@ -38,15 +60,24 @@ def payload(
         modloaders: list | None = None,
         local_mods: list | None = None,
         installed: list | None = None,
+        newer: dict | None = None,
+        update: dict | None = None,
         language: str = "",
 ) -> dict:
-    """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。"""
+    """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。
+
+    `newer` / `update` 是后端跟着安装记录一起下发的更新判定（`installed` 显式给出时由调用方自理）。
+    """
     integrity = "corrupted" if corrupted else "release"
     installed_record = {
         "id": "furryaxw.sprocket-laser-rangefinder", "name": "SprocketLaserRangefinder", "version": "0.1.3",
         "requested": True, "corrupted": corrupted, "integrity": integrity,
         "files": ["Mods/SprocketLaserRangefinder.dll"],
     }
+    if newer is not None:
+        installed_record["newer"] = newer
+    if update is not None:
+        installed_record["update"] = update
     first_mod_dependencies = ["SprocketDepth"] if missing else []
     document = {
         "installed": [installed_record],
@@ -111,7 +142,7 @@ def payload(
                           "missing_dependencies": 1 if missing else 0},
         "has_any_mods": True,
     }
-    document["packages"] = packages or []
+    document["packages"] = with_install_target(packages or [])
     if installed is not None:
         document["installed"] = installed
     if local_mods is not None:
@@ -319,7 +350,10 @@ class InstalledRenderHarnessTests(unittest.TestCase):
     def test_newer_release_shows_a_chip_while_an_equal_one_does_not(self) -> None:
         """新版本提示只对「发布版本比安装记录新」的行出芯片。"""
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
-        newer = [child["text"] for child in self._render(packages=[package])["rows"][0]["children"][2]["children"]]
+        newer = [child["text"] for child in self._render(
+            packages=[package],
+            update={"version": "0.2.0", "verdict": "compatible"},
+        )["rows"][0]["children"][2]["children"]]
         self.assertIn("Version 0.2.0 available", newer, "0.1.3 → 0.2.0 是新版本")
 
         package["release"]["version"] = "0.1.3"
@@ -436,7 +470,10 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
     def test_filter_chips_count_the_whole_list_and_mark_the_active_one(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
-        filters = self._render(packages=[package])["toolbar"]["filters"]
+        filters = self._render(
+            packages=[package],
+            update={"version": "0.2.0", "verdict": "compatible"},
+        )["toolbar"]["filters"]
         self.assertEqual(filters["all"], {"text": "All (3)", "active": True})
         self.assertEqual(filters["enabled"], {"text": "Enabled (2)", "active": False})
         self.assertEqual(filters["disabled"], {"text": "Disabled (1)", "active": False})
@@ -516,6 +553,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         outdated = self._render(
             packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}],
             filter_key="outdated",
+            update={"version": "0.2.0", "verdict": "compatible"},
         )
         self.assertEqual(len(outdated["rows"]), 1)
         self.assertIn("Version 0.2.0 available", " | ".join(
@@ -592,7 +630,10 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             "release": {"version": "0.2.0", "verdict": "incompatible"},
             "releases": [{"version": "0.2.0", "verdict": "incompatible"}],
         }
-        newer = self._render(packages=[update_blocked])
+        newer = self._render(
+            packages=[update_blocked],
+            newer={"version": "0.2.0", "verdict": "incompatible"},
+        )
         self.assertEqual(newer["toolbar"]["filters"]["incompatible"]["text"], "Incompatible (1)")
 
         hidden = self._render(filter_key="incompatible")
@@ -610,7 +651,11 @@ class InstalledRenderHarnessTests(unittest.TestCase):
     def test_batch_buttons_follow_what_the_selection_can_actually_do(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
         # 一个可更新、可禁用、可卸载的模组：三个按钮都该亮。
-        one = self._render(packages=[package], selection=["Mods/SprocketLaserRangefinder.dll"])
+        one = self._render(
+            packages=[package],
+            selection=["Mods/SprocketLaserRangefinder.dll"],
+            update={"version": "0.2.0", "verdict": "compatible"},
+        )
         self.assertEqual(one["toolbar"]["selection"], "1 selected")
         self.assertEqual(
             one["toolbar"]["buttons"],
@@ -649,6 +694,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
                 "name": "MelonLoader",
                 "display_name": {"en": "MelonLoader", "zh": "MelonLoader"},
             }],
+            newer={"version": "0.2.0", "verdict": "incompatible"},
         )
 
         marker = _find(result["rows"][0], lambda node: "update-alert" in node["className"])
@@ -759,6 +805,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             packages=[package],
             selection=["Mods/SprocketLaserRangefinder.dll", "Mods/CannonSoundPoolFix.dll.disable"],
             action="update-selected",
+            update={"version": "0.2.0", "verdict": "compatible"},
         )
         queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
         self.assertEqual(
@@ -778,6 +825,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             packages=[package],
             selection=["Mods/SprocketLaserRangefinder.dll"],
             action="update-selected",
+            newer={"version": "0.2.0", "verdict": "incompatible"},
         )
 
         self.assertTrue(result["toolbar"]["buttons"]["update-selected"], "拦下来就不该点亮「更新」")
@@ -803,6 +851,8 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             packages=[package],
             selection=["Mods/SprocketLaserRangefinder.dll"],
             action="update-selected",
+            newer={"version": "0.3.0", "verdict": "incompatible"},
+            update={"version": "0.2.0", "verdict": "compatible"},
         )
 
         self.assertFalse(result["toolbar"]["buttons"]["update-selected"], "有能装的那版就该点亮")

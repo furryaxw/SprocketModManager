@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.models import ReleaseInfo
+from ..domain.semver import Version
 from ..infrastructure.config import effective_index_url
 
 
@@ -50,3 +51,21 @@ def release_data(release: ReleaseInfo | None) -> dict[str, Any] | None:
             for asset in release.assets
         ],
     }
+
+
+def release_order_key(package: dict[str, Any]) -> tuple[int, Version]:
+    """目录读数的排序键：这条包的最新发布版本；读不出来排最后。
+
+    目录读数按发布版本从新到旧给，界面「按版本」排序照这份次序摆 —— 版本高低只有 `domain.semver`
+    一处口径。
+    """
+    releases = package.get("releases") or []
+    text = (
+        str(releases[0].get("version", ""))
+        if releases
+        else str((package.get("release") or {}).get("version", ""))
+    )
+    try:
+        return (1, Version.parse(text))
+    except ValueError:
+        return (0, Version(0, 0, 0))

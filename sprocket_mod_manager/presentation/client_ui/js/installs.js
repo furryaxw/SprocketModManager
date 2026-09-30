@@ -341,45 +341,31 @@ function installedRowReinstallSource(item) {
     return (state.packages || []).some((candidate) => candidate.id === id) ? id : "";
 }
 
-/** 比安装记录更新的 Registry 发布版本，没有就返回 null。**环境拦下来的也算** —— 它只负责行上那枚感叹号。
- *
- * 比的是**安装记录里的版本**（与 Registry 同源的 `x.y.z[-pre]`），不是 DLL 自报版本：
- * 程序集版本可能是 `1.6.2.0` 这种 4 段式，拿它比会把所有库都误判成有新版本。
- */
-function newerRelease(item) {
+/** 这个目录行对应的安装记录；没有归属、或没登记过就是 null。 */
+function installedRecord(item) {
     const id = installedRowPackageId(item);
     if (!id) return null;
-    const pkg = (state.packages || []).find((candidate) => candidate.id === id);
-    const record = (state.installed || []).find((entry) => entry.id === id);
-    const latest = String(pkg?.release?.version || "");
-    const installedVersion = String(record?.version || "");
-    if (!latest || !installedVersion) return null;
-    if (compareVersions(latest, installedVersion) <= 0) return null;
-    return packageReleases(pkg).find((release) => release.version === latest)
-        || {version: latest, verdict: packageVerdict(pkg)};
+    return (state.installed || []).find((entry) => entry.id === id) || null;
+}
+
+/** 比安装记录更新的最新发布，没有就返回 null。**环境拦下来的也算** —— 它只负责行上那枚感叹号。
+ *
+ * 版本比较归后端（索引是它生成的，`domain/semver` 只有一份口径），算好的结果记在安装记录上，
+ * 这里只把 `newer` 读出来。比的是安装记录里的版本，不是 DLL 自报的程序集版本：程序集版本可能是
+ * `1.6.2.0` 这种 4 段式，拿它比会把所有库都误判成有新版本。
+ */
+function newerRelease(item) {
+    return installedRecord(item)?.newer || null;
 }
 
 /**
- * 可安装的更新：比装着的版本新、并且本机环境跑得了的**最高**那一版。
+ * 可安装的更新：比装着的版本新、并且本机环境跑得了的**最高**那一版，也就是后端算好的 `update`。
  *
  * 判定为「不兼容」的版本不算更新 —— 装上去也跑不起来，所以它不点亮「更新」按钮，
  * 只在行上留一枚感叹号说明为什么没有更新可装。判定未知（没声明）的照常算更新。
  */
 function installableUpdate(item) {
-    const id = installedRowPackageId(item);
-    if (!id) return null;
-    const pkg = (state.packages || []).find((candidate) => candidate.id === id);
-    const record = (state.installed || []).find((entry) => entry.id === id);
-    const installedVersion = String(record?.version || "");
-    if (!pkg || !installedVersion) return null;
-    const releases = packageReleases(pkg);
-    return (releases.length ? releases : [pkg.release])
-        .filter((release) => release?.version && release.verdict !== VERDICT_INCOMPATIBLE)
-        .filter((release) => compareVersions(release.version, installedVersion) > 0)
-        .reduce(
-            (best, release) => (!best || compareVersions(release.version, best.version) > 0 ? release : best),
-            null,
-        );
+    return installedRecord(item)?.update || null;
 }
 
 /** 已装那个版本自己的判定：拿不到（比如纯本地的手工 DLL）就算没这回事。 */

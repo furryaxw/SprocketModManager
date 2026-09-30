@@ -321,23 +321,6 @@ function categoryText(category) {
     return tr(key);
 }
 
-function semverParts(value) {
-    const match = String(value || "").match(/^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/);
-    return match ? [Number(match[1]), Number(match[2]), Number(match[3]), match[4] || ""] : [0, 0, 0, ""];
-}
-
-function compareVersions(left, right) {
-    const a = semverParts(left);
-    const b = semverParts(right);
-    for (let index = 0; index < 3; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    if (a[3] === b[3]) return 0;
-    if (!a[3]) return 1;
-    if (!b[3]) return -1;
-    return String(a[3]).localeCompare(String(b[3]));
-}
-
 function packageBrowserView() {
     const translations = state.page === "translations";
     return {
@@ -358,6 +341,10 @@ function isModloaderPackage(pkg) {
 
 function filteredPackages(view) {
     const {keyword, category, sort, translations} = view;
+    // 「按版本排序」用的是后端给的次序：目录读数就是按发布版本从新到旧排的，前端不再自己比版本
+    // （版本高低与兼容判定都只有后端一处口径）。每一条都从这份镜像里来，所以位置就是它的名次。
+    const releaseRank = new Map();
+    (state.packages || []).forEach((pkg, index) => releaseRank.set(pkg, index));
     const result = state.packages.filter((pkg) => {
         if (isModloaderPackage(pkg)) return false;
         if ((pkg.category === "translation") !== translations) return false;
@@ -384,7 +371,8 @@ function filteredPackages(view) {
             if (featured) return featured;
         }
         if (sort === "release") {
-            return compareVersions(right.release?.version, left.release?.version) || packageLabel(left).localeCompare(packageLabel(right));
+            return (releaseRank.get(left) ?? 0) - (releaseRank.get(right) ?? 0)
+                || packageLabel(left).localeCompare(packageLabel(right));
         }
         if (sort === "category") {
             return left.category.localeCompare(right.category) || packageLabel(left).localeCompare(packageLabel(right));

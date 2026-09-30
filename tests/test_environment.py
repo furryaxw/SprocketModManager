@@ -1243,7 +1243,7 @@ class EnvironmentUiTests(unittest.TestCase):
 
         self.assertIn('id="catalog-notice"', self.html)
         self.assertIn("function packageHidden(pkg)", compatibility)
-        self.assertIn("function preferredVersion(pkg)", compatibility)
+        self.assertIn("function installTarget(pkg)", compatibility)
         self.assertIn("state.showIncompatible", catalog)
         self.assertIn("showIncompatible: false", core, "默认隐藏")
         self.assertNotIn("showIncompatible", settings, "开关不落盘：重启回到默认")

@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .base import ApiController
-from ..api_support import release_data as _release_data, startup_trace as _startup_trace
+from ..api_support import (
+    release_data as _release_data,
+    release_order_key as _release_order_key,
+    startup_trace as _startup_trace,
+)
 from ...application.data_hub import KEY_SERVERS
 from ...application.solver import DependencySolver
 from ...domain.errors import ModManagerError
@@ -368,6 +372,8 @@ class PrivateDistributionController(ApiController):
             "server_name": entry["name"],
             "server_url": entry["url"],
             "release": _release_data(release),
+            # 私有包只有一个候选版本（服务器上当前那份），所以「要装哪版」就是它。
+            "install_target": str(release.version),
             "install_assets": [archive["name"]] if archive else [],
             "archive": archive,
             "adoption_files": [item.to_dict() for item in manifest.files],
@@ -544,6 +550,9 @@ class PrivateDistributionController(ApiController):
         installed = self._installed()
         for package in packages:
             package["installed"] = self._installed_entry(installed.get(package["id"]))
+        # 与公开目录同一口径：读数按发布版本从新到旧给（界面「按版本」排序照它摆，前端不比版本）。
+        packages.sort(key=lambda package: str(package.get("id", "")))
+        packages.sort(key=_release_order_key, reverse=True)
         return {
             "servers": servers,
             "packages": packages,

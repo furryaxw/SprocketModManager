@@ -7,15 +7,32 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .base import ApiController
-from ..api_support import release_data as _release_data, source_from_config as _source_from_config
+from ..api_support import (
+    release_data as _release_data,
+    release_order_key as _release_order_key,
+    source_from_config as _source_from_config,
+)
 from ...application.catalog import load_catalog
-from ...application.data_hub import KEY_CATALOG, KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS
+from ...application.data_hub import (
+    KEY_CATALOG,
+    KEY_ENVIRONMENT,
+    KEY_INSTALLED,
+    KEY_LOADERS,
+    KEY_SERVERS,
+)
 from ...application.identifiers import scan_targets, toggle_directories
 from ...application.local_mods import scan_local_mods, summarize
 from ...application.service import ModManagerService
-from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
+from ...domain.compatibility import (
+    COMPATIBLE,
+    INCOMPATIBLE,
+    CapabilityEnvironment,
+    loader_table_decision,
+    release_verdict,
+)
 from ...domain.errors import CatalogBusyError, ModManagerError, ModToggleError
 from ...domain.models import RegistryPackage, ReleaseInfo
+from ...domain.semver import Version
 from ...infrastructure.config import effective_game_path, effective_index_url
 from ...infrastructure.desktop import reveal_in_file_manager
 from ...infrastructure.dll_metadata import MELON_KIND_MODS, flush_metadata_cache
@@ -108,6 +125,7 @@ class CatalogController(ApiController):
                 release_data["verdict"] = release_verdict(
                     environment, category=package.category, dependencies=release.dependencies
                 )
+            releases = self._release_verdicts(service, package, environment)
             packages.append(
                 {
                     "id": package.id,
@@ -127,13 +145,34 @@ class CatalogController(ApiController):
                     # 兼容性那一行的轴名要按供给关系反查：能力 id 常常不是包 id（`bepinex.bepinex`
                     # 由 `bepinex.bepinex-be` 供给），界面只拿到包就认不出这根轴。
                     "provides": dict(package.provides),
+                    "install_target": self._install_target(releases, release_data),
                     "release": release_data,
-                    "releases": self._release_verdicts(service, package, environment),
+                    "releases": releases,
                     "install_assets": [asset.name for asset in selected_assets],
                     "installed": self._installed_entry(records.get(package.id)),
                 }
             )
+        # 目录读数按发布版本从新到旧给：版本高低由后端一处排（`domain.semver`），界面照这份次序摆，
+        # 不再自己比版本。同版本的按 id，读数才稳定。
+        packages.sort(key=lambda package: str(package["id"]))
+        packages.sort(key=_release_order_key, reverse=True)
         return packages
+
+    @staticmethod
+    def _install_target(
+            releases: list[dict[str, Any]],
+            release_data: dict[str, Any] | None,
+    ) -> str:
+        """默认要装的版本：兼容的里面最高的；一个兼容的都没有才退到最新那版。
+
+        列表和详情页上写的那个版本号就是它，点「安装」装下去的也是它 —— 所以这个口径只有这一处。
+        """
+        for entry in releases:
+            if entry["verdict"] == COMPATIBLE:
+                return str(entry["version"])
+        if releases:
+            return str(releases[0]["version"])
+        return str((release_data or {}).get("version", ""))
 
     @staticmethod
     def _release_verdicts(
@@ -232,14 +271,87 @@ class CatalogController(ApiController):
     ) -> list[dict[str, Any]]:
         target = service or self.service
         records = self._installed(target) if installed is None else installed
+        environment = self._environment()
         return [
             {
                 "id": package_id,
                 **(self._installed_entry(info) or {}),
                 **(self._package_shape(target, package_id, info)),
+                **(self._update_info(target, package_id, info, environment)),
             }
             for package_id, info in sorted(records.items())
         ]
+
+    def _update_info(
+            self,
+            service: ModManagerService,
+            package_id: str,
+            info: dict[str, Any] | None,
+            environment: CapabilityEnvironment,
+    ) -> dict[str, Any]:
+        """这条记录相对注册表还能更新到哪版；没有就不给。
+
+        更新判定挂在这份读数上，不挂在目录读数上 —— 安装记录一变它就要重算，而目录读数不会跟着
+        安装动作刷新。只用条目内嵌的发布数据（`get_installed` 不联网），版本比较归 `domain.semver`。
+
+        `newer` 是比装着的这版新的**最新**那版，兼容与否都算：行上那枚「为什么不是最新」的感叹号
+        要它。`update` 是其中本机跑得起来、真能装上去的最高那版。
+        """
+        empty: dict[str, Any] = {"newer": None, "update": None}
+        try:
+            current = Version.parse(str((info or {}).get("version") or ""))
+        except ValueError:
+            return empty
+
+        newer: dict[str, Any] | None = None
+        update: dict[str, Any] | None = None
+        for entry in self._update_candidates(service, package_id, environment):
+            try:
+                version = Version.parse(str(entry.get("version", "")))
+            except ValueError:
+                continue
+            if version <= current:
+                continue
+            summary = {
+                "version": str(entry.get("version", "")),
+                "verdict": str(entry.get("verdict", "")),
+            }
+            if newer is None:
+                newer = summary
+            if update is None and summary["verdict"] != INCOMPATIBLE:
+                update = summary
+            if newer is not None and update is not None:
+                break
+        return {"newer": newer, "update": update}
+
+    def _update_candidates(
+            self,
+            service: ModManagerService,
+            package_id: str,
+            environment: CapabilityEnvironment,
+    ) -> list[dict[str, Any]]:
+        """这个包发布过哪些版本（新到旧，带判定）。
+
+        公开包用注册表里内嵌的发布数据；私有包不进公开注册表，发布数据在开发者服务器那份读数里
+        （与界面看到的是同一份）。两条路的发布数据都是随条目来的，所以这里不联网。
+        """
+        registry = getattr(service, "registry", None)
+        if registry is not None and registry.has_package(package_id):
+            package = registry.get(package_id)
+            if package.releases is None:
+                return []
+            return self._release_verdicts(service, package, environment)
+
+        servers = self.data.get(KEY_SERVERS) or {}
+        for package in servers.get("packages") or ():
+            if not isinstance(package, dict) or package.get("id") != package_id:
+                continue
+            release = package.get("release") or {}
+            version = str(release.get("version", ""))
+            if not version:
+                return []
+            return [{"version": version, "verdict": str(release.get("verdict", ""))}]
+        return []
 
     @staticmethod
     def _package_shape(
