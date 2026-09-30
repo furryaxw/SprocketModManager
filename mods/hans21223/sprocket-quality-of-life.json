@@ -35,7 +35,7 @@
     }
   ],
   "recommendations": [],
-  "featured": false,
+  "featured": true,
   "install": {
     "files": [
       {
