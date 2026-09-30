@@ -159,9 +159,9 @@ class MetadataLocalizationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            package_dir = root / "mods" / "example.mod"
-            package_dir.mkdir(parents=True)
-            (package_dir / "sprocket-mod.json").write_text(
+            author_dir = root / "mods" / "example"
+            author_dir.mkdir(parents=True)
+            (author_dir / "mod.json").write_text(
                 json.dumps(metadata()),
                 encoding="utf-8",
             )
@@ -234,9 +234,9 @@ class MetadataLocalizationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            package_dir = root / "mods" / "example.mod"
-            package_dir.mkdir(parents=True)
-            (package_dir / "sprocket-mod.json").write_text(
+            author_dir = root / "mods" / "example"
+            author_dir.mkdir(parents=True)
+            (author_dir / "mod.json").write_text(
                 json.dumps(metadata()),
                 encoding="utf-8",
             )
