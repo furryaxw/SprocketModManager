@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import json
-import time
 import unittest
 
 from sprocket_mod_manager.domain.diagnosis import (
+    BLOCK_CHARS,
     BUCKET_OPTIONAL,
     BUCKET_REQUIRED,
     CHECKS,
+    EVIDENCE_CHARS,
     LOG_ROLES,
+    RULE_BUDGET_SECONDS,
     UNJUDGED_GAME_NOT_CONFIGURED,
     UNJUDGED_LOG_MISSING,
     UNJUDGED_TIMEOUT,
     diagnosis_pack,
-    evaluate,
+    log_hits,
+    log_signatures,
+    log_unjudged,
+    sort_findings,
     split_buckets,
+    state_findings,
 )
 
 TEXT = {"zh": "标题", "en": "Title"}
@@ -49,6 +55,25 @@ def lines_of(*texts, role: str = "loader_log", source: str = "MelonLoader/Latest
         {"role": role, "source": source, "number": index, "text": text}
         for index, text in enumerate(texts, start=1)
     ]
+
+
+def judge(facts, lines, pack, *, available_roles=()):
+    """把行喂进签名再取结论：与生产那条路走的是同一组原语。"""
+    normalized = diagnosis_pack(pack)
+    hits, unjudged = state_findings(facts or {}, normalized)
+    signatures = log_signatures(normalized)
+    for line in lines or ():
+        for signature in signatures:
+            signature.feed(line)
+    hits.extend(log_hits(signatures))
+    unjudged.extend(
+        log_unjudged(
+            signatures,
+            available_roles=available_roles,
+            timed_out={signature.rule_id for signature in signatures if signature.abandoned},
+        )
+    )
+    return sort_findings(hits), unjudged
 
 
 class PackNormalizationTests(unittest.TestCase):
@@ -141,7 +166,7 @@ class EvaluateTests(unittest.TestCase):
             log_rule("required-first", bucket=BUCKET_REQUIRED, level=1),
             log_rule("optional-high", bucket=BUCKET_OPTIONAL, level=1),
         )
-        findings, unjudged = evaluate({}, lines_of("boom"), pack, available_roles=["loader_log"])
+        findings, unjudged = judge({}, lines_of("boom"), pack, available_roles=["loader_log"])
 
         self.assertEqual(unjudged, [])
         self.assertEqual(
@@ -155,7 +180,7 @@ class EvaluateTests(unittest.TestCase):
             log_rule("r1", bucket=BUCKET_REQUIRED, level=1),
             log_rule("o1", bucket=BUCKET_OPTIONAL, level=1),
         )
-        findings, _ = evaluate({}, lines_of("boom"), pack, available_roles=["loader_log"])
+        findings, _ = judge({}, lines_of("boom"), pack, available_roles=["loader_log"])
 
         buckets = split_buckets(findings)
         self.assertEqual([item["rule"] for item in buckets[BUCKET_REQUIRED]], ["r1", "r2"])
@@ -165,7 +190,7 @@ class EvaluateTests(unittest.TestCase):
         pack = pack_of(log_rule("a"))
         lines = lines_of("fine", "boom one", "fine", "boom two")
 
-        findings, _ = evaluate({}, lines, pack, available_roles=["loader_log"])
+        findings, _ = judge({}, lines, pack, available_roles=["loader_log"])
 
         self.assertEqual(findings[0]["params"]["count"], "2")
         self.assertEqual(findings[0]["log_line"]["number"], 2)
@@ -174,13 +199,13 @@ class EvaluateTests(unittest.TestCase):
     def test_a_signature_stays_quiet_below_its_minimum_hit_count(self) -> None:
         entry = log_rule("a")
         entry["match"]["min_count"] = 2
-        findings, _ = evaluate({}, lines_of("boom"), pack_of(entry), available_roles=["loader_log"])
+        findings, _ = judge({}, lines_of("boom"), pack_of(entry), available_roles=["loader_log"])
 
         self.assertEqual(findings, [])
 
     def test_a_signature_only_reads_the_roles_it_asked_for(self) -> None:
         pack = pack_of(log_rule("a"))
-        findings, _ = evaluate(
+        findings, _ = judge(
             {}, lines_of("boom", role="unity_log"), pack, available_roles=["loader_log", "unity_log"]
         )
 
@@ -190,7 +215,7 @@ class EvaluateTests(unittest.TestCase):
         pack = pack_of(log_rule("a", pattern="missing '([^']+)' for (.+)"))
         lines = lines_of("missing 'Foo.dll' for Bar")
 
-        findings, _ = evaluate({}, lines, pack, available_roles=["loader_log"])
+        findings, _ = judge({}, lines, pack, available_roles=["loader_log"])
 
         self.assertEqual(findings[0]["params"]["group1"], "Foo.dll")
         self.assertEqual(findings[0]["params"]["group2"], "Bar")
@@ -202,7 +227,7 @@ class EvaluateTests(unittest.TestCase):
             "packages_broken": [{"id": "lavagang.melonloader", "name": "MelonLoader", "is_loader": True}],
         }
 
-        findings, _ = evaluate(facts, [], pack_of(entry))
+        findings, _ = judge(facts, [], pack_of(entry))
 
         self.assertEqual(findings[0]["go_to"], {"page": "installed", "package": "lavagang.melonloader"})
 
@@ -215,43 +240,37 @@ class EvaluateTests(unittest.TestCase):
             "packages_broken": [{"id": "other", "is_loader": True}],
         }
 
-        findings, _ = evaluate(facts, [], pack_of(entry))
+        findings, _ = judge(facts, [], pack_of(entry))
 
         self.assertEqual(findings[0]["go_to"]["package"], "pinned")
 
     def test_a_state_rule_is_unjudged_when_no_game_directory_is_configured(self) -> None:
-        _, unjudged = evaluate({}, [], pack_of(state_rule("a")))
+        _, unjudged = judge({}, [], pack_of(state_rule("a")))
 
         self.assertEqual(unjudged, [{"rule": "a", "reason": UNJUDGED_GAME_NOT_CONFIGURED}])
 
     def test_a_signature_is_unjudged_when_its_log_is_absent(self) -> None:
-        _, unjudged = evaluate({}, [], pack_of(log_rule("a")), available_roles=["unity_log"])
+        _, unjudged = judge({}, [], pack_of(log_rule("a")), available_roles=["unity_log"])
 
         self.assertEqual(unjudged, [{"rule": "a", "reason": UNJUDGED_LOG_MISSING}])
 
     def test_a_missing_pack_judges_nothing_and_reports_nothing(self) -> None:
-        findings, unjudged = evaluate({}, [], diagnosis_pack(None))
+        findings, unjudged = judge({}, [], diagnosis_pack(None))
 
         self.assertEqual((findings, unjudged), ([], []))
 
-    def test_a_spent_budget_leaves_the_remaining_rules_unjudged(self) -> None:
-        pack = pack_of(log_rule("a"), log_rule("b"))
+    def test_a_signature_that_used_up_its_gate_stops_scanning(self) -> None:
+        """闸门吃满的那一条不再往下扫，收尾按「没跑完」报 —— 单条规则拖不垮整次诊断。"""
+        signature = log_signatures(diagnosis_pack(pack_of(log_rule("a"))))[0]
+        signature.cost = RULE_BUDGET_SECONDS + 1
+        signature.feed({"role": "loader_log", "source": "s", "number": 1, "text": "boom"})
 
-        findings, unjudged = evaluate(
-            {},
-            lines_of("boom"),
-            pack,
-            available_roles=["loader_log"],
-            deadline=time.monotonic() - 1,
-        )
-
-        self.assertEqual(findings, [])
+        self.assertTrue(signature.abandoned)
+        self.assertEqual(signature.count, 0, "闸门吃满之后不该再匹配")
+        self.assertIsNone(signature.finding())
         self.assertEqual(
-            unjudged,
-            [
-                {"rule": "a", "reason": UNJUDGED_TIMEOUT},
-                {"rule": "b", "reason": UNJUDGED_TIMEOUT},
-            ],
+            log_unjudged([signature], available_roles=["loader_log"], timed_out={"a"}),
+            [{"rule": "a", "reason": UNJUDGED_TIMEOUT}],
         )
 
 
@@ -259,7 +278,7 @@ class StateCheckTests(unittest.TestCase):
     """四条检查各自的触发条件 —— 不满足就一条都不出。"""
 
     def _findings(self, entry: dict, facts: dict) -> list[dict]:
-        findings, _ = evaluate({**{"game_configured": True}, **facts}, [], pack_of(entry))
+        findings, _ = judge({**{"game_configured": True}, **facts}, [], pack_of(entry))
         return findings
 
     def test_environment_conflict_fires_and_names_the_loader_it_points_at(self) -> None:
@@ -333,6 +352,34 @@ class StateCheckTests(unittest.TestCase):
         self.assertEqual(
             self._findings(entry, {"loaders_available": True, "loaders_installed": ["x"]}), []
         )
+
+
+class BlockWindowTests(unittest.TestCase):
+    """行内滑窗：长行切成有重叠的块，跨块的命中割不断；一行里命中几处仍然只算一行。"""
+
+    def test_a_hit_spanning_a_block_boundary_is_still_found(self) -> None:
+        line = "x" * (BLOCK_CHARS - 2) + "boom"
+
+        findings, _ = judge({}, lines_of(line), pack_of(log_rule("a")))
+
+        self.assertEqual(len(findings), 1, "跨过块边界的那条命中必须还在")
+
+    def test_a_hit_at_the_end_of_a_long_line_is_still_found(self) -> None:
+        line = "x" * (BLOCK_CHARS * 3) + "boom"
+
+        findings, _ = judge({}, lines_of(line), pack_of(log_rule("a")))
+
+        self.assertEqual(len(findings), 1)
+
+    def test_several_hits_in_one_line_count_as_one(self) -> None:
+        findings, _ = judge({}, lines_of("boom and boom"), pack_of(log_rule("a")))
+
+        self.assertEqual(findings[0]["params"]["count"], "1", "计数是行数，不是命中处数")
+
+    def test_the_quoted_line_is_capped_for_the_report(self) -> None:
+        findings, _ = judge({}, lines_of("boom " + "y" * EVIDENCE_CHARS), pack_of(log_rule("a")))
+
+        self.assertEqual(len(findings[0]["log_line"]["text"]), EVIDENCE_CHARS)
 
 
 if __name__ == "__main__":

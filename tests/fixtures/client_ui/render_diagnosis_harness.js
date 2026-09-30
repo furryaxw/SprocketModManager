@@ -86,7 +86,6 @@ class FakeElement {
 const elements = {
     "#diagnosis-report": new FakeElement("div"),
     "#diagnosis-meta": new FakeElement("span"),
-    "#diagnosis-note": new FakeElement("p"),
     "#run-diagnosis": new FakeElement("button"),
     "#toast-region": new FakeElement("div"),
 };
@@ -250,8 +249,6 @@ async function exercise() {
     return {
         error,
         meta: elements["#diagnosis-meta"].textContent,
-        note: elements["#diagnosis-note"].textContent,
-        noteHidden: elements["#diagnosis-note"].hidden,
         buttonLabel: button.textContent,
         buttonDisabled: button.disabled,
         duringLabel,
