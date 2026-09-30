@@ -155,22 +155,6 @@ const sandbox = {
     // `beginInstall` 收尾会重画目录页；这个 harness 只画已安装页（也没加载 core.js），
     // 给个没有容器的视图让它早退。
     packageBrowserView: () => ({container: null, count: {textContent: ""}}),
-    // 与 core.js 同一套版本比较：更新提示靠它判断「发布版本比已装版本新」。
-    semverParts: (value) => {
-        const match = String(value || "").match(/^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/);
-        return match ? [Number(match[1]), Number(match[2]), Number(match[3]), match[4] || ""] : [0, 0, 0, ""];
-    },
-    compareVersions: (left, right) => {
-        const a = sandbox.semverParts(left);
-        const b = sandbox.semverParts(right);
-        for (let index = 0; index < 3; index += 1) {
-            if (a[index] !== b[index]) return a[index] - b[index];
-        }
-        if (a[3] === b[3]) return 0;
-        if (!a[3]) return 1;
-        if (!b[3]) return -1;
-        return String(a[3]).localeCompare(String(b[3]));
-    },
     tr: (key, values = {}) => {
         // 只翻译本 harness 断言的键；其余返回键名，便于发现未覆盖的文案。
         const table = {

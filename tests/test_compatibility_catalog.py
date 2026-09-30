@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from sprocket_mod_manager.application.data_hub import KEY_SERVERS
 from sprocket_mod_manager.application.service import ModManagerService
 from sprocket_mod_manager.domain.errors import CatalogBusyError
 from sprocket_mod_manager.infrastructure.config import ConfigStore
@@ -171,6 +172,111 @@ class CatalogVerdictTests(unittest.TestCase):
         self.assertTrue(packages, "目录读数在数据层里")
         for key in ("packages", "installed", "unrecognized", "local_mods", "local_summary", "has_any_mods"):
             self.assertNotIn(key, payload, f"目录读数不该再带 {key}")
+
+    def test_the_catalog_carries_the_version_it_would_install(self) -> None:
+        """界面上「点安装会装哪版」是后端挑好的：1.1.0 不兼容，所以是 1.0.0。"""
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                package = catalog_packages(api)[0]
+            finally:
+                self._close(api)
+
+        self.assertEqual(package["install_target"], "1.0.0")
+
+    def test_the_catalog_lists_the_newest_release_first(self) -> None:
+        """目录次序就是版本次序：界面「按版本」排序照它摆，不再自己比版本。"""
+        entries = [
+            embedded("test.old", version="1.0.0", sprocket_range="*"),
+            embedded("test.new", version="2.0.0", sprocket_range="*"),
+            embedded("test.mid", version="1.5.0", sprocket_range="*"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory), packages=entries)
+            try:
+                api.load_catalog()
+                ids = [package["id"] for package in catalog_packages(api)]
+            finally:
+                self._close(api)
+
+        self.assertEqual(ids, ["test.new", "test.mid", "test.old"])
+
+    def test_an_installed_record_carries_its_update_decision(self) -> None:
+        """更新判定跟着安装记录走，装着的版本一变它就跟着变。
+
+        `newer` 是比装着的这版新的最新那版（兼容与否都算，行上那枚感叹号要它）；
+        `update` 是其中本机跑得起来、真能装上去的最高那版。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            rows = {}
+            try:
+                api.load_catalog()
+                for version in ("0.9.0", "1.0.0", "1.1.0"):
+                    rows[version] = api._catalog_controller._installed_data(
+                        api.service,
+                        installed={
+                            "test.mod": {"name": "TestMod", "version": version, "files": []}
+                        },
+                    )[0]
+            finally:
+                self._close(api)
+
+        behind = rows["0.9.0"]
+        self.assertEqual(behind["newer"], {"version": "1.1.0", "verdict": "incompatible"})
+        self.assertEqual(
+            behind["update"],
+            {"version": "1.0.0", "verdict": "compatible"},
+            "最新那版跑不了时，能装的最高版是 1.0.0",
+        )
+        middle = rows["1.0.0"]
+        self.assertEqual(middle["newer"], {"version": "1.1.0", "verdict": "incompatible"})
+        self.assertIsNone(middle["update"], "比 1.0.0 新的那版不兼容，就没有能装的更新")
+        current = rows["1.1.0"]
+        self.assertIsNone(current["newer"], "装着的已经是最新那版")
+        self.assertIsNone(current["update"])
+
+    def test_a_record_without_a_registry_entry_gets_no_update_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                row = api._catalog_controller._installed_data(
+                    api.service,
+                    installed={"someone.private": {"name": "Private", "version": "1.0.0", "files": []}},
+                )[0]
+            finally:
+                self._close(api)
+
+        self.assertIsNone(row["newer"])
+        self.assertIsNone(row["update"])
+
+    def test_a_private_package_takes_its_candidates_from_the_server_reading(self) -> None:
+        """私有包不进公开注册表：它的候选版本在开发者服务器那份读数里，判定照旧由后端给。"""
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                api.data.publish(
+                    KEY_SERVERS,
+                    {
+                        "packages": [
+                            {"id": "test-server:private.mod", "release": {"version": "2.0.0"}},
+                        ]
+                    },
+                )
+                row = api._catalog_controller._installed_data(
+                    api.service,
+                    installed={
+                        "test-server:private.mod": {"name": "Private", "version": "1.0.0", "files": []}
+                    },
+                )[0]
+            finally:
+                self._close(api)
+
+        self.assertEqual(row["newer"], {"version": "2.0.0", "verdict": ""})
+        self.assertEqual(row["update"], {"version": "2.0.0", "verdict": ""})
 
     def test_a_second_catalog_load_reports_busy(self) -> None:
         """同一时刻只跑一份目录加载：第二份立刻报 catalog_busy，数据层那一路保持上一次读数。"""

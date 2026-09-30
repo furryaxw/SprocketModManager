@@ -5,7 +5,7 @@ function installVersions(packageIds) {
     const versions = {};
     for (const id of packageIds) {
         const pkg = (state.packages || []).find((item) => item.id === id);
-        const version = pkg ? preferredVersion(pkg) : "";
+        const version = installTarget(pkg);
         if (version) versions[id] = version;
     }
     return versions;
@@ -387,7 +387,7 @@ function renderDetail() {
     }
     versionGroup.append(version);
     const newest = String(pkg.release?.version || "");
-    const target = preferredVersion(pkg);
+    const target = installTarget(pkg);
     if (newest && target && newest !== target) {
         // 最新那版当前装不了：划掉它，别让人以为划掉的是「会装的版本」。
         const superseded = document.createElement("s");
@@ -607,7 +607,7 @@ function appendCompatibility(block, pkg, verdict) {
     }
 
     const newest = String(pkg.release?.version || "");
-    const target = preferredVersion(pkg);
+    const target = installTarget(pkg);
     if (target && newest && target !== newest) {
         addFact(tr("installTargetLabel"), tr("installTargetSuperseded", {target, newest}));
     }

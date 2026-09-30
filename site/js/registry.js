@@ -35,44 +35,13 @@ async function loadRegistry(forceRefresh) {
 
 function normalizeEmbeddedRelease(release) {
     if (!release || typeof release !== "object") return null;
-    const parsedVersion = parseSemver(release.version);
-    if (!parsedVersion || !Array.isArray(release.assets) || !release.assets.length) return null;
+    if (!release.version || !Array.isArray(release.assets) || !release.assets.length) return null;
     return {
         ...release,
         tag_name: release.tag,
         html_url: release.page_url,
-        parsedVersion,
         selectedAssets: release.assets,
     };
-}
-
-function parseSemver(value) {
-    const match = String(value).match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
-    return match ? {
-        major: +match[1],
-        minor: +match[2],
-        patch: +match[3],
-        prerelease: match[4] ? match[4].split(".") : []
-    } : null;
-}
-
-function compareSemver(left, right) {
-    for (const field of ["major", "minor", "patch"]) if (left[field] !== right[field]) return left[field] - right[field];
-    if (!left.prerelease.length && right.prerelease.length) return 1;
-    if (left.prerelease.length && !right.prerelease.length) return -1;
-    for (let index = 0; index < Math.max(left.prerelease.length, right.prerelease.length); index += 1) {
-        if (left.prerelease[index] === undefined) return -1;
-        if (right.prerelease[index] === undefined) return 1;
-        const a = left.prerelease[index];
-        const b = right.prerelease[index];
-        if (a === b) continue;
-        const an = /^\d+$/.test(a);
-        const bn = /^\d+$/.test(b);
-        if (an && bn) return Number(a) - Number(b);
-        if (an !== bn) return an ? -1 : 1;
-        return a.localeCompare(b);
-    }
-    return 0;
 }
 
 function updateCategoryCounts() {
@@ -96,15 +65,15 @@ function filteredPackages() {
         ].join(" ").toLocaleLowerCase();
         return text.includes(state.query);
     });
+    // 「按版本」= 索引给的次序：index.json 的包列表就是按发布版本从新到旧排的，
+    // 站点不再自己解析版本号（版本高低只有生成索引那一处口径）。
+    const releaseRank = new Map();
+    state.packages.forEach((pkg, index) => releaseRank.set(pkg, index));
     return packages.sort((left, right) => {
         const featured = Number(Boolean(right.featured)) - Number(Boolean(left.featured));
         if (featured) return featured;
         if (state.sort === "release") {
-            const a = state.releases.get(left.id)?.parsedVersion;
-            const b = state.releases.get(right.id)?.parsedVersion;
-            if (a && b) return compareSemver(b, a);
-            if (a) return -1;
-            if (b) return 1;
+            return (releaseRank.get(left) ?? 0) - (releaseRank.get(right) ?? 0);
         }
         if (state.sort === "category") {
             const category = left.category.localeCompare(right.category);

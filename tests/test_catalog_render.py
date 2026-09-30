@@ -47,6 +47,7 @@ def package(
         category: str = "utility",
         sprocket_range: str = "",
         loader_range: str = "",
+        install_target: str = "",
 ) -> dict:
     latest_version, latest_verdict = releases[0]
     return {
@@ -65,6 +66,12 @@ def package(
         "featured": False,
         "install_assets": ["Mod.dll"],
         "installed": None,
+        # 后端挑好的安装版本（挑哪一版是它的判定，Python 侧单独测）：兼容的里面最高的，
+        # 一个兼容的都没有才退到最新那版。
+        "install_target": install_target or next(
+            (version for version, verdict in releases if verdict == "compatible"),
+            latest_version,
+        ),
         "release": {"tag": f"v{latest_version}", "version": latest_version, "verdict": latest_verdict, "assets": []},
         "releases": [
             {
