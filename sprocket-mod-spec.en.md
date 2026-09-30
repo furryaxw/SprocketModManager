@@ -19,6 +19,9 @@ Pages index.json
   -> loader kinds: lay install.payload out through its target, subpath, and layout, or install by type through install.files
 ```
 
+The index lists `packages` with each entry's newest release first: a consumer that sorts by
+version follows that order instead of parsing versions itself.
+
 For entries using the default GitHub source, Pages does not store:
 
 - current or historical version numbers;
