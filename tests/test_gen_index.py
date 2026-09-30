@@ -283,7 +283,11 @@ class BaselineTests(unittest.TestCase):
             written = output.is_file()
 
         self.assertEqual(seen["furryaxw.sprocket-depth"], known, "拉取前先把已知的交给 loader")
-        self.assertEqual(index["packages"][0]["releases"], known, "拉取失败就沿用基线那份")
+        self.assertEqual(
+            next(p for p in index["packages"] if p["id"] == "furryaxw.sprocket-depth")["releases"],
+            known,
+            "拉取失败就沿用基线那份",
+        )
         self.assertTrue(written, "索引仍然要落盘")
 
 
@@ -561,6 +565,42 @@ class CompatibleIndexTests(unittest.TestCase):
             if package["id"] == "furryaxw.sprocket-depth"
         )
         self.assertEqual(warnings, ["v0.1.2: sprocket 版本写错了一段"])
+
+
+class ReleaseOrderTests(unittest.TestCase):
+    """索引里的包按最新发布版本从新到旧（站点「按版本」排序直接用这份次序）。"""
+
+    def test_the_newest_release_comes_first_and_an_empty_one_last(self) -> None:
+        packages = [
+            {"id": "b.mod", "releases": [{"version": "1.0.0"}]},
+            {"id": "a.mod", "releases": [{"version": "2.0.0"}]},
+            {"id": "c.mod", "releases": []},
+            {"id": "d.mod", "releases": [{"version": "1.5.0"}]},
+        ]
+
+        self.assertEqual(
+            [package["id"] for package in GEN_INDEX.release_order(packages)],
+            ["a.mod", "d.mod", "b.mod", "c.mod"],
+        )
+
+    def test_the_order_follows_the_registry_semver(self) -> None:
+        """口径就是 `domain.semver`：`be` / `fix1` 这类非关键字的后缀按「发布后修正」读，比正式版新。
+
+        列表新的在前，所以 `6.0.0-be.788` 排在 `6.0.0` 之前、`0.2.0-fix1` 排在 `0.2.0` 之前；
+        只有 `alpha`/`beta`/`rc` 那类关键字才排在正式版之前（更旧）。前端原来那套比较器反着来：
+        它把任何预发布段都当成比正式版旧。
+        """
+        packages = [
+            {"id": "plain.mod", "releases": [{"version": "0.2.0"}]},
+            {"id": "fix.mod", "releases": [{"version": "0.2.0-fix1"}]},
+            {"id": "be.mod", "releases": [{"version": "6.0.0-be.788"}]},
+            {"id": "six.mod", "releases": [{"version": "6.0.0"}]},
+        ]
+
+        self.assertEqual(
+            [package["id"] for package in GEN_INDEX.release_order(packages)],
+            ["be.mod", "six.mod", "fix.mod", "plain.mod"],
+        )
 
 
 class ProvidersTableTests(unittest.TestCase):

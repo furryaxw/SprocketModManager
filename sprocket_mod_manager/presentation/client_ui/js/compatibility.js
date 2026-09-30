@@ -43,7 +43,7 @@ function packageVerdict(pkg) {
 function targetVerdict(pkg) {
     // 包整体一个兼容版本都没有时，装哪版都一样跑不起来 —— 跟着包判，别让那一版自己的「未知」把话说软。
     if (packageVerdict(pkg) === VERDICT_INCOMPATIBLE) return VERDICT_INCOMPATIBLE;
-    const target = preferredVersion(pkg);
+    const target = installTarget(pkg);
     if (!target) return VERDICT_UNKNOWN;
     const release = packageReleases(pkg).find((entry) => entry.version === target);
     return release?.verdict || packageVerdict(pkg);
@@ -55,12 +55,13 @@ function packageHidden(pkg) {
     return packageVerdict(pkg) === VERDICT_INCOMPATIBLE;
 }
 
-/** 默认要装的版本：兼容的里面最高的；没有兼容的就最新的。 */
-function preferredVersion(pkg) {
-    const releases = packageReleases(pkg);
-    const compatible = releases.find((release) => release.verdict === VERDICT_COMPATIBLE);
-    if (compatible) return compatible.version;
-    return releases.length ? releases[0].version : String(pkg?.release?.version || "");
+/**
+ * 默认要装的版本：后端按当前环境挑好的那个（兼容的里面最高的；没有兼容的就最新那版）。
+ *
+ * 挑哪一版是判定，归后端 —— 前端拿到的 `install_target` 就是答案，不再自己按判定列表挑。
+ */
+function installTarget(pkg) {
+    return String(pkg?.install_target || "");
 }
 
 function verdictClass(verdict) {
@@ -118,7 +119,7 @@ function versionWithSource(pkg, version) {
  * 它跟最新版不一致时前面缀一个 `↓`（详情页另外把最新版划掉）。
  */
 function installTargetVersion(pkg) {
-    const target = preferredVersion(pkg);
+    const target = installTarget(pkg);
     const newest = String(pkg?.release?.version || "");
     const text = versionWithSource(pkg, target);
     return target && newest && target !== newest ? `↓ ${text}` : text;

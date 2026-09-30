@@ -1136,6 +1136,27 @@ def scan_mods(mods_dir: Path) -> list[dict]:
     return [packages[key] for key in sorted(packages)]
 
 
+def _newest_release_version(package: dict[str, Any]) -> tuple[int, Version]:
+    """这条读数的最新发布版本；读不出来就是 `(0, 0.0.0)`（排最后）。"""
+    releases = package.get("releases") or []
+    if not releases:
+        return (0, Version(0, 0, 0))
+    try:
+        return (1, Version.parse(str(releases[0].get("version", ""))))
+    except ValueError:
+        return (0, Version(0, 0, 0))
+
+
+def release_order(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """索引里的包按最新发布版本从新到旧排；读不出发布版本的排最后，同版本按 id。
+
+    站点「按版本」排序直接用这份次序，不再自己解析版本号 —— 版本高低只有这一处口径。
+    """
+    ordered = sorted(packages, key=lambda package: str(package.get("id", "")))
+    ordered.sort(key=_newest_release_version, reverse=True)
+    return ordered
+
+
 def load_index_releases(source: str | Path) -> dict[str, list[dict[str, Any]]]:
     """Releases per package from an existing index: the incremental baseline, and also
     what a failed fetch falls back to. `source` is a local file or an index URL.
@@ -1311,6 +1332,8 @@ def generate_index(
             warnings = _package_compatibility_warnings(package.get("releases") or [])
             if warnings:
                 package["compatibility_warnings"] = warnings
+
+    packages = release_order(packages)
 
     providers, providers_warnings = load_providers_table(
         providers_file if providers_file is not None else PROVIDERS_FILE,
