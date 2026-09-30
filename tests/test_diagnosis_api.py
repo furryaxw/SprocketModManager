@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,7 +22,12 @@ from test_environment import (  # noqa: E402
     loader_package,
     unity_payload,
 )
-from sprocket_mod_manager.application.diagnosis import build_facts  # noqa: E402
+from sprocket_mod_manager.application import diagnosis  # noqa: E402
+from sprocket_mod_manager.application.diagnosis import (  # noqa: E402
+    LogSpec,
+    build_facts,
+    run_diagnosis,
+)
 from sprocket_mod_manager.domain.compatibility import CapabilityEnvironment  # noqa: E402
 from sprocket_mod_manager.domain.registry import Registry  # noqa: E402
 from sprocket_mod_manager.infrastructure.app_logging import manager_log_path  # noqa: E402
@@ -379,6 +385,66 @@ class FactBuildingTests(unittest.TestCase):
             )
 
         self.assertEqual(facts["loaders_installed"], [LOADER_ID])
+
+
+class StreamingDeliveryTests(unittest.TestCase):
+    """边扫边交：错误列表先建出来，随后日志的命中一条条交出去。"""
+
+    def _run(self, log_text: str, *, on_progress, interval: float | None = None) -> dict:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Latest.log"
+            path.write_text(log_text, encoding="utf-8")
+            context = (
+                patch.object(diagnosis, "PROGRESS_SECONDS", interval)
+                if interval is not None
+                else nullcontext()
+            )
+            with context:
+                return run_diagnosis(
+                    game_dir=None,
+                    registry=None,
+                    installed={},
+                    environment=None,
+                    pack=SHIPPED_PACK,
+                    pack_source="registry",
+                    specs=(LogSpec(role="loader_log", label="Latest.log", path=path),),
+                    on_progress=on_progress,
+                )
+
+    def test_the_error_list_is_handed_over_before_the_logs_are_read(self) -> None:
+        seen: list[dict] = []
+
+        report = self._run("nothing to see\n", on_progress=seen.append)
+
+        self.assertTrue(seen, "扫描一开始就该交一份现状出来")
+        self.assertTrue(seen[0]["running"], "第一份现状说的是「正在扫描」")
+        self.assertFalse(seen[-1]["running"], "收尾那一份说明扫完了")
+        self.assertEqual(seen[-1], report, "收尾那份与返回值是同一份")
+
+    def test_a_hit_is_handed_over_while_the_scan_still_runs(self) -> None:
+        seen: list[dict] = []
+
+        self._run(
+            "\n".join(["filler", "filler", ICALL_LINE]) + "\n",
+            on_progress=seen.append,
+            interval=0.0,
+        )
+
+        during = [state for state in seen if state["running"]]
+        self.assertTrue(
+            any(state["required"] or state["optional"] for state in during),
+            "命中在扫描结束之前就交出去了",
+        )
+
+    def test_the_reading_says_which_log_was_read(self) -> None:
+        seen: list[dict] = []
+
+        report = self._run(ICALL_LINE + "\n", on_progress=seen.append)
+
+        self.assertEqual(report["sources"][0]["label"], "Latest.log")
+        self.assertEqual(report["sources"][0]["status"], "", "读到了就是 ok（空串）")
+        self.assertEqual(report["sources"][0]["lines"], 1)
+        self.assertEqual(report["lines_read"], 1)
 
 
 if __name__ == "__main__":

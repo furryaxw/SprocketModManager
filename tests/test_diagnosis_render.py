@@ -58,7 +58,6 @@ def report(**overrides) -> dict:
         "unjudged": [],
         "sources": [],
         "lines_read": 12,
-        "truncated": False,
         "elapsed_ms": 5,
     }
     base.update(overrides)
@@ -196,12 +195,6 @@ class DiagnosisRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["report"]["sections"], [])
         self.assertEqual(result["meta"], "")
         self.assertIsNone(result["report"]["unjudged"])
-
-    def test_a_truncated_log_is_flagged_above_the_findings(self) -> None:
-        result = self._render(language="zh", report=report(truncated=True))
-
-        self.assertFalse(result["noteHidden"])
-        self.assertEqual(result["note"], "日志很长，只读了最后一部分。")
 
     def test_nothing_found_points_at_the_log_upload(self) -> None:
         result = self._render(language="zh", report=report())

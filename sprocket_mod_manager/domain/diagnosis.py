@@ -11,9 +11,14 @@
 来源按**角色**寻址（`manager_log` / `loader_log` / `unity_log`），不认加载器 id ——
 换一个加载器不用改规则包。
 
-`evaluate()` 只读入参，不碰 I/O 也不落盘；它可能提前收工：`deadline` 到了就把没跑完的
-规则记成 `timeout`。规则包的正则来自远程，而标准库的 `re` 没有超时，所以卡在单条正则里
-是这份实现挡不住的残留风险，`deadline` 只能在行与规则之间收手。
+日志签名按行喂进 `LogSignature`：读取与匹配交织，内存只留命中计数与首条命中，所以扫到哪就
+能出到哪。规则包的正则来自远程、标准库的 `re` 又没有超时，所以一段文本按 `BLOCK_CHARS` 切块
+滑过、块间留 `BLOCK_OVERLAP` 重叠：单次匹配的规模有界，跨度不超过重叠的命中不会被块边界切断。
+单条规则另有 `RULE_BUDGET_SECONDS` 闸门，吃满就只放弃那一条并记 `timeout`。
+**单次 `search` 内部中断不了** —— 这是这里挡不住的残留风险，所以窗口宽度本身就是一个安全参数。
+
+这几个原语只读入参，不碰 I/O 也不落盘：`state_findings()` 算环境检查那几条，`log_signatures()`
+造出每条签名的匹配状态、由调用方读到一行就喂一行，`log_hits()` 与 `log_unjudged()` 取结论。
 """
 
 from __future__ import annotations
@@ -59,6 +64,15 @@ UNJUDGED_GAME_NOT_CONFIGURED = "game_not_configured"
 UNJUDGED_LOG_MISSING = "log_missing"
 UNJUDGED_PACK_MISSING = "pack_missing"
 UNJUDGED_TIMEOUT = "timeout"
+
+# 行内滑窗：单块匹配的规模有界。块间重叠用来保住跨块的命中，所以它必须是「一条命中最多能
+# 有多长」的上界 —— 规则包里出现更长的跨度时，那条命中会被块边界切断。
+BLOCK_CHARS = 8 * 1024
+BLOCK_OVERLAP = 512
+# 单条规则的匹配闸门：一条病态正则只该毁掉它自己，不该拖垮整次诊断。
+RULE_BUDGET_SECONDS = 1.0
+# 报告里引用的原文上限：命中行本身可能是一整行日志，证据给到能认出来就够。
+EVIDENCE_CHARS = 2000
 
 
 def _text_map(value: Any) -> dict[str, str]:
@@ -216,7 +230,7 @@ def _finding(
     }
 
 
-def _check_environment_conflict(facts: Mapping[str, Any]) -> tuple[dict[str, str], None] | None:
+def _check_environment_conflict(facts: Mapping[str, Any]) -> dict[str, str] | None:
     """点名那个加载器：`loader` 是给人看的名字，`package` 是跳转用的包 id。
 
     两者都由采集层从注册表补齐 —— 判定层手上没有注册表，也不该有。
@@ -225,17 +239,14 @@ def _check_environment_conflict(facts: Mapping[str, Any]) -> tuple[dict[str, str
     if not isinstance(conflict, dict) or not conflict.get("conflict"):
         return None
     package = str(conflict.get("loader") or "")
-    return (
-        {
-            "package": package,
-            "loader": str(conflict.get("loader_name") or "") or package,
-            "sprocket": str(facts.get("game_version") or ""),
-        },
-        None,
-    )
+    return {
+        "package": package,
+        "loader": str(conflict.get("loader_name") or "") or package,
+        "sprocket": str(facts.get("game_version") or ""),
+    }
 
 
-def _broken_files(facts: Mapping[str, Any], *, loaders: bool) -> tuple[dict[str, str], None] | None:
+def _broken_files(facts: Mapping[str, Any], *, loaders: bool) -> dict[str, str] | None:
     broken = [
         item
         for item in facts.get("packages_broken") or ()
@@ -245,33 +256,30 @@ def _broken_files(facts: Mapping[str, Any], *, loaders: bool) -> tuple[dict[str,
         return None
     first = broken[0]
     package = str(first.get("id") or "")
-    return (
-        {
-            "package": package,
-            "name": str(first.get("name") or "") or package,
-            "count": str(len(broken)),
-        },
-        None,
-    )
+    return {
+        "package": package,
+        "name": str(first.get("name") or "") or package,
+        "count": str(len(broken)),
+    }
 
 
-def _check_loader_files_broken(facts: Mapping[str, Any]) -> tuple[dict[str, str], None] | None:
+def _check_loader_files_broken(facts: Mapping[str, Any]) -> dict[str, str] | None:
     return _broken_files(facts, loaders=True)
 
 
-def _check_mod_files_broken(facts: Mapping[str, Any]) -> tuple[dict[str, str], None] | None:
+def _check_mod_files_broken(facts: Mapping[str, Any]) -> dict[str, str] | None:
     return _broken_files(facts, loaders=False)
 
 
-def _check_loader_missing(facts: Mapping[str, Any]) -> tuple[dict[str, str], None] | None:
+def _check_loader_missing(facts: Mapping[str, Any]) -> dict[str, str] | None:
     if not facts.get("game_configured") or not facts.get("loaders_available"):
         return None
     if facts.get("loaders_installed"):
         return None
-    return {"sprocket": str(facts.get("game_version") or "")}, None
+    return {"sprocket": str(facts.get("game_version") or "")}
 
 
-CHECK_FUNCTIONS: dict[str, Callable[[Mapping[str, Any]], tuple[dict[str, str], None] | None]] = {
+CHECK_FUNCTIONS: dict[str, Callable[[Mapping[str, Any]], dict[str, str] | None]] = {
     "environment_conflict": _check_environment_conflict,
     "loader_files_broken": _check_loader_files_broken,
     "mod_files_broken": _check_mod_files_broken,
@@ -283,99 +291,165 @@ def _state_finding(entry: Mapping[str, Any], facts: Mapping[str, Any]) -> dict[s
     function = CHECK_FUNCTIONS.get(str(entry["check"]))
     if function is None:
         return None
-    hit = function(facts)
-    if hit is None:
+    params = function(facts)
+    if params is None:
         return None
-    params, _evidence = hit
     return _finding(entry, params=params, log_line=None)
 
 
-def _log_finding(entry: Mapping[str, Any], lines: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:
-    """按签名扫一遍日志行：命中数够就出一条，证据取第一条命中的原文与行号。"""
-    match = entry["match"]
-    try:
-        pattern = re.compile(match["pattern"])
-    except re.error:
-        return None
-    sources = set(match["sources"])
-    first: dict[str, Any] | None = None
-    count = 0
-    for line in lines:
-        if str(line.get("role") or "") not in sources:
-            continue
-        text = str(line.get("text") or "")
-        found = pattern.search(text)
-        if found is None:
-            continue
-        count += 1
-        if first is None:
-            first = {
-                "source": str(line.get("source") or ""),
-                "number": int(line.get("number") or 0),
-                "text": text,
-                "groups": [group or "" for group in found.groups()],
-            }
-    if first is None or count < match["min_count"]:
-        return None
-    params = {"count": str(count)}
-    for index, group in enumerate(first["groups"], start=1):
-        params[f"group{index}"] = group
-    return _finding(
-        entry,
-        params=params,
-        log_line={
-            "source": first["source"],
-            "number": first["number"],
-            "text": first["text"],
-        },
-    )
-
-
-def evaluate(
-        facts: Mapping[str, Any] | None,
-        lines: Iterable[Mapping[str, Any]] | None,
-        pack: Mapping[str, Any] | None,
-        *,
-        available_roles: Iterable[str] | None = None,
-        deadline: float | None = None,
+def state_findings(
+        facts: Mapping[str, Any],
+        pack: Mapping[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """规则包 -> （命中条目，未判定条目）。
+    """环境检查类规则：不依赖日志，一次算完。
 
-    传进来的包先过一遍 `diagnosis_pack()`：入口只此一个，未规范化的包在这里也不会把
-    求值炸掉。命中条目按「必须解决在前、桶内 level 升序」排好。未判定的三种原因：游戏目录没配、
-    这条要的日志没有、时间预算到了 —— 「事实不够」一律不说成「没问题」。
+    游戏目录没配时这一整类都判不了 —— 事实不够就不说成没问题。
     """
-    facts = facts or {}
-    pack = diagnosis_pack(pack)
-    roles = {str(role) for role in (available_roles or ())}
-    game_ready = bool(facts.get("game_configured"))
-    collected = list(lines or ())
     findings: list[dict[str, Any]] = []
     unjudged: list[dict[str, Any]] = []
-
+    game_ready = bool(facts.get("game_configured"))
     for entry in pack.get("entries") or ():
-        if deadline is not None and time.monotonic() > deadline:
-            unjudged.append({"rule": entry["id"], "reason": UNJUDGED_TIMEOUT})
+        if not entry.get("check"):
             continue
-        if entry.get("check"):
-            if not game_ready:
-                unjudged.append({"rule": entry["id"], "reason": UNJUDGED_GAME_NOT_CONFIGURED})
-                continue
-            hit = _state_finding(entry, facts)
-        else:
-            if not set(entry["match"]["sources"]) & roles:
-                unjudged.append({"rule": entry["id"], "reason": UNJUDGED_LOG_MISSING})
-                continue
-            hit = _log_finding(entry, collected)
+        if not game_ready:
+            unjudged.append({"rule": entry["id"], "reason": UNJUDGED_GAME_NOT_CONFIGURED})
+            continue
+        hit = _state_finding(entry, facts)
         if hit is not None:
             findings.append(hit)
-
-    findings.sort(key=lambda item: (0 if item["bucket"] == BUCKET_REQUIRED else 1, item["level"], item["rule"]))
     return findings, unjudged
 
 
+class LogSignature:
+    """一条日志签名规则的匹配状态：命中行数与首条命中都累计在这里。
+
+    调用方读到一行就 `feed()` 一行，读取与匹配交织：内存只留计数与首条命中，扫到哪就能出到哪，
+    `settled` 之后也照旧统计 —— 报告里的 `{count}` 是这条签名在整份日志里出现的**真实行数**，
+    不是"够不够判"。
+
+    同一行里命中几处只算一次：这个计数是行数，配上 `min_count` 才有"刷了几次屏"的意思。
+    """
+
+    def __init__(self, entry: Mapping[str, Any]) -> None:
+        match = entry["match"]
+        self.entry = entry
+        self.rule_id = str(entry["id"])
+        self.sources = frozenset(str(role) for role in match["sources"])
+        self.minimum = int(match["min_count"])
+        self.count = 0
+        self.first: dict[str, Any] | None = None
+        self.cost = 0.0
+        self._pattern = re.compile(match["pattern"])
+
+    @property
+    def settled(self) -> bool:
+        """已经够出一条结论了：调用方可以先把这条交给界面，再继续往下扫。"""
+        return self.first is not None and self.count >= self.minimum
+
+    @property
+    def abandoned(self) -> bool:
+        """闸门吃满：这一条不再往下扫，收尾时按「没跑完」报。"""
+        return self.cost > RULE_BUDGET_SECONDS
+
+    def feed(self, line: Mapping[str, Any]) -> None:
+        if self.abandoned or str(line.get("role") or "") not in self.sources:
+            return
+        text = str(line.get("text") or "")
+        started = time.monotonic()
+        found = self._search(text)
+        self.cost += time.monotonic() - started
+        if found is None:
+            return
+        self.count += 1
+        if self.first is None:
+            self.first = {
+                "source": str(line.get("source") or ""),
+                "number": int(line.get("number") or 0),
+                "text": text[:EVIDENCE_CHARS],
+                "groups": [group or "" for group in found.groups()],
+            }
+
+    def _search(self, text: str) -> re.Match[str] | None:
+        """一行之内按窗口滑过：短行一次匹配，长行切成有重叠的块，跨块的命中割不断。"""
+        if len(text) <= BLOCK_CHARS:
+            return self._pattern.search(text)
+        step = BLOCK_CHARS - BLOCK_OVERLAP
+        for start in range(0, len(text), step):
+            found = self._pattern.search(text[start : start + BLOCK_CHARS])
+            if found is not None:
+                return found
+        return None
+
+    def finding(self) -> dict[str, Any] | None:
+        """命中够数就是一条结论：证据取第一条命中的行号与原文。"""
+        if self.first is None or self.count < self.minimum:
+            return None
+        params = {"count": str(self.count)}
+        for index, group in enumerate(self.first["groups"], start=1):
+            params[f"group{index}"] = group
+        return _finding(
+            self.entry,
+            params=params,
+            log_line={
+                "source": self.first["source"],
+                "number": self.first["number"],
+                "text": self.first["text"],
+            },
+        )
+
+
+def log_signatures(pack: Mapping[str, Any]) -> tuple[LogSignature, ...]:
+    """规则包里所有日志签名规则的匹配状态：一趟读取喂完所有规则，不必为每条规则各读一遍日志。"""
+    return tuple(
+        LogSignature(entry) for entry in pack.get("entries") or () if entry.get("match")
+    )
+
+
+def log_hits(signatures: Iterable[LogSignature]) -> list[dict[str, Any]]:
+    """已经够条件出结论的签名：命中一条就是一条，扫描进行中可以反复来取。"""
+    hits: list[dict[str, Any]] = []
+    for signature in signatures:
+        hit = signature.finding()
+        if hit is not None:
+            hits.append(hit)
+    return hits
+
+
+def log_unjudged(
+        signatures: Iterable[LogSignature],
+        *,
+        available_roles: Iterable[str] | None = None,
+        timed_out: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """判不了的签名：闸门吃满的（没扫完）与没有来源覆盖的（没日志）。
+
+    闸门吃满那些确实没扫完，所以既不能报命中也不能报"没有" —— 一律 `timeout`。
+    """
+    roles = {str(role) for role in (available_roles or ())}
+    stopped = {str(rule) for rule in timed_out}
+    unjudged: list[dict[str, Any]] = []
+    for signature in signatures:
+        if signature.rule_id in stopped:
+            unjudged.append({"rule": signature.rule_id, "reason": UNJUDGED_TIMEOUT})
+        elif not signature.sources & roles:
+            unjudged.append({"rule": signature.rule_id, "reason": UNJUDGED_LOG_MISSING})
+    return unjudged
+
+
+def sort_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """命中条目的次序：必须解决在前，桶内按 level 升序，同 level 按规则 id。"""
+    findings.sort(
+        key=lambda item: (
+            0 if item["bucket"] == BUCKET_REQUIRED else 1,
+            item["level"],
+            item["rule"],
+        )
+    )
+    return findings
+
+
 def split_buckets(findings: Iterable[Mapping[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """按「必须解决 / 非必要」分成两栏；顺序沿用 `evaluate()` 排好的那份。"""
+    """按「必须解决 / 非必要」分成两栏；顺序沿用 `sort_findings()` 排好的那份。"""
     buckets: dict[str, list[dict[str, Any]]] = {BUCKET_REQUIRED: [], BUCKET_OPTIONAL: []}
     for finding in findings:
         buckets.setdefault(str(finding.get("bucket") or BUCKET_OPTIONAL), []).append(dict(finding))
