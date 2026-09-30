@@ -1,6 +1,6 @@
 "use strict";
 
-// 侧栏「上传日志」对话框：管理器日志恒在，加载器日志只在运行时真的在盘上时列出。
+// 侧栏「上传日志」对话框：管理器日志恒在，加载器与游戏自己的日志只在定位得到时列出。
 let logSources = [];
 
 async function loadLogSources() {
@@ -15,6 +15,7 @@ async function loadLogSources() {
 
 function logSourceLabel(source) {
     if (source.kind === "manager") return tr("uploadManagerLog");
+    if (source.kind === "game") return tr("logSourceGame");
     return tr("logSourceLoader", {loader: source.loader});
 }
 

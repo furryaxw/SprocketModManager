@@ -28,6 +28,7 @@ class FakeElement {
         this.disabled = false;
         this.type = "";
         this.hidden = false;
+        this.dataset = {};
         this.listeners = {};
         this.attributes = {};
         this.title = "";

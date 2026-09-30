@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from .errors import RegistryError
 from .models import RegistryPackage
 from .compatibility import DEFAULT_GAME_CAPABILITY, providers_table
+from .diagnosis import diagnosis_pack
 from ..utilities.package_paths import (
     file_type_is_wildcard,
     file_type_namespace,
@@ -25,11 +26,13 @@ class Registry:
             provider_table: dict[str, Any] | None = None,
             game_id: str = DEFAULT_GAME_CAPABILITY,
             game_name: str = "",
+            diagnosis: dict[str, Any] | None = None,
     ):
         self.packages = tuple(packages)
         self.game_id = str(game_id)
         self.game_name = str(game_name)
         self.provider_table = providers_table(provider_table)
+        self.diagnosis = diagnosis_pack(diagnosis)
         self._by_id = {package.id: package for package in packages}
         if len(self._by_id) != len(packages):
             raise RegistryError("registry contains duplicate package ids")
@@ -211,7 +214,9 @@ class Registry:
                 packages.append(RegistryPackage.from_dict(raw))
             except (KeyError, TypeError, ValueError) as exc:
                 raise RegistryError(f"invalid registry package: {exc}") from exc
-        registry = cls(packages, data.get("providers"), game_id, game_name)
+        registry = cls(
+            packages, data.get("providers"), game_id, game_name, diagnosis=data.get("diagnosis")
+        )
         for package in registry.packages:
             for dependency in package.dependencies:
                 dependency_id = dependency.get("id")

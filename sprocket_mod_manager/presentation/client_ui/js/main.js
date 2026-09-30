@@ -58,7 +58,8 @@ function wireEvents() {
     $("#open-repository").addEventListener("click", () => openUrl(state.links.repository));
     $("#open-registry").addEventListener("click", () => openUrl(state.links.registry));
     $("#open-manager-directory").addEventListener("click", openManagerDirectory);
-    $("#upload-logs").addEventListener("click", () => void openLogPicker());
+    $("#run-diagnosis").addEventListener("click", () => void runDiagnosis());
+    $("#diagnosis-upload-logs").addEventListener("click", () => void openLogPicker());
     $("#modal-close").addEventListener("click", () => closeModal(false));
     $("#modal-cancel").addEventListener("click", () => closeModal(false));
     $("#modal-confirm").addEventListener("click", () => closeModal(true));
