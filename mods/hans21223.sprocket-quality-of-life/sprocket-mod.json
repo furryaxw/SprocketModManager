@@ -27,9 +27,14 @@
       "id": "bepinex.bepinex-be",
       "version": "*",
       "when": "*"
+    },
+    {
+      "id": "hans21223.sprocket-mod-loader",
+      "version": "*",
+      "when": "*"
     }
   ],
-  "recommendations": ["hans21223.sprocket-mod-loader"],
+  "recommendations": [],
   "featured": false,
   "install": {
     "files": [
