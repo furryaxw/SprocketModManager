@@ -1,83 +1,79 @@
-"""把一份日志读成带**真实行号**的行，供诊断的签名匹配使用。
+"""把一份日志读成**带真实行号**的行流，供诊断的签名匹配使用。
 
-行号必须对得上文件本身：报告里的证据要能让用户翻到那一行，所以任何取舍都只丢行、不改号。
+行号必须对得上文件本身：报告里的证据要能让用户翻到那一行，所以这里只丢内容、不改号。
 
-超过行数上限时**头尾各留一段**：出事的证据要么在启动阶段（`Player.log` 最前面那些引擎初始化
-与加载器引导），要么在结束前（崩溃前的最后几行），中间是重复的运行期刷屏。只留尾部会把
-「游戏根本起不来」这类诊断整体丢掉 —— 那正是这份功能最该覆盖的场景。
-
-只读调用方点名的那一份文件；轮转出来的历史日志不在这个模块的职责里。
+一次只持有当前这一行：日志是别人写的文件，模组刷屏或长时间运行会有几百 MB，所以既不整份读、
+也不设"太大就不读"。收住规模的是下游那两处 —— 匹配时的行内滑窗，和每条规则的闸门。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-# 超过这个大小根本不去读：日志是别人写的文件，读进来之前先看它多大。
-MAX_BYTES = 8 * 1024 * 1024
-# 匹配跑在这些行上。真实的加载器日志在几百 KB 量级、`Player.log` 在几 MB 量级，
-# 所以正常大小的日志整份都读得到，只有病态大的才会走到下面那对头尾窗口。
-MAX_LINES = 200000
-# 真要取舍时开头留多少行：引擎初始化与加载器引导都在这几行里。
-HEAD_LINES = 20000
+from typing import Any, Iterator
 
 READ_OK = ""
 READ_MISSING = "missing"
-READ_TOO_LARGE = "too_large"
 READ_UNREADABLE = "unreadable"
 
 
-@dataclass(frozen=True)
-class LogText:
-    """一份日志的读取结果：行、结果码、以及有没有丢掉中间一段。"""
+class LogStream:
+    """一份日志的行流。
 
-    lines: tuple[dict[str, Any], ...]
-    status: str
-    truncated: bool
+    `status` 在打开时就定了，`count` 随着行一起推进。读完（或提前收手）之后 `close()`，再把
+    `reading()` 交给报告 —— 那份读数说的是这份日志**实际发生了什么**，不是猜的。
+    """
 
-    @property
-    def readable(self) -> bool:
-        return self.status == READ_OK
+    def __init__(self, path: Path | None, *, role: str, source: str) -> None:
+        self.role = role
+        self.source = source
+        self.path = Path(path) if path is not None else None
+        self.status = READ_MISSING
+        self.count = 0
+        self._handle: Any = None
 
+    def __enter__(self) -> "LogStream":
+        self.open()
+        return self
 
-def _window(raw: list[str]) -> tuple[list[tuple[int, str]], bool]:
-    """要保留的行 -> （行号, 正文）的有序表，以及有没有丢掉中间一段。"""
-    total = len(raw)
-    if total <= MAX_LINES:
-        return [(number, text) for number, text in enumerate(raw, start=1)], False
-    tail_lines = MAX_LINES - HEAD_LINES
-    head = [(number, text) for number, text in enumerate(raw[:HEAD_LINES], start=1)]
-    # 下标从 0 起、行号从 1 起，尾段第一行的行号是「它前面有多少行」加一。
-    tail_start = total - tail_lines + 1
-    tail = [
-        (tail_start + offset, text)
-        for offset, text in enumerate(raw[total - tail_lines:])
-    ]
-    return head + tail, True
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
+    def open(self) -> None:
+        """打开文件；打不开不是错误，而是这份日志的一个状态。"""
+        if self.path is None:
+            return
+        try:
+            self._handle = self.path.open("r", encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            self.status = READ_MISSING
+        except OSError:
+            self.status = READ_UNREADABLE
+        else:
+            self.status = READ_OK
 
-def read_log_lines(path: Path | None, *, role: str, source: str) -> LogText:
-    """读一份日志。读不到不是错误，是「这份日志没有」—— 由结果码表达。"""
-    if path is None:
-        return LogText((), READ_MISSING, False)
-    target = Path(path)
-    try:
-        size = target.stat().st_size
-    except OSError:
-        return LogText((), READ_MISSING, False)
-    if size > MAX_BYTES:
-        # 宁可说「这份太大没读」，也不要交出一份行号对不上的证据。
-        return LogText((), READ_TOO_LARGE, True)
-    try:
-        text = target.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return LogText((), READ_UNREADABLE, False)
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        if self._handle is None:
+            return
+        for number, text in enumerate(self._handle, start=1):
+            self.count = number
+            yield {
+                "role": self.role,
+                "source": self.source,
+                "number": number,
+                "text": text.rstrip("\r\n"),
+            }
 
-    window, truncated = _window(text.splitlines())
-    lines = tuple(
-        {"role": role, "source": source, "number": number, "text": item}
-        for number, item in window
-    )
-    return LogText(lines, READ_OK, truncated)
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+    def reading(self) -> dict[str, Any]:
+        """报告里每份日志的读数：它是什么、在哪、什么状态、读到了多少行。"""
+        return {
+            "role": self.role,
+            "label": self.source,
+            "path": str(self.path) if self.path is not None else "",
+            "status": self.status,
+            "lines": self.count,
+        }

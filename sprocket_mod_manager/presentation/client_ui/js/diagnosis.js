@@ -167,13 +167,11 @@ function diagnosisSection(bucket, findings, headingKey, emptyKey) {
 function renderDiagnosis() {
     const container = $("#diagnosis-report");
     const meta = $("#diagnosis-meta");
-    const note = $("#diagnosis-note");
     if (!container) return;
     container.replaceChildren();
 
     if (!diagnosisReport) {
         meta.textContent = "";
-        note.hidden = true;
         const empty = document.createElement("p");
         empty.className = "diagnosis-empty";
         empty.textContent = tr("diagnosisNeverRan");
@@ -188,8 +186,6 @@ function renderDiagnosis() {
             version: report.pack_version,
             time: new Date(report.generated_at).toLocaleString(),
         });
-    note.hidden = !report.truncated;
-    note.textContent = report.truncated ? tr("diagnosisTruncated") : "";
 
     container.append(
         diagnosisSection("required", report.required || [], "diagnosisRequired", "diagnosisNoRequired")
