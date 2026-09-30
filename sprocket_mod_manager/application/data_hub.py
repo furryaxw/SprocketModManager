@@ -27,6 +27,8 @@ KEY_LOADERS = "loaders"
 KEY_ENVIRONMENT = "environment"
 KEY_QUEUE = "queue"
 KEY_SERVERS = "servers"
+# 诊断那份读数不走"刷新器"：它由一次扫描边走边推，订阅者拿到的每一条都是当时的完整现状。
+KEY_DIAGNOSIS = "diagnosis"
 
 KEYS: tuple[str, ...] = (
     KEY_CATALOG,
@@ -35,6 +37,7 @@ KEYS: tuple[str, ...] = (
     KEY_ENVIRONMENT,
     KEY_QUEUE,
     KEY_SERVERS,
+    KEY_DIAGNOSIS,
 )
 
 # 一次刷新：参数来自 `request()`，返回值就是要写进这个 key 的东西。

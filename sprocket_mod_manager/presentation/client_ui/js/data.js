@@ -66,6 +66,8 @@ function installDataMirror() {
         queue: () => dataValue("queue")?.entries || [],
         // 加载器目录：注册表里有哪些加载器包、装没装、能不能更新、当前环境下能不能跑。
         modloaders: () => dataValue("loaders")?.modloaders || [],
+        // 「错误修复」页的那份现状：一次扫描边走边推，`running` 说明还在不在扫。
+        diagnosis: () => dataValue("diagnosis") || null,
         // 公开注册表那一份。
         publicPackages: () => dataValue("catalog")?.packages || [],
         // 开发者服务器：服务器清单与它们带来的私有包。

@@ -23,6 +23,7 @@ from test_environment import (  # noqa: E402
     unity_payload,
 )
 from sprocket_mod_manager.application import diagnosis  # noqa: E402
+from sprocket_mod_manager.application.data_hub import KEY_DIAGNOSIS  # noqa: E402
 from sprocket_mod_manager.application.diagnosis import (  # noqa: E402
     LogSpec,
     build_facts,
@@ -125,6 +126,19 @@ class DiagnosisApiTests(unittest.TestCase):
         self.assertEqual(finding["log_line"]["source"], "MelonLoader/Latest.log")
         self.assertEqual(finding["log_line"]["number"], 2, "证据要能翻到文件里的那一行")
         self.assertIn(ICALL_LINE, finding["log_line"]["text"])
+
+    def test_the_report_is_pushed_while_it_is_being_built(self) -> None:
+        """现状走数据层：扫描一开始推一份，收尾再推一份 —— 界面不用等这条调用返回。"""
+        game = self._game()
+        detected_melonloader(game)
+        self._loader_log(game, f"{ICALL_LINE}\n")
+        api = self._client(game)
+
+        report = api.run_diagnosis()["report"]
+
+        self.assertEqual(api.data.get(KEY_DIAGNOSIS), report, "数据层最后那份就是返回值")
+        self.assertFalse(report["running"], "收尾那份说明扫完了")
+        self.assertGreaterEqual(api.data.revision(KEY_DIAGNOSIS), 2, "扫描期间至少还推过一次")
 
     def test_the_unity_log_is_located_through_app_info(self) -> None:
         game = self._game()
