@@ -715,5 +715,154 @@ class ProvidersTableTests(unittest.TestCase):
             self.assertEqual(set(entry), {"loader", "version", "sprocket"})
 
 
+def rule(**overrides) -> dict:
+    entry = {
+        "id": "test-rule",
+        "bucket": "optional",
+        "level": 3,
+        "title": {"zh": "标题", "en": "Title"},
+        "match": {"sources": ["loader_log"], "pattern": "boom"},
+    }
+    entry.update(overrides)
+    return entry
+
+
+class DiagnosisPackTests(unittest.TestCase):
+    """`diagnosis.json`：日志签名与环境检查，改动靠发索引生效。"""
+
+    def write_pack(self, directory: str, payload) -> Path:
+        path = Path(directory) / GEN_INDEX.DIAGNOSIS_FILE_NAME
+        text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_rule_is_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(directory, {"pack_version": 4, "entries": [rule()]})
+            pack, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(pack["pack_version"], 4)
+        self.assertEqual([entry["id"] for entry in pack["entries"]], ["test-rule"])
+
+    def test_a_missing_file_is_an_empty_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pack, warnings = GEN_INDEX.load_diagnosis_pack(Path(directory) / "nope.json", MODLOADERS)
+
+        self.assertEqual(pack, {"schema_version": 1, "pack_version": 0, "entries": []})
+        self.assertEqual(warnings, [])
+
+    def test_a_broken_entry_is_reported_and_the_rest_survive(self) -> None:
+        broken = [
+            rule(id="", ),
+            rule(id="both", check="loader_missing"),
+            rule(id="no-check", check="no_such_check", match=None),
+            rule(id="bad-page", go_to={"page": "https://evil.example"}),
+            rule(id="bad-regex", match={"sources": ["loader_log"], "pattern": "([oops"}),
+            rule(id="bad-role", match={"sources": ["nope"], "pattern": "boom"}),
+            rule(id="bad-bucket", bucket="maybe"),
+            rule(id="bad-level", level=9),
+            rule(id="unknown-key", nope=True),
+            "not an object",
+            rule(id="ok"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(directory, {"entries": broken})
+            pack, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual([entry["id"] for entry in pack["entries"]], ["ok"])
+        self.assertEqual(len(warnings), len(broken) - 1, warnings)
+        self.assertIn("缺少 id", warnings[0])
+        self.assertIn("恰好给一个", warnings[1])
+        self.assertIn("未知的 check", warnings[2])
+        self.assertIn("go_to.page", warnings[3])
+        self.assertIn("不是合法正则", warnings[4])
+        self.assertIn("未知的日志来源", warnings[5])
+        self.assertIn("bucket", warnings[6])
+        self.assertIn("level", warnings[7])
+        self.assertIn("未知键", warnings[8])
+        self.assertIn("必须是对象", warnings[9])
+
+    def test_a_repeated_id_keeps_the_first_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(
+                directory,
+                {"entries": [rule(), rule(match={"sources": ["unity_log"], "pattern": "later"})]},
+            )
+            pack, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("重复", warnings[0])
+        self.assertEqual(pack["entries"][0]["match"]["pattern"], "boom")
+
+    def test_a_rule_missing_a_language_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(directory, {"entries": [rule(title={"zh": "只有中文"})]})
+            pack, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual(pack["entries"], [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("title 缺少 en", warnings[0])
+
+    def test_a_tutorial_missing_a_language_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(directory, {"entries": [rule(tutorial={"zh": ["一步"]})]})
+            _, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("tutorial 缺少 en", warnings[0])
+
+    def test_a_go_to_naming_an_unknown_package_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(
+                directory, {"entries": [rule(go_to={"page": "installed", "package": "no.such.mod"})]}
+            )
+            _, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("不是注册表里的包", warnings[0])
+
+    def test_a_go_to_naming_a_real_package_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_pack(
+                directory, {"entries": [rule(go_to={"page": "installed", "package": LOADER_ID})]}
+            )
+            pack, warnings = GEN_INDEX.load_diagnosis_pack(path, MODLOADERS)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(pack["entries"][0]["go_to"]["package"], LOADER_ID)
+
+    def test_the_generated_index_carries_the_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            mods_dir = Path(directory) / "mods"
+            copy_package(mods_dir, "furryaxw.sprocket-depth", "lavagang.melonloader")
+            diagnosis_file = self.write_pack(directory, {"pack_version": 2, "entries": [rule()]})
+
+            index = GEN_INDEX.generate_index(
+                mods_dir,
+                Path(directory) / "index.json",
+                diagnosis_file=diagnosis_file,
+            )
+
+        self.assertEqual(index["diagnosis"]["pack_version"], 2)
+        self.assertEqual([entry["id"] for entry in index["diagnosis"]["entries"]], ["test-rule"])
+        self.assertEqual(index["diagnosis_warnings"], [])
+
+    def test_the_shipped_pack_passes_both_validators(self) -> None:
+        """构建期那份校验比客户端严一档；严的那份不能把客户端会收的规则挡在外面。"""
+        pack, warnings = GEN_INDEX.load_diagnosis_pack(GEN_INDEX.DIAGNOSIS_FILE, MODLOADERS)
+
+        self.assertEqual(warnings, [])
+        self.assertGreaterEqual(len(pack["entries"]), 1)
+        self.assertEqual(len(GEN_INDEX.diagnosis_pack(pack)["entries"]), len(pack["entries"]))
+
+    def test_every_shipped_rule_says_which_bucket_it_belongs_to(self) -> None:
+        pack, _ = GEN_INDEX.load_diagnosis_pack(GEN_INDEX.DIAGNOSIS_FILE, MODLOADERS)
+
+        for entry in pack["entries"]:
+            self.assertIn(entry["bucket"], GEN_INDEX.BUCKETS, entry["id"])
+            self.assertIn(entry["level"], range(GEN_INDEX.MIN_LEVEL, GEN_INDEX.MAX_LEVEL + 1), entry["id"])
+
+
 if __name__ == "__main__":
     unittest.main()

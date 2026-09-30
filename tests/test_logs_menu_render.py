@@ -17,6 +17,7 @@ I18N_KEYS = (
     "uploadLogs",
     "logPickerTitle",
     "logSourceLoader",
+    "logSourceGame",
     "logNoLoader",
     "uploadLoaderLogConfirmMessage",
     "uploadManagerLog",
@@ -44,20 +45,34 @@ def loader_source(source_id: str, loader: str, log_path: str, *, available: bool
     }
 
 
+def game_source(log_path: str, *, available: bool = True) -> dict:
+    """游戏自己那份日志：它不在游戏目录里，`path` 是绝对路径。"""
+    return {
+        "id": "unity",
+        "kind": "game",
+        "loader": "Unity",
+        "path": log_path,
+        "available": available,
+    }
+
+
 class LogPickerMarkupTests(unittest.TestCase):
     def setUp(self) -> None:
         self.html = (CLIENT_UI / "index.html").read_text(encoding="utf-8")
         self.i18n = (CLIENT_UI / "js" / "i18n.js").read_text(encoding="utf-8")
 
-    def test_the_sidebar_carries_the_upload_button_below_the_language_control(self) -> None:
-        self.assertIn('id="upload-logs"', self.html)
+    def test_the_upload_button_lives_on_the_diagnosis_page(self) -> None:
+        self.assertIn('id="diagnosis-upload-logs"', self.html)
         self.assertIn('aria-haspopup="dialog"', self.html)
         self.assertLess(
-            self.html.index('id="language-select"'), self.html.index('id="upload-logs"')
+            self.html.index('id="page-diagnosis"'), self.html.index('id="diagnosis-upload-logs"')
         )
         self.assertLess(
-            self.html.index('id="upload-logs"'), self.html.index('id="registry-state"')
+            self.html.index('id="diagnosis-upload-logs"'), self.html.index('class="statusbar"')
         )
+
+    def test_the_sidebar_carries_no_upload_button(self) -> None:
+        self.assertNotIn('id="upload-logs"', self.html)
 
     def test_the_about_page_has_no_upload_button(self) -> None:
         self.assertNotIn('id="upload-manager-log"', self.html)
@@ -147,6 +162,14 @@ class LogPickerRenderHarnessTests(unittest.TestCase):
 
         calls = [entry["args"] for entry in result["apiCalls"] if entry.get("kind") == "call"]
         self.assertIn(["upload_log", "manager"], calls)
+
+    def test_the_game_log_gets_its_own_label(self) -> None:
+        result = self._render(sources=[
+            manager_source(),
+            game_source("C:\\Users\\player\\AppData\\LocalLow\\HD\\Sprocket\\Player.log"),
+        ])
+
+        self.assertEqual(result["items"], ["Upload manager log", "Game log"])
 
 
 if __name__ == "__main__":

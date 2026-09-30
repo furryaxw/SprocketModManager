@@ -54,6 +54,7 @@ const PAGE_META = {
     installed: {kicker: "pageInstallation", title: "installedTitle", subtitle: gamePathSummary},
     downloads: {kicker: "pageTransfers", title: "downloadsTitle", subtitle: queueSummary},
     modloaders: {kicker: "pageModloaders", title: "modloadersTitle", subtitle: () => tr("modRuntime")},
+    diagnosis: {kicker: "pageDiagnosis", title: "diagnosisTitle", subtitle: gamePathSummary},
     settings: {kicker: "pageConfiguration", title: "settingsTitle", subtitle: () => tr("localSettings")},
     about: {
         kicker: "pageApplication",
@@ -106,6 +107,7 @@ function setLanguage(language) {
     renderDeveloperServers();
     renderGithubLogin();
     renderEnvironment();
+    renderDiagnosis();
     updatePageHeader();
 }
 
@@ -305,6 +307,7 @@ async function showPage(page) {
     }
     if (page === "installed") await refreshInstalled();
     if (page === "downloads") await pollQueue(true);
+    if (page === "diagnosis") renderDiagnosis();
     if (page === "about" && !state.update) await checkManagerUpdate(false);
 }
 

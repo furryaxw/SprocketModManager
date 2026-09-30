@@ -175,6 +175,19 @@ def validate_providers(index_module, loader_ids) -> list[str]:
     return errors
 
 
+def validate_diagnosis(index_module, package_ids) -> list[str]:
+    """The diagnosis rule pack ships to clients through the index, so an entry the loader drops
+    has to fail here: a rule that never fires is worse than a rule that was never written."""
+    path = index_module.DIAGNOSIS_FILE
+    if not path.is_file():
+        return [f"{path.name} is missing"]
+    pack, warnings = index_module.load_diagnosis_pack(path, package_ids)
+    errors = list(warnings)
+    if not pack["entries"]:
+        errors.append(f"{path.name} has no usable rule")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the Sprocket mod registry")
     parser.add_argument("--mods-dir", default="mods")
@@ -197,6 +210,10 @@ def main() -> int:
             },
         )
     ]
+    failures.extend(
+        f"diagnosis: {error}"
+        for error in validate_diagnosis(index_module, {package["id"] for package in packages})
+    )
     if args.offline:
         if failures:
             for failure in failures:

@@ -2323,3 +2323,166 @@ html.large-text .queue-message {
         justify-content: flex-start;
     }
 }
+
+/* 错误修复页：两个入口一行，下面是两栏结论（必须解决 / 非必要）。 */
+.diagnosis-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.diagnosis-meta {
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.diagnosis-note {
+    margin: 0 0 12px;
+    color: var(--warning);
+    font-size: 0.8125rem;
+}
+
+.diagnosis-report {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.diagnosis-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.diagnosis-heading {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.diagnosis-section[data-bucket="required"] .diagnosis-heading {
+    color: var(--danger);
+}
+
+/* 一条问题：标题一行、事实一块、步骤一块，跳转按钮跟在最后。 */
+.diagnosis-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--line-soft);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    background: var(--surface);
+}
+
+.diagnosis-card[data-bucket="required"] {
+    border-left-color: var(--danger);
+}
+
+.diagnosis-card > header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.diagnosis-card > header h3 {
+    margin: 0;
+    font-size: 0.9375rem;
+}
+
+.diagnosis-level {
+    color: var(--muted);
+    font: 0.6875rem/1.4 "Cascadia Mono", Consolas, monospace;
+}
+
+.diagnosis-facts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+}
+
+.diagnosis-facts > div {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 10px;
+}
+
+.diagnosis-facts dt {
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.diagnosis-facts dd {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 0.8125rem;
+}
+
+/* 证据是日志原文：等宽、能横向滚，不折行改掉它本来的样子。 */
+.diagnosis-quote {
+    display: block;
+    padding: 6px 8px;
+    border-radius: 5px;
+    background: var(--surface-high);
+    color: var(--text-soft);
+    font: 0.75rem/1.5 "Cascadia Mono", Consolas, monospace;
+    white-space: pre;
+    overflow-x: auto;
+}
+
+.diagnosis-label {
+    margin: 0 0 4px;
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.diagnosis-fix ol {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--text-soft);
+    font-size: 0.8125rem;
+}
+
+.diagnosis-fix li + li {
+    margin-top: 4px;
+}
+
+.diagnosis-card > .secondary-button {
+    align-self: flex-start;
+}
+
+.diagnosis-empty,
+.diagnosis-unjudged,
+.diagnosis-hint {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+}
+
+.diagnosis-hint {
+    color: var(--text-soft);
+}
+
+/* 「去处理」落上去的那一行：闪一下就够了，别把行自己的状态色盖掉。 */
+@keyframes diagnosis-flash {
+    from {
+        background: var(--accent-quiet);
+    }
+    to {
+        background: transparent;
+    }
+}
+
+.data-row.diagnosis-target {
+    animation: diagnosis-flash 1.6s ease-out 1;
+}
+

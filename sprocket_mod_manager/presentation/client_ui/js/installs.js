@@ -708,6 +708,7 @@ function renderScannedModRow(mod) {
     const key = installedRowKey(mod);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
+    row.dataset.package = mod.installed_package_id || mod.registry_id || mod.declared_id || "";
     const title = document.createElement("div");
     title.className = "row-title";
 
@@ -804,6 +805,7 @@ function renderLegacyModRow(item) {
     const key = installedRowKey(item);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
+    row.dataset.package = item.unrecognized ? "" : item.id;
     const title = document.createElement("div");
     title.className = "row-title";
     const name = document.createElement("strong");
