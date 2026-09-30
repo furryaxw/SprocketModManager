@@ -7,8 +7,9 @@ Pull Request 加进本仓库；不需要改动已有的 Release，也不要把�
 
 ## 条目文件
 
-条目放在 `mods/<package-id>/sprocket-mod.json`，目录名必须与条目里的 `id` 完全一致。
-文件顶部用 `$schema` 指回仓库里的 schema，从 `mods/<package-id>/` 出发写成
+条目放在 `mods/<作者>/<modid>.json`，路径读作 `<作者>.<modid>`，必须与条目里的 `id` 完全一致：
+`id` 为 `example.sprocket-mod` 的条目放在 `mods/example/sprocket-mod.json`。
+文件顶部用 `$schema` 指回仓库里的 schema，从条目所在目录出发写成
 `../../schemas/sprocket-mod.schema.json`。
 
 `id` 用小写字母和数字，以 `.` 或 `-` 分段，至少两段；`name` 是程序集名。
@@ -217,13 +218,13 @@ BepInEx/MelonLoader 桥接。桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 
 ## 提交 Pull Request
 
-1. 新建分支，按 `mods/<package-id>/sprocket-mod.json` 加好文件。
+1. 新建分支，按 `mods/<作者>/<modid>.json` 加好文件。
 2. 提交 Pull Request。
 3. 等待 Registry CI 和维护者审核。
 
 CI 会检查：
 
-- meta 符合 `schemas/sprocket-mod.schema.json`，目录名与 `id` 一致，且不含版本号或下载地址；
+- meta 符合 `schemas/sprocket-mod.schema.json`，文件路径与 `id` 一致，且不含版本号或下载地址；
 - GitHub 仓库公开、未归档；
 - 仓库包含 `LICENSE`/`COPYING` 和实际源文件；许可证以条目的 SPDX 标识为准，GitHub 认不出该文件时也算通过；
 - 至少一个非草稿 Release 的 tag 可解析为 SemVer；

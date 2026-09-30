@@ -8,10 +8,11 @@ need to modify an existing Release or copy binaries into this repository.
 
 ## The Entry File
 
-An entry lives at `mods/<package-id>/sprocket-mod.json`, and the directory name must
-match the entry's `id` exactly. `$schema` at the top of the file points back at the
-repository's schema, written as `../../schemas/sprocket-mod.schema.json` from
-`mods/<package-id>/`.
+An entry lives at `mods/<author>/<modid>.json`, and the path must read as
+`<author>.<modid>` matching the entry's `id` exactly: an entry whose `id` is
+`example.sprocket-mod` lives at `mods/example/sprocket-mod.json`. `$schema` at the top of
+the file points back at the repository's schema, written as
+`../../schemas/sprocket-mod.schema.json` from the entry's own directory.
 
 `id` uses lowercase letters and digits separated by `.` or `-`, with at least two
 segments; `name` is the assembly name.
@@ -246,14 +247,14 @@ declare `lavagang.melonloader` — the BepInEx axis does not have to be written.
 
 ## Opening a Pull Request
 
-1. Create a branch and add the file at `mods/<package-id>/sprocket-mod.json`.
+1. Create a branch and add the file at `mods/<author>/<modid>.json`.
 2. Open a Pull Request.
 3. Wait for Registry CI and maintainer review.
 
 CI verifies that:
 
-- the metadata matches `schemas/sprocket-mod.schema.json`, the directory name matches
-  `id`, and it contains no version number or download URL;
+- the metadata matches `schemas/sprocket-mod.schema.json`, the file path matches `id`,
+  and it contains no version number or download URL;
 - the GitHub repository is public and not archived;
 - the repository contains `LICENSE`/`COPYING` and actual source files; the license is the
   SPDX identifier the entry declares, and a file GitHub cannot classify still passes;

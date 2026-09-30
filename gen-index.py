@@ -822,7 +822,7 @@ def validate_provides(meta: dict[str, Any]) -> None:
                 ) from exc
 
 
-def validate_meta(meta: dict, directory_name: str) -> None:
+def validate_meta(meta: dict, expected_id: str) -> None:
     missing = sorted(REQUIRED_FIELDS - set(meta))
     if missing:
         raise RegistryError(f"missing fields: {', '.join(missing)}")
@@ -843,8 +843,8 @@ def validate_meta(meta: dict, directory_name: str) -> None:
     package_id = meta.get("id", "")
     if not ID_RE.fullmatch(package_id):
         raise RegistryError(f"invalid package id: {package_id!r}")
-    if package_id != directory_name:
-        raise RegistryError(f"directory {directory_name!r} must match id {package_id!r}")
+    if package_id != expected_id:
+        raise RegistryError(f"id {package_id!r} does not match its file path (expected {expected_id!r})")
     if not REPOSITORY_RE.fullmatch(meta.get("repository", "")):
         raise RegistryError(f"invalid GitHub repository: {meta.get('repository')!r}")
     if not meta.get("license"):
@@ -1099,19 +1099,19 @@ def scan_mods(mods_dir: Path) -> list[dict]:
         raise RegistryError(f"mods directory does not exist: {mods_dir}")
 
     packages: dict[str, dict] = {}
-    for mod_dir in sorted(path for path in mods_dir.iterdir() if path.is_dir()):
-        meta_path = mod_dir / "sprocket-mod.json"
-        if not meta_path.is_file():
-            raise RegistryError(f"{mod_dir.name}: missing sprocket-mod.json")
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RegistryError(f"{mod_dir.name}: cannot read metadata: {exc}") from exc
+    for author_dir in sorted(path for path in mods_dir.iterdir() if path.is_dir()):
+        # 路径本身就是身份：`mods/<作者>/<modid>.json` 读作 `<作者>.<modid>`，条目里的 `id` 必须一致。
+        for meta_path in sorted(author_dir.glob("*.json")):
+            package_id = f"{author_dir.name}.{meta_path.stem}"
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RegistryError(f"{package_id}: cannot read metadata: {exc}") from exc
 
-        validate_meta(meta, mod_dir.name)
-        package = {key: value for key, value in meta.items() if key != "$schema"}
-        package["meta_url"] = f"mods/{mod_dir.name}/sprocket-mod.json"
-        packages[package["id"]] = package
+            validate_meta(meta, package_id)
+            package = {key: value for key, value in meta.items() if key != "$schema"}
+            package["meta_url"] = f"mods/{author_dir.name}/{meta_path.name}"
+            packages[package["id"]] = package
 
     capabilities = set(compat_capabilities(packages))
     for package in packages.values():
