@@ -111,7 +111,8 @@ const api = {
         if (payload.run_ok === false) {
             return {ok: false, code: "diagnosis_failed", message: "boom"};
         }
-        return {ok: true, report: payload.report || null};
+        // 真实那条路是数据层推来的：这条桥只回 ack，现状走 `deliver()`。
+        return {ok: true};
     },
 };
 
@@ -200,28 +201,38 @@ function serializeReport() {
     return {
         sections,
         unjudged: children(container, "diagnosis-unjudged")[0]?.textContent ?? null,
+        running: children(container, "diagnosis-running")[0]?.textContent ?? null,
         hint: children(container, "diagnosis-hint")[0]?.textContent ?? null,
         empty: children(container, "diagnosis-empty")[0]?.textContent ?? null,
         looseCount: loose.length,
     };
 }
 
+/** 数据层推一份现状过来：界面读的就是它，`dataDeliver` 是那条路的入口。 */
+function deliver(value) {
+    vm.runInContext(
+        `dataDeliver({key: "diagnosis", value: ${JSON.stringify(value === undefined ? null : value)}});`,
+        context,
+    );
+}
+
 async function exercise() {
     const button = elements["#run-diagnosis"];
     if (payload.preload_report !== undefined) {
         // 上一次那份报告先摆上：这一次跑失败时应该留在原地。
-        vm.runInContext(`diagnosisReport = ${JSON.stringify(payload.preload_report)};`, context);
+        deliver(payload.preload_report);
         vm.runInContext("renderDiagnosis()", context);
     }
     if (payload.run === false) {
         try {
-            vm.runInContext(`diagnosisReport = ${JSON.stringify(payload.report || null)};`, context);
+            deliver(payload.report === undefined ? null : payload.report);
             vm.runInContext("renderDiagnosis()", context);
         } catch (caught) {
             error = error || String((caught && caught.stack) || caught);
         }
     } else {
         try {
+            deliver(payload.report === undefined ? null : payload.report);
             vm.runInContext("runDiagnosis()", context);
         } catch (caught) {
             error = error || String((caught && caught.stack) || caught);

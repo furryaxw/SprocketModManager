@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...application.data_hub import KEY_DIAGNOSIS
 from ...application.diagnosis import diagnosis_log_specs, run_diagnosis
 from ...domain.errors import ModManagerError
 from ...infrastructure.app_logging import manager_log_path
@@ -27,6 +28,11 @@ class DiagnosisController(ApiController):
         return cached, "cache"
 
     def run_diagnosis(self) -> dict[str, Any]:
+        """跑一次诊断。
+
+        现状边走边推到数据层（`KEY_DIAGNOSIS`）：错误列表在扫描开始那一刻就建好了，日志的命中
+        随后一条条进来，所以界面不用等这条调用返回就能先摆出结论。返回值是收尾那一份。
+        """
         try:
             game_path = self._game_path_or_none()
             registry = self.service.registry if self.service is not None else None
@@ -52,7 +58,12 @@ class DiagnosisController(ApiController):
                 pack=pack,
                 pack_source=pack_source,
                 specs=specs,
+                on_progress=self._publish,
             )
             return self._success(report=report)
         except (OSError, ValueError, ModManagerError) as exc:
             return self._failure(exc, code="diagnosis_failed")
+
+    def _publish(self, state: dict[str, Any]) -> None:
+        """把当前现状交给数据层：界面订的就是这一份，形状与收尾那份一模一样。"""
+        self.data.publish(KEY_DIAGNOSIS, state)

@@ -3,9 +3,13 @@
 // 「错误修复」页：手动跑一次诊断，把报告按「必须解决 / 非必要」两栏画出来。
 //
 // 只画，不做任何修复动作 —— 每条问题给的是证据、原因和一串步骤，用户照着去「已安装」页自己处理。
-// 规则包里的文案是 `{语言: 文案}`，占位符先取 `labels`（本地化值）再退回 `params`（纯字符串）。
+// 报告来自数据层那份现状：一次扫描边走边推，每推一次就把整份重画（报告很小，重画比按条打补丁
+// 更好懂）。规则包里的文案是 `{语言: 文案}`，占位符先取 `labels`（本地化值）再退回 `params`。
 
-let diagnosisReport = null;
+/** 数据层推来的那份现状：一份报告，扫描进行中也会来。 */
+function diagnosisState() {
+    return state.diagnosis || null;
+}
 
 /** 规则包文案里的 `{占位符}`：`labels` 里的本地化值优先，其次 `params` 的纯字符串。 */
 function fillDiagnosisText(text, finding) {
@@ -170,7 +174,8 @@ function renderDiagnosis() {
     if (!container) return;
     container.replaceChildren();
 
-    if (!diagnosisReport) {
+    const report = diagnosisState();
+    if (!report) {
         meta.textContent = "";
         const empty = document.createElement("p");
         empty.className = "diagnosis-empty";
@@ -179,7 +184,6 @@ function renderDiagnosis() {
         return;
     }
 
-    const report = diagnosisReport;
     meta.textContent = report.pack_source === "missing"
         ? tr("diagnosisPackMissing")
         : tr("diagnosisPackLine", {
@@ -203,6 +207,14 @@ function renderDiagnosis() {
         container.append(line);
     }
 
+    if (report.running) {
+        const running = document.createElement("p");
+        running.className = "diagnosis-running";
+        running.textContent = tr("diagnosisRunning");
+        container.append(running);
+        return;
+    }
+
     if (!(report.required || []).length && !(report.optional || []).length) {
         const hint = document.createElement("p");
         hint.className = "diagnosis-hint";
@@ -211,7 +223,11 @@ function renderDiagnosis() {
     }
 }
 
-/** 页面上那颗按钮：跑一次，把回执画出来。没有回执（失败）就保持旧报告。 */
+/**
+ * 页面上那颗按钮：跑一次。
+ *
+ * 结论是数据层边走边推过来的，所以这里只管交代"正在跑"和报错；报告由推送那条路重画。
+ */
 async function runDiagnosis() {
     const button = $("#run-diagnosis");
     button.disabled = true;
@@ -223,7 +239,6 @@ async function runDiagnosis() {
             resultError(result);
             return;
         }
-        diagnosisReport = result.report || null;
         renderDiagnosis();
     } finally {
         button.disabled = false;

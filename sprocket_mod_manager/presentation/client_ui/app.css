@@ -2337,6 +2337,12 @@ html.large-text .queue-message {
     font-size: 0.75rem;
 }
 
+.diagnosis-running {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 0.8125rem;
+}
+
 .diagnosis-report {
     display: flex;
     flex-direction: column;

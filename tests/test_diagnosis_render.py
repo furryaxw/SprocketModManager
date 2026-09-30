@@ -196,6 +196,12 @@ class DiagnosisRenderHarnessTests(unittest.TestCase):
         self.assertEqual(result["meta"], "")
         self.assertIsNone(result["report"]["unjudged"])
 
+    def test_a_running_scan_says_so_and_holds_the_hint_back(self) -> None:
+        result = self._render(language="zh", report=report(running=True, required=[log_finding()]))
+
+        self.assertEqual(result["report"]["running"], "正在读日志…")
+        self.assertIsNone(result["report"]["hint"], "还在扫就不该说「没有查出已知问题」")
+
     def test_nothing_found_points_at_the_log_upload(self) -> None:
         result = self._render(language="zh", report=report())
 
