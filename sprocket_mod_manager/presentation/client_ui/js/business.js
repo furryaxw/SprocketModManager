@@ -8,7 +8,7 @@
 //
 // 这份名单是"我显示什么"，所以留在界面这层；key 本身归数据层（`application/data_hub.py`）。
 
-const DATA_KEYS = ["installed", "environment", "queue", "loaders", "catalog", "servers"];
+const DATA_KEYS = ["installed", "environment", "queue", "loaders", "catalog", "servers", "diagnosis"];
 
 /** 已安装页那一整份读数变了。 */
 function watchInstalledData() {
@@ -101,6 +101,14 @@ function watchServersData() {
     });
 }
 
+/** 诊断那份读数变了：一次扫描会推好几次，每来一次就把报告按当前这份重画。 */
+function watchDiagnosisData() {
+    dataWatch(["diagnosis"], () => {
+        if (!state.ready) return;
+        renderDiagnosis();
+    });
+}
+
 /** 把界面长期显示的那些读数全部订阅上（启动时调一次）。 */
 function watchData() {
     watchInstalledData();
@@ -109,4 +117,5 @@ function watchData() {
     watchLoadersData();
     watchCatalogData();
     watchServersData();
+    watchDiagnosisData();
 }
