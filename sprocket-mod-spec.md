@@ -9,7 +9,7 @@ Registry 托管在 GitHub Pages，只保存模组级基础元数据。版本、t
 
 ```text
 Pages index.json
-  -> mods/<id>/sprocket-mod.json
+  -> mods/<作者>/<modid>.json
   -> GitHub API /repos/<owner>/<repo>/releases（外部来源用条目自带的 releases）
   -> 选择兼容 tag 和 Release assets
   -> 下载

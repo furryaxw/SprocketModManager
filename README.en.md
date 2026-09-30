@@ -37,8 +37,8 @@ state tracking, removal of the requested package, and orphan dependency cleanup.
 
 ## Loader management
 
-Loaders are ordinary registry entries: `mods/lavagang.melonloader/` and
-`mods/bepinex.bepinex-be/` have `kind` `modloader`, declare through `supply` which types
+Loaders are ordinary registry entries: `mods/lavagang/melonloader.json` and
+`mods/bepinex/bepinex-be.json` have `kind` `modloader`, declare through `supply` which types
 they provide to other packages and where, and declare their compatibility capabilities
 through `provides`. The modloader page lists every `modloader` package with whether it is
 installed, its installed version, the newest installable version, its compatibility

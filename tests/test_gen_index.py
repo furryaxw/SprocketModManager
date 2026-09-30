@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-REAL_META = ROOT / "mods" / "furryaxw.sprocket-depth" / "sprocket-mod.json"
+REAL_META = ROOT / "mods" / "furryaxw" / "sprocket-depth.json"
 
 
 def load_module():
@@ -33,13 +33,14 @@ CAPABILITIES = {
 MODLOADERS = {LOADER_ID, "bepinex.bepinex-be", "1499501762.bepinex-melonloader-loader"}
 
 
-def copy_loader_packages(mods_dir: Path, *package_ids: str) -> None:
-    """把真实的加载器包元数据搬进临时注册表：供给关系与加载器轴都要在场。"""
+def copy_package(mods_dir: Path, *package_ids: str) -> None:
+    """把真实的条目元数据按 `<作者>/<modid>.json` 搬进临时注册表：供给关系与依赖轴都要在场。"""
     for package_id in package_ids:
-        target = mods_dir / package_id
+        author, _, mod_id = package_id.partition(".")
+        target = mods_dir / author
         target.mkdir(parents=True, exist_ok=True)
-        (target / "sprocket-mod.json").write_bytes(
-            (ROOT / "mods" / package_id / "sprocket-mod.json").read_bytes()
+        (target / f"{mod_id}.json").write_bytes(
+            (ROOT / "mods" / author / f"{mod_id}.json").read_bytes()
         )
 
 PACKAGE = {
@@ -240,11 +241,7 @@ class BaselineTests(unittest.TestCase):
     def test_the_loader_gets_the_baseline_and_a_failed_fetch_keeps_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
-            (mods_dir / "furryaxw.sprocket-depth").mkdir(parents=True)
-            (mods_dir / "furryaxw.sprocket-depth" / "sprocket-mod.json").write_bytes(
-                REAL_META.read_bytes()
-            )
-            copy_loader_packages(mods_dir, "lavagang.melonloader")
+            copy_package(mods_dir, "furryaxw.sprocket-depth", "lavagang.melonloader")
             meta = json.loads(REAL_META.read_text(encoding="utf-8"))
             known = normalize(
                 meta,
@@ -535,12 +532,9 @@ class CompatibleIndexTests(unittest.TestCase):
     def test_generated_index_declares_the_game_capability_and_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
-            (mods_dir / "furryaxw.sprocket-depth").mkdir(parents=True)
-            (mods_dir / "furryaxw.sprocket-depth" / "sprocket-mod.json").write_bytes(
-                REAL_META.read_bytes()
-            )
-            copy_loader_packages(
+            copy_package(
                 mods_dir,
+                "furryaxw.sprocket-depth",
                 "lavagang.melonloader",
                 "bepinex.bepinex-be",
                 "hans21223.sprocket-mod-loader",
@@ -654,11 +648,7 @@ class ProvidersTableTests(unittest.TestCase):
     def test_the_generated_index_carries_the_table(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
-            (mods_dir / "furryaxw.sprocket-depth").mkdir(parents=True)
-            (mods_dir / "furryaxw.sprocket-depth" / "sprocket-mod.json").write_bytes(
-                REAL_META.read_bytes()
-            )
-            copy_loader_packages(mods_dir, "lavagang.melonloader")
+            copy_package(mods_dir, "furryaxw.sprocket-depth", "lavagang.melonloader")
             providers_file = self.write_table(
                 directory,
                 {"entries": [{"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54"}]},
