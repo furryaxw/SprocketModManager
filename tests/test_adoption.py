@@ -9,7 +9,7 @@ from unittest.mock import patch
 from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
 from sprocket_mod_manager.domain.registry import Registry
 from sprocket_mod_manager.domain.semver import Version
-from sprocket_mod_manager.application.adoption import ExistingModsAdopter
+from sprocket_mod_manager.application.adoption import ExistingModsAdopter, matches_release_version
 from sprocket_mod_manager.application.service import ModManagerService
 from sprocket_mod_manager.infrastructure.dll_metadata import read_dll_metadata
 
@@ -734,6 +734,32 @@ class DetectedLoaderAdoptionTests(unittest.TestCase):
             self.assertEqual(warnings, [])
             self.assertFalse((game / "MelonLoader").exists())
             self.assertFalse((game / "version.dll").exists())
+
+
+class DeclaredVersionTests(unittest.TestCase):
+    """DLL 自报版本与发布版本的同版判定：整段交给 `domain.semver`，不自己切段。"""
+
+    def test_a_prerelease_declared_version_matches_its_own_release(self) -> None:
+        """`6.0.0-be.788` 是三段加预发布段，不是「四段里修订号为 788」。"""
+        release = Version.parse("6.0.0-be.788")
+
+        self.assertTrue(matches_release_version("6.0.0-be.788", release))
+        self.assertFalse(matches_release_version("6.0.0-be.790", release))
+        self.assertFalse(matches_release_version("6.0.0", release))
+
+    def test_the_fourth_segment_is_the_revision(self) -> None:
+        self.assertTrue(matches_release_version("0.2.2.0", Version.parse("0.2.2")), "修订号为 0 就是同一版")
+        self.assertFalse(matches_release_version("0.2.2.5", Version.parse("0.2.2")))
+        self.assertTrue(
+            matches_release_version("0.2.53.2", Version.parse("0.2.53.2")),
+            "发布本身就是四段时，同样的四段要算同版",
+        )
+
+    def test_an_unreadable_declared_version_is_not_a_match(self) -> None:
+        release = Version.parse("1.0.0")
+
+        self.assertFalse(matches_release_version("", release))
+        self.assertFalse(matches_release_version("not-a-version", release))
 
 
 if __name__ == "__main__":
