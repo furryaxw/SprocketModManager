@@ -72,17 +72,14 @@ def declared_version_of(metadata: DllMetadata) -> str:
 def matches_release_version(declared: str, release: Version) -> bool:
     """DLL 自报版本与发布版本是否同一版。
 
-    .NET 程序集版本常写成四段（`0.2.2.0`），第四段是修订号：为 0 时与三段标签同版；
-    非 0 的构建可能与那个标签不同源，所以不算同版。
+    .NET 程序集版本常写成四段（`0.2.2.0`）：第四段是修订号，为 0 时与三段标签同版，
+    非 0 的构建与那个标签不同源。`Version` 的 `revision` 就是这第四段、缺省读 0，
+    所以同版判定整个交给它 —— 自己切段会把 `6.0.0-be.788` 这种「三段加预发布」
+    误认成四段，也会把四段发布与它自己判成不同版。
     """
     text = str(declared or "").strip()
     if not text:
         return False
-    parts = text.split(".")
-    if len(parts) == 4 and parts[3].isdigit():
-        if int(parts[3]) != 0:
-            return False
-        text = ".".join(parts[:3])
     try:
         return Version.parse(text) == release
     except ValueError:
