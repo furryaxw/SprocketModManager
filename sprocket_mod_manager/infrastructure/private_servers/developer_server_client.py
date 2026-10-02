@@ -1,24 +1,20 @@
 from __future__ import annotations
 
-import hashlib
 import base64
 import json
-import os
-import uuid
 import time
-from pathlib import Path
-from typing import Any, Callable
+import uuid
+from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+
 from cryptography.hazmat.primitives import serialization
 
-from .constants import MAX_ARCHIVE_BYTES, MAX_RESPONSE_BYTES, SUPPORTED_PROTOCOL_VERSION
-from .models import DeveloperServerInfo, PrivatePackageManifest, normalize_server_url
+from .constants import MAX_RESPONSE_BYTES, SUPPORTED_PROTOCOL_VERSION
+from .models import DeveloperServerInfo, normalize_server_url
 from ...utilities.signatures import (
     public_key_fingerprint,
     public_key_from_identity,
-    verify_detached,
     verify_key_status_snapshot,
     verify_rotation_declaration,
 )
@@ -30,15 +26,37 @@ from ...utilities.trust_negotiation import (
 
 
 class DeveloperServerError(ValueError):
-    def __init__(self, message: str, *, status: int | None = None, code: str = "") -> None:
+    """服务器答了但这次不成。
+
+    `unreachable` 区分「根本连不上」和「连上了、服务器拒了」：只有前者是离线，
+    后者要按服务器给的码说清楚（会话过期、工作区不存在、权限不足……）。
+    """
+
+    def __init__(
+            self,
+            message: str,
+            *,
+            status: int | None = None,
+            code: str = "",
+            unreachable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
+        self.unreachable = unreachable
 
 
 class DeveloperServerClient:
+    """一台开发者服务器的身份与会话。
+
+    `info()` 判定服务器身份：协议版本、签名公钥、以及换钥声明是否成立。`key_status_snapshot()`
+    校验签名状态快照的签名与时效。两者是下载与安装之前的信任前提，不缓存判定结果 ——
+    缓存只用来省下 10 秒内的重复请求。
+    """
+
     MAX_KEY_STATUS_TTL_SECONDS = 24 * 60 * 60
     RESPONSE_CACHE_SECONDS = 10
+
     def __init__(
             self,
             base_url: str,
@@ -59,6 +77,13 @@ class DeveloperServerClient:
 
     def invalidate_response_cache(self) -> None:
         self._response_cache.clear()
+
+    def _headers(self, accept: str = "application/json") -> dict[str, str]:
+        """每个请求带会话：会话决定身份，作用域由包 id 的第一段表达。"""
+        headers = {"Accept": accept, "User-Agent": "sprocket-mod-manager/private-test"}
+        if self.session_token:
+            headers["Authorization"] = f"Bearer {self.session_token}"
+        return headers
 
     def _cached_response(self, kind: str, identity: str = "") -> Any:
         item = self._response_cache.get((kind, identity))
@@ -82,9 +107,7 @@ class DeveloperServerClient:
             idempotency_key: str = "",
     ) -> dict[str, Any]:
         data = None
-        headers = {"Accept": "application/json", "User-Agent": "sprocket-mod-manager/private-test"}
-        if self.session_token:
-            headers["Authorization"] = f"Bearer {self.session_token}"
+        headers = self._headers()
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         if payload is not None:
@@ -112,7 +135,13 @@ class DeveloperServerClient:
                 code=str(error.get("code", "")) if isinstance(error, dict) else "",
             ) from exc
         except URLError as exc:
-            raise ValueError(f"cannot connect to developer server: {exc.reason}") from exc
+            raise DeveloperServerError(
+                f"cannot connect to developer server: {exc.reason}", unreachable=True
+            ) from exc
+        except (TimeoutError, OSError) as exc:
+            raise DeveloperServerError(
+                f"cannot read from developer server: {exc}", unreachable=True
+            ) from exc
         try:
             value = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -120,9 +149,6 @@ class DeveloperServerClient:
         if not isinstance(value, dict):
             raise ValueError("developer server response must be an object")
         return value
-
-    def _identity_query(self, github_user_id: str) -> str:
-        return "" if self.session_token else "?" + urlencode({"github_user_id": github_user_id})
 
     def info(self) -> DeveloperServerInfo:
         value = self._request("/v1/server-info")
@@ -196,7 +222,6 @@ class DeveloperServerClient:
             name=name,
             operator=str(value.get("operator", "")).strip(),
             protocol_version=protocol,
-            demo_auth=value.get("demo_auth") is True,
             signing_identity=identity,
             trust_method=trust_method,
             key_encoding=key_encoding,
@@ -224,33 +249,14 @@ class DeveloperServerClient:
             idempotency_key=idempotency_key,
         )
 
-    def packages(self, github_user_id: str) -> tuple[PrivatePackageManifest, ...]:
-        if not self._info_loaded:
-            self.info()
-        cached = self._cached_response("packages", str(github_user_id))
-        if cached is not None:
-            return cached
-        value = self._request("/v1/packages")
-        packages = value.get("packages", [])
-        if not isinstance(packages, list):
-            raise ValueError("developer server package list is invalid")
-        manifests_list = []
-        for item in packages:
-            if self._signing_identity is not None:
-                if not isinstance(item, dict) or not isinstance(item.get("signature"), dict):
-                    raise ValueError("developer server package signature is missing")
-                signature = item["signature"]
-                signed_payload = dict(item)
-                signed_payload.pop("signature", None)
-                if signature.get("key_id") != self._signing_identity["key_id"]:
-                    raise ValueError("developer server package signing key is unexpected")
-                verify_detached(signed_payload, signature, self._signing_identity["key"])
-            manifests_list.append(PrivatePackageManifest.from_dict(item))
-        manifests = tuple(manifests_list)
-        ids = [item.id for item in manifests]
-        if len(ids) != len(set(ids)):
-            raise ValueError("developer server package list contains duplicate ids")
-        return self._cache_response("packages", manifests, str(github_user_id))
+    def accept_invitation(self, token: str, *, request_id: str = "") -> dict[str, Any]:
+        """Join a Team with an invitation code; the code itself is the credential."""
+        idempotency_key = str(request_id).strip() or uuid.uuid4().hex
+        return self._request(
+            "/v1/invitations/accept",
+            {"token": str(token).strip()},
+            idempotency_key=idempotency_key,
+        )
 
     def key_status_snapshot(self) -> dict[str, Any]:
         if not self._info_loaded:
@@ -282,96 +288,3 @@ class DeveloperServerClient:
 
     def key_status(self) -> dict[str, Any]:
         return dict(self.key_status_snapshot()["status"])
-
-    def entitlements(self, github_user_id: str) -> dict[str, Any]:
-        cached = self._cached_response("entitlements", str(github_user_id))
-        if cached is not None:
-            return cached
-        value = self._request("/v1/entitlements")
-        grants = value.get("grants", [])
-        permissions = value.get("permissions", [])
-        if (
-                not isinstance(grants, list)
-                or not all(isinstance(item, dict) for item in grants)
-                or not isinstance(permissions, list)
-                or not all(isinstance(item, str) for item in permissions)
-        ):
-            raise ValueError("developer server entitlement response is invalid")
-        return self._cache_response("entitlements", value, str(github_user_id))
-
-    def download_archive(
-            self,
-            download_path: str,
-            github_user_id: str,
-            destination: Path,
-            *,
-            version: str,
-            expected_size: int,
-            progress: Callable[[str], None] | None = None,
-    ) -> Path:
-        parsed_path = urlparse(download_path)
-        if (
-                parsed_path.scheme
-                or parsed_path.netloc
-                or parsed_path.query
-                or parsed_path.fragment
-                or not parsed_path.path.startswith("/v1/packages/")
-                or not parsed_path.path.endswith("/download")
-        ):
-            raise ValueError("developer server returned an invalid package download path")
-        if expected_size < 1 or expected_size > MAX_ARCHIVE_BYTES:
-            raise ValueError("developer server returned an invalid package archive size")
-        package_id = parsed_path.path[len("/v1/packages/"):-len("/download")].strip("/")
-        if not package_id or not version.strip():
-            raise ValueError("developer server download identity is incomplete")
-        authorization = self._request(
-            f"/v1/packages/{package_id}/download-url",
-            {"version": version.strip()},
-        )
-        token = str(authorization.get("token", "")).strip()
-        if not token:
-            raise ValueError("developer server did not return a download token")
-        request_url = self.base_url + parsed_path.path + "?" + urlencode({"version": version.strip(), "token": token})
-        headers = {"Accept": "application/octet-stream", "User-Agent": "sprocket-mod-manager/private-test"}
-        if self.session_token:
-            headers["Authorization"] = f"Bearer {self.session_token}"
-        request = Request(request_url, headers=headers)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-        total = 0
-        try:
-            with urlopen(request, timeout=self.timeout) as response, temporary.open("wb") as output:
-                final = urlparse(response.geturl())
-                origin = urlparse(self.base_url)
-                if (final.scheme, final.hostname, final.port) != (origin.scheme, origin.hostname, origin.port):
-                    raise ValueError("developer server redirected the package download to another origin")
-                length = response.headers.get("Content-Length")
-                if length and int(length) != expected_size:
-                    raise ValueError("developer server package size changed")
-                while chunk := response.read(1024 * 1024):
-                    total += len(chunk)
-                    if total > expected_size or total > MAX_ARCHIVE_BYTES:
-                        raise ValueError("developer server package exceeds its declared size")
-                    output.write(chunk)
-                    if progress:
-                        progress(f"Downloaded {total:,} of {expected_size:,} bytes")
-            if total != expected_size:
-                raise ValueError("developer server package is incomplete")
-            os.replace(temporary, destination)
-            return destination
-        except HTTPError as exc:
-            error: Any = None
-            try:
-                error = json.loads(exc.read(MAX_RESPONSE_BYTES).decode("utf-8"))
-                message = error.get("message") or error.get("error", "")
-            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
-                message = ""
-            raise DeveloperServerError(
-                message or f"developer server returned HTTP {exc.code}",
-                status=exc.code,
-                code=str(error.get("code", "")) if isinstance(error, dict) else "",
-            ) from exc
-        except URLError as exc:
-            raise ValueError(f"cannot download from developer server: {exc.reason}") from exc
-        finally:
-            temporary.unlink(missing_ok=True)

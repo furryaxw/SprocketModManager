@@ -9,7 +9,6 @@ from ..api_support import GamePathRequiredError
 from ...application.data_hub import KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS, KEY_QUEUE
 from ...application.install_queue import ACTIVE_STATES, InstallQueueEntry
 from ...application.preparer import PlanPreparer, satisfied_versions
-from ...application.private_install import prepare_private_package
 from ...application.service import ModManagerService
 from ...domain.compatibility import COMPATIBLE, CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import ModManagerError
@@ -419,17 +418,6 @@ class InstallationController(ApiController):
             failed: list[dict[str, str]] = []
             for package_id in dict.fromkeys(str(item) for item in package_ids):
                 try:
-                    if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
-                           self._developer_server_entries()):
-                        _client, plan, _downloaders = self._private_resolution(
-                            package_id, frozenset(installed)
-                        )
-                        root = plan.by_id()[package_id]
-                        if not include_installed and installed.get(package_id, {}).get("version") == str(root.release.version):
-                            skipped.append(package_id)
-                        else:
-                            plans.append(self._plan_data(service, root.package, plan))
-                        continue
                     package = self._package(service, package_id)
                     # 版本由界面按环境挑好（点名），所以根包不再被环境淘汰；它的依赖照筛。
                     plan = service.resolve(
@@ -523,12 +511,6 @@ class InstallationController(ApiController):
             failed: list[dict[str, str]] = []
             for package_id in dict.fromkeys(str(item) for item in package_ids):
                 try:
-                    if any(package_id.startswith(str(item.get("server_id", "")) + ":") for item in
-                           self._developer_server_entries()):
-                        _entry, _client, manifest = self._private_package_source(package_id)
-                        if explicit or installed.get(package_id, {}).get("version") != manifest.version:
-                            eligible.append(package_id)
-                        continue
                     package = self._package(service, package_id)
                     version_range = self._version_range(service, package, requested.get(package_id))
                     plan = service.resolve(
@@ -581,9 +563,7 @@ class InstallationController(ApiController):
                     continue
                 try:
                     if package_id not in public_ids:
-                        _entry, _client, manifest = self._private_package_source(package_id)
-                        if info.get("version") != manifest.version:
-                            updates.append(package_id)
+                        # 记录里留着注册表已经不认的包：没有可查的发布数据，跳过。
                         continue
                     package = self._package(service, package_id)
                     version_range = self._version_range(service, package, None)
@@ -626,21 +606,8 @@ class InstallationController(ApiController):
             try:
                 game_path = self._valid_game_path()
                 service = self._current_service()
-                installed = service.installed(game_path)
-                private_ids = {
-                    str(item.get("server_id", ""))
-                    for item in self._developer_server_entries()
-                }
-                installed_info = installed.get(str(package_id), {})
-                is_private_install = (
-                        ":" in str(package_id)
-                        and installed_info.get("repository", "") == ""
-                )
-                if is_private_install or any(str(package_id).startswith(server_id + ":") for server_id in private_ids):
-                    removed, warnings = service._installer_for(game_path).remove(str(package_id), game_path)
-                else:
-                    package = self._package(service, str(package_id))
-                    removed, warnings = service.remove(package.id, game_path)
+                package = self._package(service, str(package_id))
+                removed, warnings = service.remove(package.id, game_path)
                 # 交还加载器的树会改掉加载器清单：环境读数必须重来一次，否则左下角留着旧读数。
                 self._environment_monitor.invalidate()
                 # 卸载会连带搬走供给目录里的模组：四份读数都变了。
@@ -683,17 +650,6 @@ class InstallationController(ApiController):
         )
         with self._mutation_lock:
             try:
-                if any(
-                        entry.package_id.startswith(str(item.get("server_id", "")) + ":")
-                        for item in self._developer_server_entries()
-                ):
-                    self._install_private_package(
-                        entry.package_id,
-                        entry.game_path,
-                        progress,
-                        force_conflicts=entry.force_conflicts,
-                    )
-                    return
                 if entry.force_conflicts:
                     service.install(
                         entry.package_id,
@@ -714,60 +670,6 @@ class InstallationController(ApiController):
                 # 让数据层自己重算并推送 —— 不在返回值里另带一份。
                 self._environment_monitor.invalidate()
                 self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_QUEUE, KEY_LOADERS)
-
-    def _install_private_package(
-            self,
-            package_id: str,
-            game_path: Path,
-            progress: Callable[[str], None],
-            *,
-            force_conflicts: bool,
-    ) -> None:
-        service = self._current_service()
-        if service.registry is not None:
-            installed = service.installed(game_path)
-            _client, plan, downloaders = self._private_resolution(
-                package_id, frozenset(installed)
-            )
-            prepared = PlanPreparer(
-                self.config_store.app_dir,
-                service.http,
-                service.github,
-            ).prepare(
-                plan,
-                progress,
-                private_downloaders=downloaders,
-                satisfied=satisfied_versions(installed),
-            )
-            try:
-                service._installer_for(game_path).apply(
-                    prepared,
-                    game_path,
-                    progress=progress,
-                    force_conflicts=force_conflicts,
-                )
-            finally:
-                PlanPreparer.discard(prepared)
-            return
-        _entry, client, manifest = self._private_package_source(package_id)
-        user_id = str(self.config.get("github_user_id", "") or "").strip()
-        prepared = prepare_private_package(
-            self.config_store.app_dir,
-            client,
-            package_id,
-            manifest,
-            user_id,
-            progress,
-        )
-        try:
-            self._current_service()._installer_for(game_path).apply(
-                prepared,
-                game_path,
-                progress=progress,
-                force_conflicts=force_conflicts,
-            )
-        finally:
-            PlanPreparer.discard(prepared)
 
     def _queue_data(self) -> list[dict[str, Any]]:
         return [

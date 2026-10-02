@@ -4,7 +4,7 @@ import hashlib
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from ..domain.errors import DownloadError, InstallError
 from ..domain.models import (
@@ -12,7 +12,6 @@ from ..domain.models import (
     PreparedPackage,
     PreparedPlan,
     ProgressCallback,
-    ReleaseAsset,
     ResolutionPlan,
 )
 from ..infrastructure.github import GitHubClient
@@ -74,7 +73,6 @@ class PlanPreparer:
             self,
             plan: ResolutionPlan,
             progress: ProgressCallback | None = None,
-            private_downloaders: dict[str, Callable[[ReleaseAsset, Path, ProgressCallback | None], Path]] | None = None,
             satisfied: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
         """取回并扫描计划里每个包的载荷。
@@ -108,13 +106,9 @@ class PlanPreparer:
                     if progress:
                         progress(f"Downloading {package.label()} {resolved.release.version}: {asset.name}")
                     destination = package_dir / "assets" / asset.name
-                    downloader = (private_downloaders or {}).get(package.id)
-                    if downloader is not None:
-                        downloader(asset, destination, progress)
-                    else:
-                        self.http.download(
-                            asset, destination, progress=None, hosts=set(package.asset_hosts())
-                        )
+                    self.http.download(
+                        asset, destination, progress=None, hosts=set(package.asset_hosts())
+                    )
                     actual_digest = sha256_file(destination)
                     expected = publisher_checksum(
                         self.http, package, resolved.release, asset

@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sprocket_mod_manager.application.data_hub import KEY_SERVERS
 from sprocket_mod_manager.application.service import ModManagerService
 from sprocket_mod_manager.domain.errors import CatalogBusyError
 from sprocket_mod_manager.infrastructure.config import ConfigStore
@@ -251,32 +250,6 @@ class CatalogVerdictTests(unittest.TestCase):
 
         self.assertIsNone(row["newer"])
         self.assertIsNone(row["update"])
-
-    def test_a_private_package_takes_its_candidates_from_the_server_reading(self) -> None:
-        """私有包不进公开注册表：它的候选版本在开发者服务器那份读数里，判定照旧由后端给。"""
-        with tempfile.TemporaryDirectory() as directory:
-            api = self._api(Path(directory))
-            try:
-                api.load_catalog()
-                api.data.publish(
-                    KEY_SERVERS,
-                    {
-                        "packages": [
-                            {"id": "test-server:private.mod", "release": {"version": "2.0.0"}},
-                        ]
-                    },
-                )
-                row = api._catalog_controller._installed_data(
-                    api.service,
-                    installed={
-                        "test-server:private.mod": {"name": "Private", "version": "1.0.0", "files": []}
-                    },
-                )[0]
-            finally:
-                self._close(api)
-
-        self.assertEqual(row["newer"], {"version": "2.0.0", "verdict": ""})
-        self.assertEqual(row["update"], {"version": "2.0.0", "verdict": ""})
 
     def test_a_second_catalog_load_reports_busy(self) -> None:
         """同一时刻只跑一份目录加载：第二份立刻报 catalog_busy，数据层那一路保持上一次读数。"""

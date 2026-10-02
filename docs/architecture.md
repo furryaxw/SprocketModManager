@@ -32,7 +32,6 @@ Domain modules must not import application, infrastructure, or presentation.
   runtime's installed providers supply, and the identity rules for what lives in them
 - `catalog.py`: concurrent catalog release loading
 - `install_queue.py`: queued installation state and worker serialization
-- `private_install.py`: private-package preparation workflow
 
 Application modules coordinate domain rules and infrastructure adapters. They
 must not import presentation.
@@ -42,7 +41,7 @@ must not import presentation.
 - `config.py`, `defaults.py`: configuration and default locations
 - `state.py`, `credential_store.py`, `profiles.py`: persisted local state
 - `github.py`, `http_client.py`, `registry_source.py`: public remote transports
-- `private_servers/`: private catalog models, cache, GitHub sync, and server client
+- `private_servers/`: developer-server identity, trust negotiation, and GitHub login
 - `release_checksums.py`, `scanner.py`, `installer.py`: package inspection and filesystem
 - `file_transaction.py`, `xunity_backup.py`: rollback and translation backups
 - `log_upload.py`: external integrations

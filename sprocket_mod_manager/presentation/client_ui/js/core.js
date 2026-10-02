@@ -255,13 +255,17 @@ function toast(message, tone = "normal") {
 }
 
 /**
- * 报错：优先按后端给的 `code` 查 i18n（后端文案是给日志/排查看的，不一定跟着界面语言），
- * 查不到才退回后端原文 —— 至少已知的那批错误在两种语言下都说得清楚。
+ * 后端给的 `code` 优先查 i18n（后端文案是给日志/排查看的，不一定跟着界面语言），
+ * 查不到才退回后端原文。
  */
+function errorText(code, message = "", fallbackKey = "operationFailed") {
+    const key = `error_${code || ""}`;
+    const known = TEXT[state.language]?.[key] ?? TEXT.en[key];
+    return known ? tr(key, {message}) : (message || tr(fallbackKey));
+}
+
 function resultError(result, fallbackKey = "operationFailed") {
-    const codeKey = `error_${result?.code || ""}`;
-    const known = TEXT[state.language]?.[codeKey] ?? TEXT.en[codeKey];
-    const message = known ? tr(codeKey, {message: result?.message || ""}) : (result?.message || tr(fallbackKey));
+    const message = errorText(result?.code, result?.message, fallbackKey);
     reportClientLog("error", `${result?.code || "operation_failed"}: ${message}`);
     // 只走 setStatus：它把话弹成 toast，并把状态栏改成出错（成功后自动复位）。
     setStatus(message, "error");
