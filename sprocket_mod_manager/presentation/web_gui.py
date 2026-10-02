@@ -16,7 +16,6 @@ from .controllers import (
     CatalogController,
     DiagnosisController,
     InstallationController,
-    PrivateDistributionController,
     SettingsController,
 )
 from ..application.data_hub import (
@@ -25,7 +24,6 @@ from ..application.data_hub import (
     KEY_INSTALLED,
     KEY_LOADERS,
     KEY_QUEUE,
-    KEY_SERVERS,
     KEYS,
     DataHub,
 )
@@ -56,7 +54,6 @@ from ..infrastructure.environment_monitor import (
 )
 from ..infrastructure.game_version import GameVersion, read_game_version
 from ..infrastructure.log_upload import upload_log_file
-from ..infrastructure.private_servers import PrivateCatalogCache
 from ..infrastructure.self_update import (
     can_self_update,
     download_update,
@@ -93,10 +90,12 @@ class ClientApi:
         self.config_store = ConfigStore(app_dir)
         LOGGER.debug("ClientApi init: config store created app_dir=%s", self.config_store.app_dir)
         scope = hashlib.sha256(str(self.config_store.app_dir).encode("utf-8")).hexdigest()[:16]
-        self.credentials = CredentialStore(f"SprocketModManager/{scope}")
+        # 凭据落在应用目录里；`scope` 只用来认用户级凭据库里同名的那一份。
+        self.credentials = CredentialStore(
+            f"SprocketModManager/{scope}", self.config_store.app_dir / "credentials",
+        )
         self.config = self.config_store.load()
         LOGGER.debug("ClientApi init: config loaded")
-        self.private_catalog_cache = PrivateCatalogCache(self.config_store.app_dir)
         self._service_factory = service_factory
         self.service = service_factory(self.config_store.app_dir)
         LOGGER.debug("ClientApi init: service created")
@@ -104,23 +103,21 @@ class ClientApi:
         self.latest: dict[str, ReleaseInfo | None] = {}
         self._catalog_lock = threading.Lock()
         self._state_lock = threading.RLock()
+        # 配置是多线程各自读改写的一处状态（界面、数据层刷新、GitHub 同步）：谁改谁拿这把锁，
+        # 否则后写的那个会拿着旧快照把别人刚写进去的开发者服务器抹掉。
+        self._config_lock = threading.RLock()
         self._window: Any = None
         self._close_pending = False
         self._destroy_scheduled = False
-        self._github_device: dict[str, Any] | None = None
-        self._github_access_token = ""
-        self._gist_conflicts: list[dict[str, Any]] = []
         self._mutation_lock = threading.Lock()
         self._loader_idle = threading.Event()
         self._loader_idle.set()
         self._settings_controller = SettingsController(self)
-        self._private_controller = PrivateDistributionController(self)
         self._catalog_controller = CatalogController(self)
         self._installation_controller = InstallationController(self)
         self._diagnosis_controller = DiagnosisController(self)
         self._controllers = (
             self._settings_controller,
-            self._private_controller,
             self._catalog_controller,
             self._installation_controller,
             self._diagnosis_controller,
@@ -134,7 +131,6 @@ class ClientApi:
         self.data.register(KEY_QUEUE, self._refresh_queue)
         self.data.register(KEY_LOADERS, self._refresh_loaders)
         self.data.register(KEY_CATALOG, self._refresh_catalog)
-        self.data.register(KEY_SERVERS, self._refresh_servers)
         self._data_watchers_lock = threading.Lock()
         self._data_watchers_started = False
         LOGGER.debug("ClientApi init: data hub created")
@@ -441,10 +437,6 @@ class ClientApi:
         """注册表目录（索引里那些包，每条 release 带判定）。刷不出来就抛，留着上一次的值。"""
         return self._catalog_controller.catalog_payload(False)
 
-    def _refresh_servers(self) -> dict[str, Any]:
-        """开发者服务器那一份读数。刷不出来就抛，让数据层留着上一次的值。"""
-        return self._private_controller.servers_payload()
-
     @property
     def language(self) -> str:
         configured = str(self.config.get("language", "auto"))
@@ -480,39 +472,6 @@ class ClientApi:
 
     def save_settings(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._settings_controller.save_settings(*args, **kwargs)
-
-    def set_demo_github_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.set_demo_github_login(*args, **kwargs)
-
-    def start_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.start_github_device_login(*args, **kwargs)
-
-    def poll_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.poll_github_device_login(*args, **kwargs)
-
-    def cancel_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.cancel_github_device_login(*args, **kwargs)
-
-    def sync_github_gist(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.sync_github_gist(*args, **kwargs)
-
-    def resolve_github_gist_conflicts(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.resolve_github_gist_conflicts(*args, **kwargs)
-
-    def get_developer_servers(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.get_developer_servers(*args, **kwargs)
-
-    def add_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.add_developer_server(*args, **kwargs)
-
-    def activate_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.activate_developer_server(*args, **kwargs)
-
-    def remove_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.remove_developer_server(*args, **kwargs)
-
-    def logout_github(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._private_controller.logout_github(*args, **kwargs)
 
     def load_catalog(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.load_catalog(*args, **kwargs)

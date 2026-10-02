@@ -153,11 +153,6 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
   和非 GitHub 图片资源。
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改的文件。普通安装前已存在的文件仍受保护；
   通过 Release 哈希自动接管的文件会成为受管文件，并且仅在内容未变化时允许卸载删除。
-- 本地测试开发者服务器支持私有 ZIP/DLL 的授权下载、整包/文件 SHA-256 校验和事务安装；客户端已通过
-  GitHub Device Flow 换取服务器 session token，服务端负责验证 GitHub 身份。私有 manifest 使用
-  Ed25519 detached canonical-JSON 签名，并在首次使用时确认服务器公钥指纹；当前服务端仍只是协议技术验证，
-  不适合作为公网正式分发后台。客户端签名、信任协商、key-status 和轮换规则见
-  [私有服务器签名协议](docs/private-server-signatures.md)。
 
 模组管理器自身的更新：启动时查一次 GitHub Release（tag `v<版本>`，资产 `SprocketModManager.exe`）。
 有新版本就弹窗给两条路 —— **立即更新**把新 EXE 下载到同目录、核对 GitHub 给出的资产 SHA-256，
@@ -180,9 +175,9 @@ Free code signing provided by SignPath.io, certificate by SignPath Foundation
 
 ## 隐私政策
 
-本程序不含遥测与使用统计，不收集用户数据。发送数据的场景只有两处：用户在侧栏「上传日志」
+本程序不含遥测与使用统计，不收集用户数据。发送数据的场景只有一处：用户在侧栏「上传日志」
 中主动选定日志后，日志原文发往 `https://paste.furryaxw.top/api/q/`（无后台自动上传，见
-[日志上传](docs/log-upload-design.md)）；用户配置的私有服务器按用户操作收发数据。
+[日志上传](docs/log-upload-design.md)）。
 
 其余网络访问只读取数据——自身 Release 与更新、Registry 索引与模组 Release 元数据、模组 README——
 请求发往 GitHub 或本项目 Pages 站点，受

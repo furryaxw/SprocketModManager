@@ -18,7 +18,6 @@ from ...application.data_hub import (
     KEY_ENVIRONMENT,
     KEY_INSTALLED,
     KEY_LOADERS,
-    KEY_SERVERS,
 )
 from ...application.identifiers import scan_targets, toggle_directories
 from ...application.local_mods import scan_local_mods, summarize
@@ -332,8 +331,7 @@ class CatalogController(ApiController):
     ) -> list[dict[str, Any]]:
         """这个包发布过哪些版本（新到旧，带判定）。
 
-        公开包用注册表里内嵌的发布数据；私有包不进公开注册表，发布数据在开发者服务器那份读数里
-        （与界面看到的是同一份）。两条路的发布数据都是随条目来的，所以这里不联网。
+        发布数据随注册表条目内嵌而来，所以这里不联网。
         """
         registry = getattr(service, "registry", None)
         if registry is not None and registry.has_package(package_id):
@@ -341,16 +339,6 @@ class CatalogController(ApiController):
             if package.releases is None:
                 return []
             return self._release_verdicts(service, package, environment)
-
-        servers = self.data.get(KEY_SERVERS) or {}
-        for package in servers.get("packages") or ():
-            if not isinstance(package, dict) or package.get("id") != package_id:
-                continue
-            release = package.get("release") or {}
-            version = str(release.get("version", ""))
-            if not version:
-                return []
-            return [{"version": version, "verdict": str(release.get("verdict", ""))}]
         return []
 
     @staticmethod

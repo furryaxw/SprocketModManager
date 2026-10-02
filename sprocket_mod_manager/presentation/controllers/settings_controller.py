@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,6 @@ from ...application.data_hub import (
     KEY_ENVIRONMENT,
     KEY_INSTALLED,
     KEY_LOADERS,
-    KEY_SERVERS,
 )
 from ...infrastructure.defaults import DEFAULT_INDEX_URL
 from ...infrastructure.app_logging import set_logging_level
@@ -44,22 +42,12 @@ class SettingsController(ApiController):
     def bootstrap(self) -> dict[str, Any]:
         LOGGER.debug("bootstrap entered")
         self.config = self.config_store.load()
-        # Do not put GitHub validation, Gist sync, or private-server reconnects
-        # on the WebView/API thread. The local configuration is sufficient to
-        # render the window while this worker refreshes the saved login state.
-        if self._github_token():
-            LOGGER.info("starting background GitHub login refresh")
-            threading.Thread(
-                target=self._background_github_refresh,
-                name="sprocket-github-login-refresh",
-                daemon=True,
-            ).start()
         LOGGER.debug("bootstrap returning")
         return self._success(
             version=self.version,
             language=self.language,
             settings=self._settings_data(),
-            developer_servers=self._developer_servers_data(load_packages=False),
+            developer_servers=[],
             links={
                 "repository": MANAGER_REPOSITORY_URL,
                 "registry": REGISTRY_WEBSITE_URL,
@@ -138,32 +126,35 @@ class SettingsController(ApiController):
             language = str(values.get("language", "auto"))
             if language not in {"auto", "zh", "en"}:
                 raise ValueError("unsupported interface language")
-            previous_game_path = str(self.config.get("game_path", "") or "")
-            previous_index_url = str(self.config.get("index_url", "") or "")
-            self.config = {
-                "debug": values.get("debug") is True,
-                "language": language,
-                "game_path": str(values.get("game_path", "")).strip(),
-                "index_url": str(values.get("index_url", "")).strip(),
-                "proxy_enabled": values.get("proxy_enabled") is True,
-                "proxy_url": normalize_proxy_url(values.get("proxy_url", "")),
-                "github_proxy_enabled": values.get("github_proxy_enabled") is True,
-                "github_proxy_url": normalize_github_proxy_url(
-                    values.get("github_proxy_url", "")
-                ),
-                "text_scale": normalize_text_scale(values.get("text_scale")),
-                "github_user_id": str(self.config.get("github_user_id", "") or ""),
-                "developer_servers": list(self.config.get("developer_servers", [])),
-                "github_gist_id": str(self.config.get("github_gist_id", "") or ""),
-            }
-            self.config_store.save(self.config)
+            # 这份配置是多线程共写的：整个「读旧值 -> 拼新值 -> 落盘」要在同一把锁里，
+            # 否则后台的 GitHub 同步刚写进去的服务器会被这里按旧快照覆盖掉。
+            with self._config_lock:
+                previous_game_path = str(self.config.get("game_path", "") or "")
+                previous_index_url = str(self.config.get("index_url", "") or "")
+                self.config = {
+                    "debug": values.get("debug") is True,
+                    "language": language,
+                    "game_path": str(values.get("game_path", "")).strip(),
+                    "index_url": str(values.get("index_url", "")).strip(),
+                    "proxy_enabled": values.get("proxy_enabled") is True,
+                    "proxy_url": normalize_proxy_url(values.get("proxy_url", "")),
+                    "github_proxy_enabled": values.get("github_proxy_enabled") is True,
+                    "github_proxy_url": normalize_github_proxy_url(
+                        values.get("github_proxy_url", "")
+                    ),
+                    "text_scale": normalize_text_scale(values.get("text_scale")),
+                    "github_user_id": str(self.config.get("github_user_id", "") or ""),
+                    "developer_servers": list(self.config.get("developer_servers", [])),
+                    "github_gist_id": str(self.config.get("github_gist_id", "") or ""),
+                }
+                self.config_store.save(self.config)
             if previous_game_path != self.config["game_path"]:
                 # 换了游戏目录：环境读数与目录判定的缓存都要作废，不然左下角还显示上一个游戏的版本。
                 self._environment_monitor.invalidate()
                 # 上一个目录推出来的长期读数**由数据层**作废并重取：界面不用自己逐个清，
                 # 也不会出现"游戏版本是新的、加载器还是旧目录的"这种混读。
                 self.data_invalidate([
-                    KEY_INSTALLED, KEY_ENVIRONMENT, KEY_CATALOG, KEY_SERVERS, KEY_LOADERS,
+                    KEY_INSTALLED, KEY_ENVIRONMENT, KEY_CATALOG, KEY_LOADERS,
                 ])
                 self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS)
             if previous_index_url != self.config["index_url"]:
