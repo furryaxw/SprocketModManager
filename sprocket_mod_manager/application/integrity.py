@@ -86,7 +86,7 @@ def _disk_target(root: Path, relative: str) -> Path:
     禁用是改名（`X.dll` → `X.dll.disable`），而状态里只记规范路径 —— 直接拿规范路径去算 hash 会
     对禁用中的文件返回"读不到"，把整个包误判成损坏。找不到时把规范路径交回去，由上层判为读不到。
     """
-    target = root / str(relative).replace("/", "\\")
+    target = root / str(relative).replace("\\", "/")
     return actual_path_for(target) or target
 
 
