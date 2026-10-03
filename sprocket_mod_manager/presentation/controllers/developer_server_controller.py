@@ -387,7 +387,13 @@ class DeveloperServerController(ApiController):
         return str(self.config.get("github_user_id", "") or "")
 
     def _server_session_name(self, server_id: str) -> str:
-        return f"developer-server/{server_id}"
+        """凭据库里的名字：**就是裸 server_id**。
+
+        凭据名不许含 `/` 或 `\\`（`CredentialStore._target` 直接拒），加前缀会把整条
+        「连服务器」的路弄成 `invalid credential target`。这里与 `github-access-token`
+        同一套命名，也读得到旧版本按裸 id 存下的会话。
+        """
+        return str(server_id).strip()
 
     def _trusted_client(
             self,
@@ -415,7 +421,11 @@ class DeveloperServerController(ApiController):
         return client
 
     def _connected_client(self, entry: dict[str, Any]) -> DeveloperServerClient:
-        """拿到一台已登录的服务器 client：有会话就用，没有就用 GitHub 令牌换一份。"""
+        """拿到一台已登录的服务器 client：有会话就用，没有就用 GitHub 令牌换一份。
+
+        连上之后要交给私有来源：归属只认「谁下发的」，来源里没有这台 client 就记不了归属，
+        它下发的包也就路由不回去。
+        """
         server_id = str(entry.get("server_id", ""))
         token = ""
         try:
@@ -424,21 +434,20 @@ class DeveloperServerController(ApiController):
             LOGGER.warning("cannot read the stored server session error=%s", exc)
         if token:
             client = self._trusted_client(entry, session_token=token)
-            if client.rotation_applied:
-                self._persist_rotation(entry, client)
-            return client
-        github_token = self._github_token()
-        if not github_token:
-            raise ValueError("GitHub login is required before connecting to a developer server")
-        client = self._trusted_client(entry)
-        value = client.exchange_github_token(github_token)
-        session = str(value.get("token", "")).strip()
-        if not session:
-            raise ValueError("developer server did not return a session token")
-        client.session_token = session
-        self.credentials.save(self._server_session_name(server_id), session)
+        else:
+            github_token = self._github_token()
+            if not github_token:
+                raise ValueError("GitHub login is required before connecting to a developer server")
+            client = self._trusted_client(entry)
+            value = client.exchange_github_token(github_token)
+            session = str(value.get("token", "")).strip()
+            if not session:
+                raise ValueError("developer server did not return a session token")
+            client.session_token = session
+            self.credentials.save(self._server_session_name(server_id), session)
         if client.rotation_applied:
             self._persist_rotation(entry, client)
+        self._private_source().register(server_id, client)
         return client
 
     def _persist_rotation(self, entry: dict[str, Any], client: DeveloperServerClient) -> None:

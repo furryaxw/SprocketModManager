@@ -160,6 +160,49 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.assertEqual(payload["servers"][0]["status"], "offline")
         self.assertEqual(payload["packages"], [])
 
+    # ---- refresh ----------------------------------------------------------
+
+    def test_refreshing_a_server_establishes_and_stores_a_session(self) -> None:
+        """连服务器要能存下会话。凭据名一旦不合法，整条路会报 `invalid credential target`。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+
+        result = self.api.refresh_developer_server(SERVER_ID)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["packages"], 0)
+        self.assertEqual(
+            self.api.credentials.load(SERVER_ID), "session-token",
+            "会话按裸 server_id 存；名字里带 / 会被凭据库直接拒",
+        )
+
+    def test_refreshing_an_unknown_server_fails(self) -> None:
+        result = self.api.refresh_developer_server("nobody")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "developer_server_refresh_failed")
+
+    def test_a_credential_name_may_not_contain_a_slash(self) -> None:
+        """凭据库拒绝带 `/` 或 `\\` 的名字。
+
+        会话名一旦加上 `developer-server/` 这种前缀，整条「连服务器」的路都会以
+        `invalid credential target` 收场 —— 这条把那个约束钉在这里。
+        """
+        for name in ("developer-server/x", "a\\b"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "invalid credential target"):
+                    self.api.credentials.save(name, "token")
+
+    def test_refreshing_without_github_login_is_refused(self) -> None:
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+
+        result = self.api.refresh_developer_server(SERVER_ID)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("GitHub login is required", result["message"])
+
     # ---- remove -----------------------------------------------------------
 
     def test_removing_a_server_marks_it_deleted_instead_of_erasing_it(self) -> None:
