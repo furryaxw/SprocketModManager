@@ -41,6 +41,10 @@ def server_info(*, signed: bool = True) -> DeveloperServerInfo:
 
 
 class FakeServerClient:
+    """一台假服务器。`expired_sessions` 模拟服务端那边已经失效的会话。"""
+
+    expired_sessions: set[str] = set()
+
     def __init__(self, url, *, session_token="", trusted_signing_identity=None):
         self.url = url
         self.session_token = session_token
@@ -54,6 +58,10 @@ class FakeServerClient:
         return {"token": "session-token"}
 
     def packages(self):
+        if self.session_token in self.expired_sessions:
+            raise DeveloperServerError(
+                "session is invalid or expired", status=401, code="invalid_session"
+            )
         return []
 
     def redeem(self, key, github_user_id, **kwargs):
@@ -73,6 +81,7 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self._temporary = tempfile.TemporaryDirectory()
         self.root = Path(self._temporary.name)
         self.addCleanup(self._temporary.cleanup)
+        FakeServerClient.expired_sessions = set()
         self._patches = [
             patch.object(module, "DeveloperServerClient", FakeServerClient),
             patch.object(module, "github_gist_sync", gist_stub),
@@ -202,6 +211,48 @@ class DeveloperServerControllerTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("GitHub login is required", result["message"])
+
+    def test_refresh_replaces_a_session_the_server_no_longer_accepts(self) -> None:
+        """会话会在服务端过期；「刷新」的语义就是把过期的换掉，而不是拿旧的再撞一次。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        self.api.credentials.save(SERVER_ID, "stale-session")
+        FakeServerClient.expired_sessions = {"stale-session"}
+
+        result = self.api.refresh_developer_server(SERVER_ID)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            self.api.credentials.load(SERVER_ID), "session-token", "过期的会话要被换掉"
+        )
+
+    def test_the_servers_reading_reauths_an_expired_session(self) -> None:
+        """读数不该因为一份过期会话就把整台服务器标成需要重新登录 —— GitHub 令牌还在。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        self.api.credentials.save(SERVER_ID, "stale-session")
+        FakeServerClient.expired_sessions = {"stale-session"}
+
+        payload = self.api.servers_payload()
+
+        self.assertEqual(payload["servers"][0]["status"], "active")
+        self.assertEqual(self.api.credentials.load(SERVER_ID), "session-token")
+
+    def test_a_dead_github_token_leaves_the_session_expired(self) -> None:
+        """GitHub 令牌也没了，就只能如实报「需要重新登录」。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save(SERVER_ID, "stale-session")
+        FakeServerClient.expired_sessions = {"stale-session"}
+
+        payload = self.api.servers_payload()
+
+        self.assertEqual(payload["servers"][0]["status"], "reauth_required")
 
     # ---- remove -----------------------------------------------------------
 

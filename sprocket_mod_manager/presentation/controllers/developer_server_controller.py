@@ -89,10 +89,13 @@ class DeveloperServerController(ApiController):
             self._remember_github_token(access_token, user_id=str(identity["id"]))
             # 换了账号，恢复索引里的服务器列表可能也变了：立刻对一次。
             synced = self.sync_github_gist()
+            # 已经注册的服务器要换用新账号的会话 —— 旧会话属于上一个账号。
+            reconnected = self._reconnect_servers()
             return self._success(
                 logged_in=True,
                 github_user_id=str(identity["id"]),
                 conflicts=synced.get("conflicts", []) if synced.get("ok") else [],
+                reconnected_server_ids=reconnected,
             )
         except (OSError, ValueError, TypeError) as exc:
             return self._failure(exc, code="github_login_failed")
@@ -190,8 +193,7 @@ class DeveloperServerController(ApiController):
             data: dict[str, Any] = {**entry, "status": "registered", "packages": []}
             if identity:
                 try:
-                    client = self._connected_client(entry)
-                    entries = client.packages()
+                    entries = self._server_packages(entry)
                     source.learn(server_id, entries)
                     data["status"] = "active"
                     data["packages"] = [
@@ -335,7 +337,7 @@ class DeveloperServerController(ApiController):
                 code="developer_server_refresh_failed",
             )
         try:
-            client = self._connected_client(entry)
+            client = self._connected_client(entry, reauth=True)
             packages = client.packages()
             source = self._private_source()
             source.learn(target, packages)
@@ -420,18 +422,27 @@ class DeveloperServerController(ApiController):
             raise ValueError("developer server signing identity changed without a valid rotation declaration")
         return client
 
-    def _connected_client(self, entry: dict[str, Any]) -> DeveloperServerClient:
-        """拿到一台已登录的服务器 client：有会话就用，没有就用 GitHub 令牌换一份。
+    def _connected_client(
+            self,
+            entry: dict[str, Any],
+            *,
+            reauth: bool = False,
+    ) -> DeveloperServerClient:
+        """拿到一台已登录的服务器 client：有会话就用，没有（或要求重连）就用 GitHub 令牌换一份。
+
+        `reauth` 是「重连」的语义：丢掉已存的那份会话重新兑换。会话会在服务端过期，
+        光靠存着的那一份，过期的服务器就永远回不来。
 
         连上之后要交给私有来源：归属只认「谁下发的」，来源里没有这台 client 就记不了归属，
         它下发的包也就路由不回去。
         """
         server_id = str(entry.get("server_id", ""))
         token = ""
-        try:
-            token = str(self.credentials.load(self._server_session_name(server_id)) or "")
-        except (OSError, ValueError) as exc:
-            LOGGER.warning("cannot read the stored server session error=%s", exc)
+        if not reauth:
+            try:
+                token = str(self.credentials.load(self._server_session_name(server_id)) or "")
+            except (OSError, ValueError) as exc:
+                LOGGER.warning("cannot read the stored server session error=%s", exc)
         if token:
             client = self._trusted_client(entry, session_token=token)
         else:
@@ -449,6 +460,46 @@ class DeveloperServerController(ApiController):
             self._persist_rotation(entry, client)
         self._private_source().register(server_id, client)
         return client
+
+    def _reconnect_servers(self) -> list[str]:
+        """给每台服务器换一份新会话；返回换成功的 server_id。
+
+        单台换不成就跳过它：一台服务器的会话换不了，不该挡住别的服务器。
+        """
+        if not self._github_token():
+            return []
+        connected: list[str] = []
+        for entry in self._developer_server_entries():
+            server_id = str(entry.get("server_id", ""))
+            if not server_id or not entry.get("url"):
+                continue
+            try:
+                self._connected_client(entry, reauth=True)
+            except (OSError, ValueError, TypeError, DeveloperServerError) as exc:
+                LOGGER.warning("cannot reconnect developer server server=%s error=%s", server_id, exc)
+                continue
+            connected.append(server_id)
+        return connected
+
+    def _server_packages(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """取这台服务器的私有包；存着的会话过期时换一份新的再试一次。
+
+        会话在服务端会过期，而 GitHub 令牌通常还在 —— 能自愈就别让用户去手动重连。
+        """
+        try:
+            return self._connected_client(entry).packages()
+        except DeveloperServerError as exc:
+            if exc.code != "invalid_session":
+                raise
+            LOGGER.info(
+                "developer server session expired; re-authenticating server=%s",
+                entry.get("server_id"),
+            )
+            try:
+                return self._connected_client(entry, reauth=True).packages()
+            except (OSError, ValueError, TypeError):
+                # 换不了新的（GitHub 令牌也没了）：如实说这条会话要重新登录，而不是笼统的离线。
+                raise exc
 
     def _persist_rotation(self, entry: dict[str, Any], client: DeveloperServerClient) -> None:
         """服务器换了签名钥且声明成立：把新的身份与指纹落到配置里。"""
