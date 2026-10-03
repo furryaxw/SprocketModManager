@@ -41,6 +41,8 @@ class DeveloperServerInfo:
     key_encoding: str = ""
     manual_transport: str = ""
     signing_rotation: dict[str, Any] | None = None
+    # 允许下载重定向到哪些源：裸主机名只认 https，完整 origin 按 scheme/host/port 精确匹配。
+    download_origins: tuple[str, ...] = ()
 
 
 __all__ = ["DeveloperServerInfo", "normalize_server_url"]

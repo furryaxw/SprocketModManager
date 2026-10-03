@@ -9,6 +9,7 @@ from .identifiers import detected_capabilities, runtime_states
 from .integrity import annotate, published_hashes
 from .integrity import BROKEN_STATUSES
 from .preparer import PlanPreparer, satisfied_versions
+from .private_assets import PrivateAssetSource
 from .solver import DependencySolver
 from ..domain.compatibility import CapabilityEnvironment
 from ..domain.errors import ModManagerError, RegistryError, ScanError
@@ -45,6 +46,8 @@ class ModManagerService:
         # 一起放在游戏目录里，AppData 里不留任何游戏相关的东西。
         self._metadata_game_dir: Path | None = None
         self.registry: Registry | None = None
+        # 私有包载荷的下载口：持有开发者服务器会话的一方设置它；None 表示这台机器没有私有来源。
+        self.private_assets: PrivateAssetSource | None = None
         # 求解时用的能力表（界面每拿到一次 service 就刷新它）：给了就淘汰跑不了这个环境的版本；
         # None 表示不按能力过滤（CLI 之类没有环境概念的调用方）。
         self.environment: CapabilityEnvironment | None = None
@@ -135,7 +138,7 @@ class ModManagerService:
             progress: ProgressCallback | None = None,
             satisfied: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
-        return PlanPreparer(self.app_dir, self.http, self.github).prepare(
+        return PlanPreparer(self.app_dir, self.http, self.github, self.private_assets).prepare(
             plan, progress, satisfied=satisfied
         )
 

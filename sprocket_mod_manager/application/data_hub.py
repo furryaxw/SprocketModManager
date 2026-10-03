@@ -26,6 +26,8 @@ KEY_INSTALLED = "installed"
 KEY_LOADERS = "loaders"
 KEY_ENVIRONMENT = "environment"
 KEY_QUEUE = "queue"
+# 开发者服务器那一份读数：服务器列表、它们的私有包、以及 GitHub 登录状态一起推。
+KEY_SERVERS = "servers"
 # 诊断那份读数不走"刷新器"：它由一次扫描边走边推，订阅者拿到的每一条都是当时的完整现状。
 KEY_DIAGNOSIS = "diagnosis"
 
@@ -35,6 +37,7 @@ KEYS: tuple[str, ...] = (
     KEY_LOADERS,
     KEY_ENVIRONMENT,
     KEY_QUEUE,
+    KEY_SERVERS,
     KEY_DIAGNOSIS,
 )
 
