@@ -21,6 +21,12 @@ class PrivatePackageSource:
         # package id → 下发它的 server id
         self._owners: dict[str, str] = {}
 
+    def register(self, server_id: str, client: DeveloperServerClient) -> None:
+        """交进来一台已连上的服务器：它下发的包才路由得回去，也才敢记归属。"""
+        owner = str(server_id).strip()
+        if owner:
+            self._clients[owner] = client
+
     def learn(self, server_id: str, packages: Iterable[dict]) -> None:
         """记下这批包来自哪台服务器。后学的覆盖先学的：同一 id 出现在两台服务器上时，
         以最近一次刷新为准，避免一个包同时挂在两个会话下。"""
