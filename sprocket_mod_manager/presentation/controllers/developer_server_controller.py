@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from .base import ApiController
 from ...application.data_hub import KEY_SERVERS
@@ -205,7 +206,7 @@ class DeveloperServerController(ApiController):
                             "server_name": str(entry.get("name", "")),
                             "server_url": str(entry.get("url", "")),
                         }
-                        for item in self._catalog_entries(entries)
+                        for item in self._catalog_entries(entries, str(entry.get("url", "")))
                     ]
                 except DeveloperServerError as exc:
                     data["status"] = (
@@ -482,26 +483,75 @@ class DeveloperServerController(ApiController):
             connected.append(server_id)
         return connected
 
-    def _catalog_entries(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    @staticmethod
+    def _with_private_source(item: dict[str, Any], server_url: str) -> dict[str, Any]:
+        """给私有条目补上它的来源声明。
+
+        服务端把抓取规则那条 `release` 剪掉了。没有它，解析下载地址会走「必须落在 github.com」
+        那条分支（条目带 `repository` 时），或者干脆不校验（不带时）；补上外来源与主机，
+        白名单才对得上，下载那一步的主机判定也才有依据。
+        """
+        host = str(urlparse(server_url).hostname or "").strip()
+        if not host:
+            return item
+        release = dict(item.get("release") or {})
+        release["source"] = {"type": "external", "hosts": [host]}
+        return {**item, "release": release}
+
+    def _catalog_entries(
+            self, entries: list[dict[str, Any]], server_url: str = ""
+    ) -> list[dict[str, Any]]:
         """把服务器下发的条目加工成**目录形状**。
 
         界面判「有没有可装的版本」看的是 `release` 与 `install_assets`；把条目原样递过去，
-        每一条都会显示「无可用版本」——原始条目只有 `releases`。转不成包的条目单条跳过。
+        每一条都会显示「无可用版本」——原始条目只有 `releases`。
+
+        解析不了的条目**也交出去**，带上原因：静默丢掉会让界面显示成「这台服务器上没有包」，
+        而事实是「有包，但它读不出来」。这两种情况要能分辨。
         """
         packages: list[RegistryPackage] = []
+        unreadable: list[tuple[dict[str, Any], str]] = []
         for item in entries:
             try:
-                packages.append(RegistryPackage.from_dict(item))
-            except Exception as exc:  # noqa: BLE001 - 一条坏条目只丢它自己
+                packages.append(
+                    RegistryPackage.from_dict(self._with_private_source(item, server_url))
+                )
+            except Exception as exc:  # noqa: BLE001 - 一条坏条目只影响它自己
                 LOGGER.warning(
                     "private entry is not a package id=%s error=%s", item.get("id"), exc
                 )
-        if not packages:
-            return []
+                unreadable.append((item, str(exc)))
         service = self.service
-        if service is None:
-            return [dict(item) for item in entries]
-        return self.api._catalog_controller.entries_for(packages, service)
+        catalog = (
+            self.api._catalog_controller.entries_for(packages, service)
+            if packages and service is not None
+            else []
+        )
+        catalog.extend(self._unreadable_entry(item, reason) for item, reason in unreadable)
+        return catalog
+
+    @staticmethod
+    def _unreadable_entry(item: dict[str, Any], reason: str) -> dict[str, Any]:
+        """一条读不出目录读数的私有条目：仍列出来，把原因摆在 `issues` 里。"""
+        package_id = str(item.get("id", ""))
+        return {
+            "id": package_id,
+            "name": str(item.get("name", "")) or package_id,
+            "display_name": dict(item.get("display_name") or {}),
+            "description": dict(item.get("description") or {}),
+            "authors": list(item.get("authors") or []),
+            "repository": "",
+            "repository_url": "",
+            "license": str(item.get("license", "")),
+            "category": str(item.get("category", "")),
+            "tags": list(item.get("tags") or []),
+            "release": None,
+            "releases": [],
+            "install_assets": [],
+            "install_target": "",
+            "issues": [reason],
+            "available": False,
+        }
 
     def _server_packages(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
         """取这台服务器的私有包；存着的会话过期时换一份新的再试一次。

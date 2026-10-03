@@ -168,6 +168,7 @@ class CatalogController(ApiController):
             latest[package.id] = usable[0] if usable else None
         entries: list[dict[str, Any]] = []
         for package in packages:
+            issues = list(package.issues)
             try:
                 entry = self._package_entry(
                     target,
@@ -180,6 +181,9 @@ class CatalogController(ApiController):
             except Exception as exc:  # noqa: BLE001 - 单条坏数据只让自己不可用
                 LOGGER.warning("private catalog entry failed package=%s error=%s", package.id, exc)
                 entry = self._unavailable_entry(package)
+                issues.append(f"catalog entry failed: {exc}")
+            entry["issues"] = issues
+            entry["available"] = not issues
             entries.append(entry)
         return entries
 
