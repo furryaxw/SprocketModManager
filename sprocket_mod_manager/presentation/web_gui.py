@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from .api_constants import MANAGER_REPOSITORY
 from .controllers import (
     CatalogController,
+    DeveloperServerController,
     DiagnosisController,
     InstallationController,
     SettingsController,
@@ -24,6 +25,7 @@ from ..application.data_hub import (
     KEY_INSTALLED,
     KEY_LOADERS,
     KEY_QUEUE,
+    KEY_SERVERS,
     KEYS,
     DataHub,
 )
@@ -116,11 +118,13 @@ class ClientApi:
         self._catalog_controller = CatalogController(self)
         self._installation_controller = InstallationController(self)
         self._diagnosis_controller = DiagnosisController(self)
+        self._developer_server_controller = DeveloperServerController(self)
         self._controllers = (
             self._settings_controller,
             self._catalog_controller,
             self._installation_controller,
             self._diagnosis_controller,
+            self._developer_server_controller,
         )
         self.install_queue = InstallQueue(self._run_queued_install)
         LOGGER.debug("ClientApi init: install queue created")
@@ -131,6 +135,7 @@ class ClientApi:
         self.data.register(KEY_QUEUE, self._refresh_queue)
         self.data.register(KEY_LOADERS, self._refresh_loaders)
         self.data.register(KEY_CATALOG, self._refresh_catalog)
+        self.data.register(KEY_SERVERS, self._refresh_servers)
         self._data_watchers_lock = threading.Lock()
         self._data_watchers_started = False
         LOGGER.debug("ClientApi init: data hub created")
@@ -481,6 +486,10 @@ class ClientApi:
         """注册表目录（索引里那些包，每条 release 带判定）。刷不出来就抛，留着上一次的值。"""
         return self._catalog_controller.catalog_payload(False)
 
+    def _refresh_servers(self) -> dict[str, Any]:
+        """开发者服务器读数（服务器 + 它们的私有包 + GitHub 登录状态）。"""
+        return self._developer_server_controller.servers_payload()
+
     @property
     def language(self) -> str:
         configured = str(self.config.get("language", "auto"))
@@ -519,6 +528,44 @@ class ClientApi:
 
     def load_catalog(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.load_catalog(*args, **kwargs)
+
+    # 开发者服务器：这些名字要在 ClientApi 上真正出现 —— pywebview 按 `dir()` 建桥，
+    # 只靠控制器的 `__getattr__` 转发，WebView 里会报 `API unavailable`。
+    def get_developer_servers(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.get_developer_servers(*args, **kwargs)
+
+    def add_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.add_developer_server(*args, **kwargs)
+
+    def remove_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.remove_developer_server(*args, **kwargs)
+
+    def refresh_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.refresh_developer_server(*args, **kwargs)
+
+    def activate_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.activate_developer_server(*args, **kwargs)
+
+    def accept_developer_server_invitation(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.accept_developer_server_invitation(*args, **kwargs)
+
+    def start_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.start_github_device_login(*args, **kwargs)
+
+    def poll_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.poll_github_device_login(*args, **kwargs)
+
+    def cancel_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.cancel_github_device_login(*args, **kwargs)
+
+    def logout_github(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.logout_github(*args, **kwargs)
+
+    def sync_github_gist(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.sync_github_gist(*args, **kwargs)
+
+    def resolve_github_gist_conflicts(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._developer_server_controller.resolve_github_gist_conflicts(*args, **kwargs)
 
     def get_installed(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._catalog_controller.get_installed(*args, **kwargs)

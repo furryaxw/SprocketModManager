@@ -1,0 +1,62 @@
+{
+  "_comment": "由服务端实现（sprocket_access_server.infrastructure.security.signing.sign_manifest）签出，用于锁定两侧 canonical JSON 的逐字节兼容。签名密钥是一次性的，已丢弃；这里只有公开值与固定签名。",
+  "identity": {
+    "algorithm": "ed25519",
+    "encoding": "base64url",
+    "key_id": "cross-check-key",
+    "public_key": "ohEYTNhObmtqUMfMmdIs9f8ozc28j6eFSRHtFQJ7qzo",
+    "fingerprint": "sha256:51896e9d34910d50485ab0d274103f7d520b9f800bff46c045c0f98cd7fcd2fc"
+  },
+  "canonical_sha256": "39f0e0e9176b249bd4f62ca2e27844890a2788aa7a39aa661d171c51165d7c92",
+  "signed": {
+    "schema_version": 3,
+    "id": "team1.cross-check",
+    "name": "CrossCheck",
+    "display_name": {
+      "zh": "跨实现校验",
+      "en": "Cross check"
+    },
+    "description": {
+      "zh": "含中文与 emoji 🚀 的条目",
+      "en": "Entry with CJK and emoji"
+    },
+    "install": {
+      "files": [
+        {
+          "match": "Cross.dll",
+          "type": "melonloader:mod"
+        }
+      ]
+    },
+    "releases": [
+      {
+        "id": 1,
+        "version": "1.0.0",
+        "assets": [
+          {
+            "id": 11,
+            "name": "Cross.dll",
+            "size": 1024,
+            "download_url": "http://127.0.0.1:8787/v1/packages/team1.cross-check/download",
+            "digest": "sha256:abababababababababababababababababababababababababababababababab"
+          }
+        ]
+      }
+    ],
+    "unicode_key_排序": "中文字段名",
+    "nested": {
+      "z": 1,
+      "a": [1, 2.5, null, true],
+      "m": {
+        "deep": "值"
+      }
+    },
+    "signature": {
+      "format": "detached-canonical-json",
+      "algorithm": "ed25519",
+      "encoding": "base64url",
+      "key_id": "cross-check-key",
+      "signature": "meO0CdSE6XrFhitU_J5MQvPf1Kt7_BZURu43a7TzFP_1o4uAyjN07b_3gnllBubQM22QFZ7cdS4KjTpMNymICQ"
+    }
+  }
+}

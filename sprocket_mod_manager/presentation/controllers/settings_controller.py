@@ -47,13 +47,24 @@ class SettingsController(ApiController):
             version=self.version,
             language=self.language,
             settings=self._settings_data(),
-            developer_servers=[],
+            developer_servers=self._registered_servers(),
             links={
                 "repository": MANAGER_REPOSITORY_URL,
                 "registry": REGISTRY_WEBSITE_URL,
                 "modloaders": REGISTRY_WEBSITE_URL,
             },
         )
+
+    def _registered_servers(self) -> list[dict[str, Any]]:
+        """启动时先摆出来的服务器列表：只读配置、不碰网络 —— 启动不该被服务器拖住。
+
+        每台的状态与私有包随后由数据层的 `servers` 那份读数补上。
+        """
+        return [
+            {**item, "status": "registered", "packages": []}
+            for item in (self.config.get("developer_servers") or [])
+            if isinstance(item, dict) and item.get("deleted") is not True
+        ]
 
     def startup_trace(self, message: str) -> dict[str, Any]:
         LOGGER.debug("frontend: %s", str(message)[:300])

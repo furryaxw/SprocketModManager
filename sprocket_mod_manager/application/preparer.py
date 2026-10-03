@@ -12,6 +12,9 @@ from ..domain.models import (
     PreparedPackage,
     PreparedPlan,
     ProgressCallback,
+    RegistryPackage,
+    ReleaseAsset,
+    ReleaseInfo,
     ResolutionPlan,
 )
 from ..infrastructure.github import GitHubClient
@@ -24,6 +27,7 @@ from ..utilities.package_paths import (
     validate_relative_path,
     validate_supply_target,
 )
+from .private_assets import PrivateAssetSource
 
 
 def satisfied_versions(records: Mapping[str, Any]) -> dict[str, str]:
@@ -42,10 +46,30 @@ def satisfied_versions(records: Mapping[str, Any]) -> dict[str, str]:
 
 
 class PlanPreparer:
-    def __init__(self, app_dir: Path, http: HttpClient, github: GitHubClient):
+    def __init__(
+            self,
+            app_dir: Path,
+            http: HttpClient,
+            github: GitHubClient,
+            private_assets: PrivateAssetSource | None = None,
+    ):
         self.app_dir = app_dir
         self.http = http
         self.github = github
+        self.private_assets = private_assets
+
+    def retrieve(
+            self,
+            package: RegistryPackage,
+            release: ReleaseInfo,
+            asset: ReleaseAsset,
+            destination: Path,
+    ) -> None:
+        """取回一个资产：私有包走它自己的下载口（要带服务器会话），其余走公开的 HTTP 客户端。"""
+        if self.private_assets is not None and self.private_assets.handles(package):
+            self.private_assets.download(package, release, asset, destination)
+            return
+        self.http.download(asset, destination, progress=None, hosts=set(package.asset_hosts()))
 
     @staticmethod
     def install_directories(plan: ResolutionPlan) -> dict[str, PurePosixPath]:
@@ -106,9 +130,7 @@ class PlanPreparer:
                     if progress:
                         progress(f"Downloading {package.label()} {resolved.release.version}: {asset.name}")
                     destination = package_dir / "assets" / asset.name
-                    self.http.download(
-                        asset, destination, progress=None, hosts=set(package.asset_hosts())
-                    )
+                    self.retrieve(package, resolved.release, asset, destination)
                     actual_digest = sha256_file(destination)
                     expected = publisher_checksum(
                         self.http, package, resolved.release, asset
