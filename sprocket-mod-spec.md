@@ -8,7 +8,7 @@ Registry 托管在 GitHub Pages，只保存模组级基础元数据。版本、t
 ## 数据流
 
 ```text
-Pages index.json
+Pages data/packages.json
   -> mods/<作者>/<modid>.json
   -> GitHub API /repos/<owner>/<repo>/releases（外部来源用条目自带的 releases）
   -> 选择兼容 tag 和 Release assets
@@ -33,7 +33,7 @@ Pages index.json
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "furryaxw.sprocket-laser-rangefinder",
   "name": "SprocketLaserRangefinder",
   "authors": ["furryAxw"],
@@ -84,8 +84,10 @@ Pages index.json
 }
 ```
 
-`display_name` 必填，但只需至少一种语言。`description` 整个字段可省略；如果填写，
-至少包含一种非空翻译，而且其语言集合不必与 `display_name` 相同。
+`display_name` 写了就至少要一种语言。条目本身只有 `schema_version`、`id`、`name`、`install`
+四项必填，其余字段都可以整个省略，写了才校验形状，schema 没定义的键原样写进索引。
+`description` 整个字段可省略；如果填写，至少包含一种非空翻译，而且其语言集合不必与
+`display_name` 相同。
 
 本地化键使用开放的 BCP 47 风格语言标签，例如 `en`、`ja`、`zh-Hans`、
 `zh-Hant`、`pt-BR` 或私有标签 `x-example`。Registry 不维护固定语言列表，因此未来
@@ -164,7 +166,7 @@ Release 在正文里用注释块声明它落在哪些区间：
 （`<0.2.54`）。发布说明里没有可用声明的 release 沿用比它旧、最近一个有可用声明的区间；
 声明写坏时该 release 记作未声明。
 
-索引顶层用 `game` 写出游戏能力：
+`data/environment.json` 用 `game` 写出游戏能力：
 
 ```json
 {
@@ -173,8 +175,8 @@ Release 在正文里用注释块声明它落在哪些区间：
 ```
 
 注册表根目录的 `providers.json` 记「某个加载器类包的某段版本能跑哪段游戏版本」，行写成
-`loader`、`version`、`sprocket` 三个区间，`loader` 是注册表里某个加载器类包的 id；索引在
-`providers` 下带上这张表，`providers_warnings` 放在旁边：
+`loader`、`version`、`sprocket` 三个区间，`loader` 是注册表里某个加载器类包的 id；`data/environment.json`
+在 `providers` 下带上这张表，`providers_warnings` 放在旁边：
 
 ```json
 {
@@ -443,8 +445,9 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 ```
 
 只有 `kind` 为 `modloader` 的包可以声明外部来源；模组的二进制只能来自它自己的 GitHub
-Releases。外部来源没有可以查询的 API，因此这样的条目必须另外自带顶层 `releases` 数组，
-里面的 `download_url` 必须落在 `hosts` 列出的主机之一。这些主机是下载白名单：客户端只从这里
+Releases。外部来源没有可以查询的 API，因此这样的条目必须另外自带顶层 `releases` 数组：
+每条记录要有 `id`、`version` 与 `assets`，每条资产要有 `id` 与 `download_url`，
+`download_url` 必须落在 `hosts` 列出的主机之一。`tag`、`page_url`、`digest` 这类字段可以省略。这些主机是下载白名单：客户端只从这里
 下载资产，发布者摘要仍按 SHA-256 一节的方式校验。工具或上游文档固定了某个具体构建时，
 这样的条目可以直接钉住该构建的名称、URL 与摘要。
 

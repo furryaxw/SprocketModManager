@@ -224,25 +224,40 @@ class ClientApi:
             if capability_id in recorded:
                 continue
             capabilities[capability_id] = str(version)
-        return CapabilityEnvironment(
-            game_id=getattr(registry, "game_id", DEFAULT_GAME_CAPABILITY) if registry is not None else DEFAULT_GAME_CAPABILITY,
-            sprocket=str(sprocket.get("version") or "") or None,
-            sprocket_state=str(sprocket.get("state") or "unconfigured"),
-            capabilities=capabilities,
-            loaders=loaders,
-            installed_loaders=frozenset(installed_loaders),
-            table=table,
-        )
+        try:
+            return CapabilityEnvironment(
+                game_id=getattr(registry, "game_id", DEFAULT_GAME_CAPABILITY) if registry is not None else DEFAULT_GAME_CAPABILITY,
+                sprocket=str(sprocket.get("version") or "") or None,
+                sprocket_state=str(sprocket.get("state") or "unconfigured"),
+                capabilities=capabilities,
+                loaders=loaders,
+                installed_loaders=frozenset(installed_loaders),
+                table=table,
+            )
+        except Exception as exc:  # 环境表构建失败也要给出一个空环境，别让侧栏整块没有读数
+            LOGGER.warning("environment build failed error=%s", exc)
+            return CapabilityEnvironment(
+                game_id=DEFAULT_GAME_CAPABILITY,
+                sprocket=None,
+                sprocket_state="unconfigured",
+                capabilities={},
+                loaders={},
+                installed_loaders=frozenset(),
+                table={},
+            )
 
     def environment_payload(self) -> dict[str, Any]:
         _table, table_source = self.providers_table()
-        return self.current_environment().as_dict(table_source=table_source)
+        payload = self.current_environment().as_dict(table_source=table_source)
+        payload["issues"] = list(self.environment_snapshot().get("issues") or ())
+        return payload
 
     def _read_environment(self) -> dict[str, Any]:
         """本机环境：Sprocket 版本（读游戏目录）+ 每个加载器装的是哪版（安装记录 + 磁盘检测）。
 
         只读本地文件、不联网 —— 监听线程每隔一秒就可能走一遍这里。安装记录读一次，
         加载器状态与指纹要监听的目录都从这一份来；`detected` 一份供加载器状态与能力表共用。
+        每个来源各自降级：读不出来的那一项记进 `issues`，其余照常。
         """
         game_path = self._game_path_or_none()
         if game_path is None:
@@ -250,17 +265,46 @@ class ClientApi:
             return {
                 "sprocket": GameVersion.unconfigured().as_dict(),
                 "loaders": {},
+                "issues": [],
             }
+        issues: list[str] = []
         installed: dict[str, dict[str, Any]] = {}
         registry = self.service.registry if self.service is not None else None
         if registry is not None:
-            installed = self.service.installed(game_path)
-        detected = detected_capabilities(game_path)
-        self._mod_directories = self._active_mod_directories(game_path, installed)
+            try:
+                installed = self.service.installed(game_path)
+            except Exception as exc:  # 一条来源读不出来只降级它自己
+                LOGGER.warning("installed records unreadable error=%s", exc)
+                issues.append(f"installed records unreadable: {exc}")
+        detected: dict[str, str] = {}
+        try:
+            detected = detected_capabilities(game_path)
+        except Exception as exc:
+            LOGGER.warning("runtime detection failed error=%s", exc)
+            issues.append(f"runtime detection failed: {exc}")
+        try:
+            self._mod_directories = self._active_mod_directories(game_path, installed)
+        except Exception as exc:
+            LOGGER.warning("mod directories failed error=%s", exc)
+            issues.append(f"mod directories failed: {exc}")
+            self._mod_directories = MOD_DIRECTORIES
+        try:
+            sprocket = read_game_version(game_path).as_dict()
+        except Exception as exc:
+            LOGGER.warning("game version unreadable error=%s", exc)
+            issues.append(f"game version unreadable: {exc}")
+            sprocket = GameVersion.unconfigured().as_dict()
+        try:
+            loaders = self._installed_loaders(installed, detected)
+        except Exception as exc:
+            LOGGER.warning("loader states failed error=%s", exc)
+            issues.append(f"loader states failed: {exc}")
+            loaders = {}
         return {
-            "sprocket": read_game_version(game_path).as_dict(),
-            "loaders": self._installed_loaders(installed, detected),
+            "sprocket": sprocket,
+            "loaders": loaders,
             "detected": detected,
+            "issues": issues,
         }
 
     def _active_mod_directories(

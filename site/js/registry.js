@@ -6,7 +6,7 @@ async function loadRegistry(forceRefresh) {
     elements.refresh.disabled = true;
     elements.refresh.querySelector("svg")?.classList.add("spin");
     try {
-        const response = await fetch("./index.json", {cache: "no-store"});
+        const response = await fetch("./data/packages.json", {cache: "no-store"});
         if (!response.ok) throw new Error(`Registry HTTP ${response.status}`);
         const registry = await response.json();
         state.packages = Array.isArray(registry.packages) ? registry.packages : [];
@@ -65,7 +65,7 @@ function filteredPackages() {
         ].join(" ").toLocaleLowerCase();
         return text.includes(state.query);
     });
-    // 「按版本」= 索引给的次序：index.json 的包列表就是按发布版本从新到旧排的，
+    // 「按版本」= 索引给的次序：packages.json 的包列表就是按发布版本从新到旧排的，
     // 站点不再自己解析版本号（版本高低只有生成索引那一处口径）。
     const releaseRank = new Map();
     state.packages.forEach((pkg, index) => releaseRank.set(pkg, index));

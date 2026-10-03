@@ -166,5 +166,21 @@ class InstalledRefreshTests(unittest.TestCase):
                              "the cached registry entry is shipped with the row so the UI can localize it")
 
 
+    def test_a_file_whose_identity_is_known_is_matched_without_the_install_record(self) -> None:
+        """身份由注册表自动匹配，不靠安装记录。"""
+        with tempfile.TemporaryDirectory() as directory:
+            api, _game, _service = self._api(Path(directory))
+            try:
+                result = api.get_installed()
+            finally:
+                api.install_queue.close()
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(
+                result["local_mods"][0]["registry_id"], "fixture.sprocket-mod",
+                "身份由注册表自动匹配，不靠安装记录",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

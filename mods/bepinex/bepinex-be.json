@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "bepinex.bepinex-be",
   "name": "BepInEx",
   "authors": ["BepInEx"],
@@ -28,6 +28,7 @@
   },
   "releases": [
     {
+      "id": 0,
       "tag": "6.0.0-be.788",
       "version": "6.0.0-be.788",
       "prerelease": true,
@@ -35,6 +36,7 @@
       "page_url": "https://builds.bepinex.dev/projects/bepinex_be",
       "assets": [
         {
+          "id": 0,
           "name": "BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788+5b766a3.zip",
           "size": 34336405,
           "download_url": "https://builds.bepinex.dev/projects/bepinex_be/788/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788%2B5b766a3.zip",

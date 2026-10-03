@@ -23,7 +23,7 @@ A minimal entry you can use as it stands (with `kind` absent, meaning the defaul
 ```json
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "example.sprocket-mod",
   "name": "ExampleSprocketMod",
   "authors": ["ExampleAuthor"],
@@ -67,7 +67,7 @@ the type as `<loader>:*`:
 ```json
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "example.sprocket-metadata-mod",
   "name": "ExampleSprocketMetadataMod",
   "authors": ["ExampleAuthor"],
@@ -102,9 +102,9 @@ the type as `<loader>:*`:
 
 ## Required and Optional Fields
 
-Required: `schema_version` (currently `2`), `id`, `name`, `authors`, `repository`,
-`license`, `display_name`, `release`, `dependencies`, `install`, `category`, and `tags`.
-Every other field is optional.
+Required: `schema_version` (currently `3`), `id`, `name`, and `install`. Every other field
+is optional and is checked only when present; keys the schema does not define pass through
+into the index unchanged.
 
 - `authors`: a non-empty, duplicate-free list of strings.
 - `repository`: `owner/repo`, and the repository must be public.
@@ -113,12 +113,12 @@ Every other field is optional.
   present it needs at least one non-empty translation, and its languages do not have to
   match those of `display_name`. Language keys use open-ended tags such as `en`,
   `zh-Hans`, `pt-BR`, or `x-example`.
-- `release`: `include_prerelease` decides whether prereleases are accepted; the first
-  capture group of `version_pattern` must be SemVer; `assets.include` needs at least one
-  pattern and `assets.exclude` may be empty. Only patterns belong here — an entry never
-  carries a version number or a download URL (`version`, `latest_version`,
-  `download_url`, and `tag` are all rejected).
-- `dependencies`: an array whose items are exactly `{id, version, when}`; `version` is
+- `release`: where the binaries come from and how they are picked. `include_prerelease`
+  decides whether prereleases are accepted; the first capture group of `version_pattern`
+  must be SemVer; `assets.include` needs at least one pattern and `assets.exclude` may be
+  empty. Only patterns belong here — an entry never carries a version number or a download
+  URL (`version`, `latest_version`, `download_url`, and `tag` are all rejected).
+- `dependencies`: an array whose items are `{id, version, when}`; `version` is
   the range the dependency must satisfy, `when` is the range of this package's own
   version, and `*` means "any". Exact versions, comparison operators, `^`, and `~` are
   supported.
@@ -131,8 +131,9 @@ Every other field is optional.
 
 ## Install Rule Types
 
-Each `install.files` line is `{match, type}` with optional `subpath` and `layout`; using
-this install line also requires `scan_dlls` and `exclude`.
+Each `install.files` line is `{match, type}` with optional `subpath` and `layout`;
+`scan_dlls` and `exclude` may be omitted, and an omitted `scan_dlls` classifies DLLs from
+their metadata.
 
 `type` is a **file type** written `<loader>:<kind>`, for example `melonloader:mod`,
 `melonloader:plugin`, `melonloader:userlib`, `bepinex:plugin`, `bepinex:core`, or
@@ -175,7 +176,7 @@ not covered by a rule fails the scan for that package.
 The four kinds other than `modfile` may use `install.payload`, and may also use
 `install.files` when their content maps onto supply types; a package uses one install
 line or the other. An `install.payload` line is `{match, target}` with optional `subpath`
-and `layout`, and also requires `exclude`; `target` is a location in the game directory,
+and `layout`; `target` is a location in the game directory,
 written like a `supply` value (`{Sprocket}`, `{Sprocket}/BepInEx/core`).
 
 A loader declares through `supply` which types it provides to other packages and where
@@ -189,8 +190,10 @@ package id: `bepinex.bepinex-be` supplies the `bepinex.bepinex` capability with
 Only a package whose `kind` is `modloader` may declare an external `release.source`: a
 mod takes its binaries from its own GitHub Releases alone, and the version, tag, and
 publisher digest all come from that repository. An external source has no API to query,
-so such an entry must carry its own top-level `releases` array, whose `download_url`
-values must sit on one of the hosts listed in `release.source.hosts`.
+so such an entry must carry its own top-level `releases` array: every record needs `id`,
+`version`, and `assets`, every asset needs `id` and `download_url`, and each `download_url`
+must sit on one of the hosts listed in `release.source.hosts`. Fields such as `tag`,
+`page_url`, and `digest` may be omitted.
 
 ## Dependencies and Capabilities
 

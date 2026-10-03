@@ -25,7 +25,7 @@ def run(arguments: list[str], app_dir: Path, game: Path) -> tuple[int, float, st
         str(PYTHON),
         str(REPO / "modman.py"),
         "--app-dir", str(app_dir),
-        "--index-file", str(app_dir / "index.json"),
+        "--index-dir", str(app_dir / "registry" / "data"),
         "--game-path", str(game),
         "--json",
         *arguments,
@@ -49,8 +49,17 @@ def main() -> int:
         game.mkdir()
         app_dir.mkdir()
         (game / "Sprocket.exe").write_bytes(b"stub")
-        (app_dir / "index.json").write_text(
+        index_dir = app_dir / "registry"
+        data_dir = index_dir / "data"
+        data_dir.mkdir(parents=True)
+        (data_dir / "packages.json").write_text(
             json.dumps({"schema_version": 1, "packages": []}), encoding="utf-8"
+        )
+        (data_dir / "environment.json").write_text(
+            json.dumps({"schema_version": 1, "game": {}, "providers": {}}), encoding="utf-8"
+        )
+        (data_dir / "diagnosis.json").write_text(
+            json.dumps({"schema_version": 1, "entries": []}), encoding="utf-8"
         )
 
         copied = 0

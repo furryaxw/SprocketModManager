@@ -162,7 +162,6 @@ const sandbox = {
             detectedMods: `${values.count} detected mods`,
             missingDepsCount: `${values.count} missing deps`,
             noInstalled: "No mods detected",
-            unrecognized: "Unrecognized",
             requested: "User-installed",
             dependency: "Installed dependency",
             enableMod: "Enable",

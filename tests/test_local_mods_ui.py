@@ -64,11 +64,6 @@ class LocalModsClientUiTests(unittest.TestCase):
         self.assertIn("state.selectedId = packageId", catalog)
         self.assertIn('data-i18n="installedRowHint"', html)
 
-    def test_previous_unrecognized_shape_still_renders(self) -> None:
-        self.assertIn("unrecognized: () => dataValue(\"installed\")?.unrecognized || []", self.data)
-        self.assertIn("if (item.unrecognized)", self.installs)
-        self.assertIn('tr("unrecognized")', self.installs)
-
     def test_installed_page_shows_required_dependencies(self) -> None:
         self.assertIn("mod.required_dependencies", self.installs)
         self.assertIn('tr("requiresLabel")', self.installs)

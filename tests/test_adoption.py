@@ -1,4 +1,5 @@
 import hashlib
+import json
 import shutil
 import tempfile
 import unittest
@@ -106,6 +107,39 @@ class ExistingModsAdoptionTests(unittest.TestCase):
             self.assertEqual([record.package_id for record in adopted], [item.id])
             self.assertTrue((game / "SprocketModManager" / "file-metadata.json").is_file(),
                             "认领路径必须把解析结果写进 <game>/SprocketModManager/file-metadata.json")
+
+    @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
+    def test_a_file_recorded_as_unowned_is_still_claimed(self, _running):
+        """`unowned` 收的是没有包主的文件：它们必须还能被认领，否则永远回不到记录里。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = self.game(root)
+            payload = FIXTURE_MOD.read_bytes()
+            (game / "Mods" / "FixtureMod.dll").write_bytes(payload)
+            (game / "SprocketModManager").mkdir(parents=True)
+            (game / "SprocketModManager" / "installed.json").write_text(
+                json.dumps({
+                    "schema_version": 2,
+                    "packages": {},
+                    "unowned": {
+                        "Mods/FixtureMod.dll": {
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                            "disabled": False,
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+            service = ModManagerService(root / "app")
+            item = package("fixture.sprocket-mod", "FixtureMod.dll", payload,
+                           repository="fixture/FixtureMod")
+            service.registry = Registry([item])
+
+            adopted = service.adopt_existing(game)
+            state = service._installer_for(game).state_store.load()
+
+            self.assertEqual([record.package_id for record in adopted], [item.id])
+            self.assertEqual(state["files"]["Mods/FixtureMod.dll"]["owners"], [item.id])
 
     @patch("sprocket_mod_manager.infrastructure.installer.sprocket_is_running", return_value=False)
     def test_declared_id_claims_even_when_the_digest_does_not_match(self, _running):

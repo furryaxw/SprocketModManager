@@ -27,6 +27,8 @@ from ..domain.compatibility import CapabilityEnvironment
 from ..domain.diagnosis import (
     BUCKET_OPTIONAL,
     BUCKET_REQUIRED,
+    UNJUDGED_CHECKS_FAILED,
+    UNJUDGED_LOG_UNREADABLE,
     UNJUDGED_PACK_MISSING,
     diagnosis_pack,
     log_hits,
@@ -214,15 +216,24 @@ def run_diagnosis(
     started_at = time.monotonic()
     stamp = datetime.now(timezone.utc).replace(microsecond=0)
     normalized = diagnosis_pack(pack)
-    facts = build_facts(
-        game_dir=game_dir, registry=registry, installed=installed, environment=environment
-    )
-    state_hits, unjudged = state_findings(facts, normalized)
+    try:
+        facts = build_facts(
+            game_dir=game_dir, registry=registry, installed=installed, environment=environment
+        )
+        state_hits, unjudged = state_findings(facts, normalized)
+    except Exception as exc:  # 环境那几条整体读不出来：照样出报告，并说明是「判不了」
+        LOGGER.warning("environment checks failed error=%s", exc)
+        state_hits, unjudged = [], [{"rule": "", "reason": UNJUDGED_CHECKS_FAILED}]
     if not normalized.get("entries"):
         unjudged.append({"rule": "", "reason": UNJUDGED_PACK_MISSING})
     _attach_labels(state_hits, registry)
 
-    signatures = log_signatures(normalized)
+    try:
+        signatures = log_signatures(normalized)
+    except Exception as exc:  # 签名表建不出来：规则读不了，如实说，别当作「没有命中」
+        LOGGER.warning("log signatures failed error=%s", exc)
+        signatures = []
+        unjudged.append({"rule": "", "reason": UNJUDGED_CHECKS_FAILED})
     readings: list[dict[str, Any]] = []
     lines_read = 0
     roles: set[str] = set()
@@ -253,21 +264,25 @@ def run_diagnosis(
     last_emit = started_at
 
     for spec in specs:
-        with LogStream(spec.path, role=spec.role, source=spec.label) as stream:
-            if stream.status == READ_OK:
-                roles.add(spec.role)
-            for line in stream:
-                lines_read += 1
-                hit = False
-                for signature in signatures:
-                    before = signature.count
-                    signature.feed(line)
-                    hit = hit or signature.count != before
-                now = time.monotonic()
-                if hit and now - last_emit >= PROGRESS_SECONDS:
-                    last_emit = now
-                    emit(running=True)
-            readings.append(stream.reading())
+        try:
+            with LogStream(spec.path, role=spec.role, source=spec.label) as stream:
+                if stream.status == READ_OK:
+                    roles.add(spec.role)
+                for line in stream:
+                    lines_read += 1
+                    hit = False
+                    for signature in signatures:
+                        before = signature.count
+                        signature.feed(line)
+                        hit = hit or signature.count != before
+                    now = time.monotonic()
+                    if hit and now - last_emit >= PROGRESS_SECONDS:
+                        last_emit = now
+                        emit(running=True)
+                readings.append(stream.reading())
+        except Exception as exc:  # 一份日志读不下去只跳过它，别让整份诊断没有报告
+            LOGGER.warning("log source failed source=%s error=%s", spec.label, exc)
+            unjudged.append({"rule": "", "reason": UNJUDGED_LOG_UNREADABLE})
         emit(running=True)
 
     timed_out = {signature.rule_id for signature in signatures if signature.abandoned}

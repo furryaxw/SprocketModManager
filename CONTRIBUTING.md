@@ -19,7 +19,7 @@ Pull Request 加进本仓库；不需要改动已有的 Release，也不要把�
 ```json
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "example.sprocket-mod",
   "name": "ExampleSprocketMod",
   "authors": ["ExampleAuthor"],
@@ -62,7 +62,7 @@ DLL 的具体种类也可以留到下载后按它自己的元数据决定，把�
 ```json
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "example.sprocket-metadata-mod",
   "name": "ExampleSprocketMetadataMod",
   "authors": ["ExampleAuthor"],
@@ -97,19 +97,19 @@ DLL 的具体种类也可以留到下载后按它自己的元数据决定，把�
 
 ## 必填与可选字段
 
-必填：`schema_version`（当前为 `2`）、`id`、`name`、`authors`、`repository`、`license`、
-`display_name`、`release`、`dependencies`、`install`、`category`、`tags`。其余字段都可省略。
+必填：`schema_version`（当前为 `3`）、`id`、`name`、`install`。其余字段都可以省略，写了才
+校验形状；schema 没定义的键原样写进索引。
 
 - `authors`：非空的字符串列表，不重复。
 - `repository`：`owner/repo`，必须是公开仓库。
 - `license`：SPDX 标识，例如 `MIT`、`GPL-3.0-only`。
 - `display_name`：至少一种语言；`description` 整个可省略，填写时至少一种非空翻译，两种
   字段的语言不必一致。语言键用 `en`、`zh-Hans`、`pt-BR`、`x-example` 这类开放标签。
-- `release`：`include_prerelease` 决定是否接受 prerelease；`version_pattern` 的第一个捕获组
-  必须是 SemVer；`assets.include` 至少一项，`assets.exclude` 可为空。这里只写模式，
-  条目里不出现任何版本号或下载地址（`version`、`latest_version`、`download_url`、`tag`
-  都禁止出现）。
-- `dependencies`：数组，每项恰好写成 `{id, version, when}`；`version` 是依赖包要满足的
+- `release`：二进制从哪来、怎么挑。`include_prerelease` 决定是否接受 prerelease；
+  `version_pattern` 的第一个捕获组必须是 SemVer；`assets.include` 至少一项，`assets.exclude`
+  可为空。这里只写模式，条目里不出现任何版本号或下载地址（`version`、`latest_version`、
+  `download_url`、`tag` 都禁止出现）。
+- `dependencies`：数组，每项写成 `{id, version, when}`；`version` 是依赖包要满足的
   区间，`when` 是当前包自身的版本区间，`*` 表示不限，支持精确版本、比较运算符、`^` 和 `~`。
 - `recommendations`：已注册的包 id 列表，不重复、不能指向当前包；它们不参与依赖求解，
   也不会自动安装，只在安装确认页列出且默认不勾选。
@@ -119,8 +119,8 @@ DLL 的具体种类也可以留到下载后按它自己的元数据决定，把�
 
 ## 安装规则的类型
 
-`install.files` 的每一行写成 `{match, type}`，可选 `subpath` 和 `layout`；用这条安装线时
-必须同时给出 `scan_dlls` 和 `exclude`。
+`install.files` 的每一行写成 `{match, type}`，可选 `subpath` 和 `layout`；`scan_dlls` 与
+`exclude` 可以省略，省略 `scan_dlls` 时按 DLL 元数据归类。
 
 `type` 是一个**文件类型**，写成 `<加载器>:<类别>`，例如 `melonloader:mod`、
 `melonloader:plugin`、`melonloader:userlib`、`bepinex:plugin`、`bepinex:core`、
@@ -156,7 +156,7 @@ DLL 的具体种类也可以留到下载后按它自己的元数据决定，把�
 
 除 `modfile` 之外的四种可以用 `install.payload`，内容能映射到供给类型时也可以用
 `install.files`；一个包只能用其中一条安装线。`install.payload` 的行写成 `{match, target}`
-（可选 `subpath`、`layout`）并同样要求 `exclude`，`target` 直接是游戏目录里的一处位置，
+（可选 `subpath`、`layout`），`target` 直接是游戏目录里的一处位置，
 写法与 `supply` 的值相同（`{Sprocket}`、`{Sprocket}/BepInEx/core`）。
 
 加载器用 `supply` 声明它供给别人哪些类型、各自装在 `{Sprocket}` 下的哪个目录；
@@ -167,8 +167,9 @@ DLL 的具体种类也可以留到下载后按它自己的元数据决定，把�
 
 只有 `kind` 为 `modloader` 的包可以声明外部 `release.source`：模组的二进制只能来自它
 自己的 GitHub Releases，版本、tag 与发布者摘要都以那个仓库为准。外部来源没有可查询的
-API，所以这样的条目必须自己带上顶层 `releases` 数组，其中的 `download_url` 要落在
-`release.source.hosts` 列出的主机上。
+API，所以这样的条目必须自己带上顶层 `releases` 数组：每条记录要有 `id`、`version` 和
+`assets`，每条资产要有 `id` 和 `download_url`，`download_url` 要落在 `release.source.hosts`
+列出的主机上。`tag`、`page_url`、`digest` 这类字段可以省略。
 
 ## 依赖与能力
 

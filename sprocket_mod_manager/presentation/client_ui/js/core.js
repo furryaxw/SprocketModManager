@@ -13,7 +13,6 @@ const state = {
     privatePackages: [],
     developerServers: [],
     installed: [],
-    unrecognized: [],
     hasAnyMods: false,
     queue: [],
     selectedId: null,
@@ -390,6 +389,7 @@ function filteredPackages(view) {
 }
 
 function packageState(pkg) {
+    if (packageUnavailable(pkg)) return {label: tr("dataIssues"), className: "fail"};
     if (pkg.cached) return {label: tr("unavailable"), className: ""};
     if (!pkg.release || !(pkg.install_assets || []).length) return {label: tr("unavailable"), className: ""};
     const installed = packageInstalled(pkg);
@@ -399,6 +399,7 @@ function packageState(pkg) {
 }
 
 function packageEligible(pkg) {
+    if (packageUnavailable(pkg)) return false;
     const installed = packageInstalled(pkg);
     return Boolean(pkg.release && (pkg.install_assets || []).length && !pkg.cached && (!pkg.private || pkg.archive) && (!installed || installed.version !== pkg.release.version));
 }

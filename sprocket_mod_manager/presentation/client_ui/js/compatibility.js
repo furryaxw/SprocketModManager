@@ -49,8 +49,18 @@ function targetVerdict(pkg) {
     return release?.verdict || packageVerdict(pkg);
 }
 
+/**
+ * 这条读数自身有没有问题（后端读不出来或校验不过）。
+ *
+ * 有问题的条目照样列在目录里 —— 它只是不可用，藏起来反而让人以为它没被收录。
+ */
+function packageUnavailable(pkg) {
+    return pkg?.available === false || Boolean(pkg?.issues?.length);
+}
+
 /** 从目录里消失的包：判过、且一个兼容版本都没有。一版都没判过的照常显示。 */
 function packageHidden(pkg) {
+    if (packageUnavailable(pkg)) return false;
     if (!packageReleases(pkg).length) return false;
     return packageVerdict(pkg) === VERDICT_INCOMPATIBLE;
 }

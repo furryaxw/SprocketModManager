@@ -120,10 +120,12 @@ class MetadataLocalizationTests(unittest.TestCase):
                 with self.assertRaisesRegex(TypeError, "featured must be a boolean"):
                     RegistryPackage.from_dict(invalid)
 
-    def test_registry_requires_recommendations_to_reference_registered_packages(self):
+    def test_recommendations_to_unregistered_packages_are_left_alone(self):
         root_data = {**metadata(), "recommendations": ["example.companion"]}
-        with self.assertRaisesRegex(RegistryError, "recommendation is not registered"):
-            Registry.from_dict({"schema_version": 1, "packages": [root_data]})
+        registry = Registry.from_dict({"schema_version": 1, "packages": [root_data]})
+        package = registry.get(root_data["id"])
+        self.assertEqual(package.recommendations, ("example.companion",))
+        self.assertEqual(package.issues, ())
 
         companion_data = {
             **metadata(),
@@ -165,11 +167,11 @@ class MetadataLocalizationTests(unittest.TestCase):
                 json.dumps(metadata()),
                 encoding="utf-8",
             )
-            output = root / "index.json"
+            output_dir = root / "registry"
 
             index = INDEX.generate_index(
                 root / "mods",
-                output,
+                output_dir,
                 release_loader=lambda _package, _known, _axes: [release],
             )
 
@@ -250,15 +252,15 @@ class MetadataLocalizationTests(unittest.TestCase):
             ):
                 index = INDEX.generate_index(
                     root / "mods",
-                    root / "index.json",
+                    root / "registry",
                     release_loader=unittest.mock.Mock(
                         side_effect=INDEX.RegistryError("temporary failure")
                     ),
-                    fallback_index_url="https://example.com/index.json",
+                    fallback_index_url="https://example.com/packages.json",
                 )
 
         self.assertEqual(index["packages"][0]["releases"], [release])
-        fallback.assert_called_once_with("https://example.com/index.json")
+        fallback.assert_called_once_with("https://example.com/packages.json")
         messages = [call.args[0] for call in warning.call_args_list if call.args]
         self.assertTrue(
             any("restored releases" in message for message in messages),
@@ -441,7 +443,13 @@ class InstallTypeValidationTests(unittest.TestCase):
         loader = self.schema_two()
         loader["kind"] = "modloader"
         loader["supply"] = {"melonloader:mod": "{Sprocket}/Mods"}
-        loader["releases"] = [{"id": 1}]
+        loader["releases"] = [
+            {
+                "id": 1,
+                "version": "1.0.0",
+                "assets": [{"id": 1, "download_url": "https://example.org/ExampleMod.dll"}],
+            }
+        ]
         loader["release"]["source"] = {"type": "external", "hosts": ["example.org"]}
 
         INDEX.validate_meta(loader, "example.mod")
@@ -623,10 +631,12 @@ class ProvidesValidationTests(unittest.TestCase):
 
 
 class CapabilityDependencyTests(unittest.TestCase):
-    def test_a_dependency_on_an_unprovided_capability_is_rejected(self):
+    def test_a_dependency_on_an_unprovided_capability_is_left_to_the_solver(self):
         data = {**metadata(), "dependencies": [{"id": "nobody.provides", "version": "*", "when": "*"}]}
-        with self.assertRaisesRegex(RegistryError, "dependency is not registered"):
-            Registry.from_dict({"schema_version": 1, "packages": [data]})
+        registry = Registry.from_dict({"schema_version": 1, "packages": [data]})
+
+        self.assertTrue(registry.has_package("example.mod"), "包自身的数据是好的")
+        self.assertEqual(registry.packages[0].issues, ())
 
     def test_a_dependency_on_the_game_capability_is_allowed(self):
         data = {**metadata(), "dependencies": [{"id": "hamish.sprocket", "version": "*", "when": "*"}]}
@@ -650,6 +660,142 @@ class CapabilityDependencyTests(unittest.TestCase):
         }
         registry = Registry.from_dict({"schema_version": 1, "packages": [provider, consumer]})
         self.assertTrue(registry.knows_capability("lavagang.melonloader"))
+
+
+class SchemaThreeTests(unittest.TestCase):
+    """v3 只强制四项核心：其余字段可省，schema 没定义的键原样进索引。"""
+
+    @staticmethod
+    def core() -> dict:
+        return {"schema_version": 3, "id": "example.mod", "name": "ExampleMod", "install": {}}
+
+    def test_the_four_core_fields_are_all_it_takes(self):
+        INDEX.validate_meta(self.core(), "example.mod")
+        self.assertEqual(RegistryPackage.from_dict(self.core()).id, "example.mod")
+
+    def test_each_core_field_is_reported_when_missing(self):
+        for field in ("schema_version", "id", "name", "install"):
+            with self.subTest(field=field):
+                meta = self.core()
+                del meta[field]
+                with self.assertRaisesRegex(INDEX.RegistryError, "missing fields"):
+                    INDEX.validate_meta(meta, "example.mod")
+
+    def test_an_unknown_field_reaches_the_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mods_dir = Path(directory) / "mods"
+            author_dir = mods_dir / "example"
+            author_dir.mkdir(parents=True)
+            (author_dir / "mod.json").write_text(
+                json.dumps({**self.core(), "$schema": "../../schemas/x.json", "x-note": "keep"}),
+                encoding="utf-8",
+            )
+            packages = INDEX.scan_mods(mods_dir)
+
+        self.assertEqual(packages[0]["x-note"], "keep")
+        self.assertNotIn("$schema", packages[0])
+
+    def test_carried_releases_need_id_version_and_assets(self):
+        meta = {
+            **self.core(),
+            "kind": "modloader",
+            "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+            "install": {"payload": [{"match": "**", "target": "{Sprocket}"}]},
+            "release": {"source": {"type": "external", "hosts": ["example.org"]}},
+            "releases": [
+                {
+                    "id": 1,
+                    "version": "1.0.0",
+                    "assets": [{"id": 2, "download_url": "https://example.org/a.zip"}],
+                }
+            ],
+        }
+        INDEX.validate_meta(meta, "example.mod")
+
+        for field in ("id", "version", "assets"):
+            with self.subTest(field=field):
+                broken = json.loads(json.dumps(meta))
+                del broken["releases"][0][field]
+                with self.assertRaisesRegex(INDEX.RegistryError, f"missing {field}"):
+                    INDEX.validate_meta(broken, "example.mod")
+
+        broken = json.loads(json.dumps(meta))
+        del broken["releases"][0]["assets"][0]["download_url"]
+        with self.assertRaisesRegex(INDEX.RegistryError, "missing download_url"):
+            INDEX.validate_meta(broken, "example.mod")
+
+
+class RegistryIsolationTests(unittest.TestCase):
+    """一条坏数据只让它自己标成不可用；别的包、供给表与目录读数都不受牵连。"""
+
+    def test_a_broken_package_does_not_take_the_registry_down(self):
+        good = {
+            **metadata(),
+            "id": "example.good",
+            "name": "Good",
+            "repository": "ExampleAuthor/Good",
+        }
+        broken = {
+            **metadata(),
+            "id": "example.broken",
+            "name": "Broken",
+            "repository": "ExampleAuthor/Broken",
+            "kind": "modloader",
+            "supply": {},
+        }
+        registry = Registry.from_dict({"schema_version": 1, "packages": [good, broken]})
+
+        self.assertTrue(registry.has_package("example.good"))
+        self.assertFalse(registry.has_package("example.broken"))
+        self.assertEqual(len(registry.packages), 2, "坏条目仍然留在目录读数里")
+        broken_package = next(p for p in registry.packages if p.id == "example.broken")
+        self.assertEqual(broken_package.name, "Broken", "坏条目仍能显示自己的名字")
+        self.assertIn(
+            "a modloader must supply at least one install type", broken_package.issues
+        )
+
+    def test_an_unreadable_package_still_shows_up(self):
+        good = {
+            **metadata(),
+            "id": "example.good",
+            "name": "Good",
+            "repository": "ExampleAuthor/Good",
+        }
+        unreadable = {"id": "example.unreadable", "name": "Unreadable", "kind": "plugin"}
+        registry = Registry.from_dict({"schema_version": 1, "packages": [good, unreadable]})
+
+        self.assertTrue(registry.has_package("example.good"))
+        entry = next(p for p in registry.packages if p.id == "example.unreadable")
+        self.assertEqual(entry.name, "Unreadable")
+        self.assertTrue(any("invalid registry package" in issue for issue in entry.issues))
+
+    def test_a_package_whose_type_has_no_supplier_keeps_the_suppliers_it_needs(self):
+        loader = {
+            **metadata(),
+            "id": "example.loader",
+            "name": "Loader",
+            "repository": "ExampleAuthor/Loader",
+            "kind": "modloader",
+            "supply": {"melonloader:mod": "{Sprocket}/Mods"},
+            "install": {"payload": [{"match": "**", "target": "{Sprocket}"}]},
+        }
+        mod = {**metadata(), "id": "example.mod", "install": {"files": [{"match": "*.dll", "type": "melonloader:mod"}]}}
+        orphan = {
+            **metadata(),
+            "id": "example.orphan",
+            "name": "Orphan",
+            "repository": "ExampleAuthor/Orphan",
+            "install": {"files": [{"match": "*.dll", "type": "nobody:mod"}]},
+        }
+        registry = Registry.from_dict({"schema_version": 1, "packages": [loader, mod, orphan]})
+
+        self.assertTrue(registry.has_package("example.mod"))
+        self.assertFalse(registry.has_package("example.orphan"))
+        self.assertEqual(
+            [package.id for package in registry.providers_for_type("melonloader:mod")],
+            ["example.loader"],
+            "另一个包的坏规则不该影响这张表",
+        )
 
 
 if __name__ == "__main__":

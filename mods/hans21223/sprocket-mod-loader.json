@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "hans21223.sprocket-mod-loader",
   "name": "SprocketModLoader",
   "authors": ["Hans21223"],

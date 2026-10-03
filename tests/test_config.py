@@ -45,7 +45,7 @@ class ConfigTests(unittest.TestCase):
     def test_default_index_uses_public_custom_domain(self):
         self.assertEqual(
             DEFAULT_INDEX_URL,
-            "https://sprocketmods.furryaxw.top/index.json",
+            "https://sprocketmods.furryaxw.top/data",
         )
 
     def test_language_name_handles_windows_chinese_locale(self):

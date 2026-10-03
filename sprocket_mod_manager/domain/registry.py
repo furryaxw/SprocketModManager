@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 
-from .errors import RegistryError
+from .errors import RegistryError, ScanError
 from .models import RegistryPackage
 from .compatibility import DEFAULT_GAME_CAPABILITY, providers_table
 from .diagnosis import diagnosis_pack
@@ -28,53 +27,80 @@ class Registry:
             game_name: str = "",
             diagnosis: dict[str, Any] | None = None,
     ):
-        self.packages = tuple(packages)
         self.game_id = str(game_id)
         self.game_name = str(game_name)
         self.provider_table = providers_table(provider_table)
         self.diagnosis = diagnosis_pack(diagnosis)
-        self._by_id = {package.id: package for package in packages}
-        if len(self._by_id) != len(packages):
-            raise RegistryError("registry contains duplicate package ids")
-        self._suppliers = self._build_suppliers(packages)
-        self._capabilities = self._build_capabilities(packages)
-        self._validate_sources(packages)
+
+        # 逐包校验：一条坏数据只让它自己标成不可用 —— 目录照常列出它并说明原因，
+        # 别的包、供给表与能力表都不受牵连。
+        problems: list[list[str]] = [list(package.issues) for package in packages]
+        clean_indexes: list[int] = []
+        for index, package in enumerate(packages):
+            problems[index].extend(self._source_problems(package) + self._supply_problems(package))
+            if not problems[index]:
+                clean_indexes.append(index)
+
+        clean = [packages[index] for index in clean_indexes]
+        self._suppliers = self._build_suppliers(clean)
+        supplied_types = set(self._suppliers)
+        for index in clean_indexes:
+            for file_type in packages[index].declared_types():
+                if not self._type_is_supplied(file_type, supplied_types):
+                    problems[index].append(
+                        f"install file type is not supplied by any modloader: {file_type}"
+                    )
+
+        self._capabilities = self._build_capabilities(
+            [packages[index] for index in clean_indexes if not problems[index]]
+        )
+        seen_ids: set[str] = set()
+        for index in clean_indexes:
+            if problems[index]:
+                continue
+            package_id = packages[index].id
+            if package_id in seen_ids:
+                problems[index].append(f"duplicate package id: {package_id}")
+                continue
+            seen_ids.add(package_id)
+
+        self.packages = tuple(
+            replace(package, issues=tuple(dict.fromkeys(found))) if found else package
+            for package, found in zip(packages, problems)
+        )
+        # 只有没有问题的包能被按 id 找到：坏条目在目录里看得见，但解析不到、装不了。
+        # 依赖/推荐指向没注册的 id 不在这儿判 —— 那是求解器与界面的事（缺失依赖照常显示）。
+        self._by_id = {
+            package.id: package for package in self.packages if not package.issues
+        }
 
     @staticmethod
-    def _validate_sources(packages: tuple[RegistryPackage, ...] | list[RegistryPackage]) -> None:
-        """非 GitHub 来源必须自带 release 数据，并写明允许下载的主机。
+    def _source_problems(package: RegistryPackage) -> list[str]:
+        """这个包的二进制来源是否自洽。
 
         外部来源没有可以查询的 API，所以版本与资产只能由注册表条目自己给出；主机白名单
         保证下载地址不会漂到任意站点。只有基础运行时可以声明外部来源：安装类型目录由加载器的
         供给表定义，模组的二进制始终来自它自己的 GitHub Releases。
         """
-        for package in packages:
-            source = package.source
-            source_type = str(source.get("type", "github"))
-            if package.is_modloader and not package.supply:
-                raise RegistryError(
-                    f"{package.id}: a modloader must supply at least one install type"
-                )
-            if source_type == "github":
-                if "hosts" in source:
-                    raise RegistryError(
-                        f"{package.id}: release.source.hosts only applies to external sources"
-                    )
-                continue
-            if source_type != "external":
-                raise RegistryError(f"{package.id}: unknown release source type: {source_type}")
-            if not package.is_modloader:
-                raise RegistryError(
-                    f"{package.id}: only a modloader may declare an external release source"
-                )
-            if not package.asset_hosts():
-                raise RegistryError(
-                    f"{package.id}: external release source needs at least one allowed host"
-                )
-            if not package.releases:
-                raise RegistryError(
-                    f"{package.id}: external release source needs an embedded releases list"
-                )
+        problems: list[str] = []
+        source = package.source
+        source_type = str(source.get("type", "github"))
+        if package.is_modloader and not package.supply:
+            problems.append("a modloader must supply at least one install type")
+        if source_type == "github":
+            if "hosts" in source:
+                problems.append("release.source.hosts only applies to external sources")
+            return problems
+        if source_type != "external":
+            problems.append(f"unknown release source type: {source_type}")
+            return problems
+        if not package.is_modloader:
+            problems.append("only a modloader may declare an external release source")
+        if not package.asset_hosts():
+            problems.append("external release source needs at least one allowed host")
+        if not package.releases:
+            problems.append("external release source needs an embedded releases list")
+        return problems
 
     @staticmethod
     def _build_capabilities(packages: Iterable[RegistryPackage]) -> frozenset[str]:
@@ -99,8 +125,8 @@ class Registry:
         """类型 -> 供给它的加载器（可能不止一个）。
 
         一个类型可以有多个供给者：同一套模组既可能跑在原生加载器下，也可能跑在把目录重新
-        安家的桥接加载器下，安装位置取决于实际装的是哪一个。同时校验每个包声明的类型、供给
-        位置，以及静态规则里的类型确实有人供给：模组能不能装，在注册表这一步就要能回答。
+        安家的桥接加载器下，安装位置取决于实际装的是哪一个。只收下校验过的包，坏条目不会
+        污染这张表。
         """
         suppliers: dict[str, list[RegistryPackage]] = {}
 
@@ -110,31 +136,46 @@ class Registry:
                 providers.append(package)
 
         for package in packages:
-            for raw_type, raw_target in package.supply.items():
-                file_type = validate_supply_type(raw_type)
+            for raw_type, _raw_target in package.supply.items():
+                add(validate_supply_type(raw_type), package)
+        return {key: tuple(value) for key, value in suppliers.items()}
+
+    @staticmethod
+    def _supply_problems(package: RegistryPackage) -> list[str]:
+        """这个包声明的供给类型、供给位置与文件规则是否合法。"""
+        problems: list[str] = []
+        for raw_type, raw_target in package.supply.items():
+            try:
+                validate_supply_type(raw_type)
                 validate_supply_target(raw_target)
-                add(file_type, package)
-            for rule in package.file_rules:
+            except ScanError as exc:
+                problems.append(f"invalid supply entry {raw_type!r}: {exc}")
+        for rule in package.file_rules:
+            try:
                 validate_file_type(str(rule.get("type", "")))
                 if rule.get("subpath"):
                     validate_subpath(str(rule["subpath"]))
-            for rule in package.payload_rules:
+            except ScanError as exc:
+                problems.append(f"invalid install file rule: {exc}")
+        for rule in package.payload_rules:
+            try:
                 validate_supply_target(str(rule.get("target", "")))
                 if rule.get("subpath"):
                     validate_subpath(str(rule["subpath"]))
-        for package in packages:
-            for file_type in package.declared_types():
-                if not any(
-                    file_type == supplied or (
-                        file_type_is_wildcard(file_type)
-                        and file_type_namespace(supplied) == file_type_namespace(file_type)
-                    )
-                    for supplied in suppliers
-                ):
-                    raise RegistryError(
-                        f"{package.id}: install file type is not supplied by any modloader: {file_type}"
-                    )
-        return {key: tuple(value) for key, value in suppliers.items()}
+            except ScanError as exc:
+                problems.append(f"invalid install payload rule: {exc}")
+        return problems
+
+    @staticmethod
+    def _type_is_supplied(file_type: str, supplied_types: Iterable[str]) -> bool:
+        return any(
+            file_type == supplied
+            or (
+                file_type_is_wildcard(file_type)
+                and file_type_namespace(supplied) == file_type_namespace(file_type)
+            )
+            for supplied in supplied_types
+        )
 
     def providers_for_type(self, file_type: str) -> tuple[RegistryPackage, ...]:
         """供给这个类型的所有加载器；`<ns>:*` 解析成该名字空间下所有类型的供给者。"""
@@ -207,41 +248,23 @@ class Registry:
             game_id = str(raw_game["id"])
             game_name = str(raw_game.get("name", ""))
         packages: list[RegistryPackage] = []
-        for raw in raw_packages:
+        for index, raw in enumerate(raw_packages):
             if not isinstance(raw, dict):
-                raise RegistryError("registry package must be an object")
+                continue
             try:
                 packages.append(RegistryPackage.from_dict(raw))
             except (KeyError, TypeError, ValueError) as exc:
-                raise RegistryError(f"invalid registry package: {exc}") from exc
-        registry = cls(
+                # 读不出来的条目仍然进目录：留一份能显示的最小读数，原因挂在 issues 上。
+                packages.append(
+                    RegistryPackage.from_invalid(
+                        raw,
+                        f"invalid registry package: {exc}",
+                        fallback_id=f"invalid.package-{index}",
+                    )
+                )
+        return cls(
             packages, data.get("providers"), game_id, game_name, diagnosis=data.get("diagnosis")
         )
-        for package in registry.packages:
-            for dependency in package.dependencies:
-                dependency_id = dependency.get("id")
-                if dependency_id not in registry._by_id and not registry.knows_capability(
-                    str(dependency_id)
-                ):
-                    raise RegistryError(
-                        f"{package.id}: dependency is not registered: {dependency_id}"
-                    )
-            for recommendation in package.recommendations:
-                if recommendation == package.id:
-                    raise RegistryError(f"{package.id}: package cannot recommend itself")
-                if recommendation not in registry._by_id:
-                    raise RegistryError(
-                        f"{package.id}: recommendation is not registered: {recommendation}"
-                    )
-        return registry
-
-    @classmethod
-    def from_file(cls, path: Path) -> "Registry":
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RegistryError(f"cannot read registry {path}: {exc}") from exc
-        return cls.from_dict(data)
 
     def get(self, package_id: str) -> RegistryPackage:
         try:

@@ -672,16 +672,36 @@ class InstallationController(ApiController):
                 self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_QUEUE, KEY_LOADERS)
 
     def _queue_data(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "task_id": entry.task_id,
-                "package_id": entry.package_id,
-                "state": entry.state,
-                "message": entry.message,
-                "error_code": entry.error_code,
-            }
-            for entry in self.install_queue.snapshot()
-        ]
+        """队列里的每一条；某一条读不出来只跳过它自己，别让整页队列读数消失。"""
+        try:
+            entries = self.install_queue.snapshot()
+        except Exception as exc:
+            LOGGER.warning("queue snapshot failed error=%s", exc)
+            return []
+        data: list[dict[str, Any]] = []
+        for entry in entries:
+            try:
+                data.append(
+                    {
+                        "task_id": entry.task_id,
+                        "package_id": entry.package_id,
+                        "state": entry.state,
+                        "message": entry.message,
+                        "error_code": entry.error_code,
+                    }
+                )
+            except Exception as exc:
+                LOGGER.warning("queue entry failed error=%s", exc)
+                data.append(
+                    {
+                        "task_id": "",
+                        "package_id": "",
+                        "state": "failed",
+                        "message": f"queue entry unreadable: {exc}",
+                        "error_code": "queue_entry_unreadable",
+                    }
+                )
+        return data
 
     def get_queue(self) -> dict[str, Any]:
         return self._success(

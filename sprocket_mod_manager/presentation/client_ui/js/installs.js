@@ -188,9 +188,6 @@ async function claimExistingMods() {
 /** 找到与列表条目对应的本地 DLL 记录（静态元数据 + 禁用状态 + 真实路径）。 */
 function localModFor(item) {
     const mods = state.localMods || [];
-    if (item.unrecognized) {
-        return mods.find((mod) => mod.path === item.path) || null;
-    }
     return mods.find((mod) => mod.installed_package_id && mod.installed_package_id === item.id) || null;
 }
 
@@ -323,7 +320,7 @@ function orderedForDisable(rows) {
 /** 该行对应的包 id：没有安装记录归属的纯本地模组为空（既不能更新也不能卸载）。 */
 function installedRowPackageId(item) {
     if (item.fromScan) return String(item.installed_package_id || "");
-    return item.unrecognized ? "" : String(item.id || "");
+    return String(item.id || "");
 }
 
 /** 重装要用哪个包：安装记录的归属优先，其次扫描时匹配到的注册表条目。 */
@@ -331,7 +328,7 @@ function installedRowReinstallId(item) {
     if (item.fromScan) {
         return String(item.installed_package_id || item.registry_id || "");
     }
-    return item.unrecognized ? "" : String(item.id || "");
+    return String(item.id || "");
 }
 
 /** 重装按钮只给找得到来源的行：注册表（含私有服务器目录）里没有这个包就没得重装。 */
@@ -381,19 +378,22 @@ function installedVersionVerdict(record) {
  * 不是模组目录的位置：那些包只能按安装记录补一行，否则装完在页面上没有入口。基础运行时
  * （`modloader`）不在这里 —— 它们在加载器页与左下角环境区。
  */
+/**
+ * 已安装页的一张列表：**一个模组一行**。
+ *
+ * 两件事合成它 —— 磁盘扫描（每个 DLL 一行，身份由注册表自动匹配）与安装记录里扫描看不到的
+ * 条目（例如补丁包接管的那棵树，它不逐文件登记）。记录里的信息并进那一行当标签，**不另开一行**；
+ * 同一个模组只许出现一次。
+ */
 function installedItems() {
     const scanned = (state.localMods || []).map((mod) => ({...mod, fromScan: true}));
     const covered = new Set(
         scanned.map((mod) => mod.installed_package_id).filter(Boolean),
     );
-    const patches = (state.installed || [])
+    const records = (state.installed || [])
         .filter((record) => record.kind === "patch" && !covered.has(record.id))
-        .map((record) => ({...record, unrecognized: false, fromScan: false}));
-    return [
-        ...scanned,
-        ...patches,
-        ...(state.unrecognized || []).map((item) => ({...item, unrecognized: true, fromScan: false})),
-    ];
+        .map((record) => ({...record, fromScan: false}));
+    return [...scanned, ...records];
 }
 
 /** 多选集合：键是行键，列表刷新后由 `pruneInstalledSelection` 对齐。 */
@@ -687,11 +687,24 @@ function incompatibleUpdateChip(version) {
  */
 function updateChips(item) {
     const chips = [];
+    if (item.available === false || item.issues?.length) chips.push(dataIssuesChip(item.issues));
     const update = installableUpdate(item);
     if (update) chips.push(newVersionChip(update.version));
     const latest = newerRelease(item);
     if (latest?.verdict === VERDICT_INCOMPATIBLE) chips.push(incompatibleUpdateChip(latest.version));
     return chips;
+}
+
+/** 这条已安装读数的数据有问题：行里一枚标记，原因走 tooltip（与「不兼容」那枚同一个套路）。 */
+function dataIssuesChip(issues) {
+    const reason = (issues || []).join("; ") || tr("dataIssues");
+    const chip = document.createElement("span");
+    chip.className = "state-chip corrupted";
+    chip.textContent = "!";
+    chip.title = reason;
+    chip.setAttribute("role", "img");
+    chip.setAttribute("aria-label", reason);
+    return chip;
 }
 
 /** 当前装的这个版本跟环境对不上：只标记，不拦（磁盘上的东西永远照原样显示）。 */
@@ -724,9 +737,12 @@ function renderScannedModRow(mod) {
         || mod.path;
 
     const record = (state.installed || []).find((item) => item.id && item.id === mod.installed_package_id);
+    // 来源标签：有记录就照记录（用户装的 / 依赖带进来的）；没有记录但身份对上了注册表，
+    // 按「用户装的」算 —— 是用户自己放进目录的东西，只是没走管理器的安装流程。
+    // 只有连身份都认不出来的才算「仅本地」。
     const source = record
         ? (record.requested ? tr("requested") : tr("dependency"))
-        : tr("localOnly");
+        : mod.registry_id ? tr("requested") : tr("localOnly");
     const parts = [mod.registry_id || mod.declared_id || mod.assembly_name || mod.path];
     if (mod.version) parts.push(`v${mod.version}`);
     parts.push(source);
@@ -795,32 +811,25 @@ function renderScannedModRow(mod) {
     return row;
 }
 
-/** 记录行：没有磁盘条目的包（补丁）与未识别的本地 DLL。 */
+/** 记录行：没有磁盘条目的包（补丁）。 */
 function renderLegacyModRow(item) {
-    const pkg = item.unrecognized
-        ? null
-        : state.packages.find((candidate) => candidate.id === item.id);
+    const pkg = state.packages.find((candidate) => candidate.id === item.id);
     const local = localModFor(item);
     const row = document.createElement("article");
     const key = installedRowKey(item);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
-    row.dataset.package = item.unrecognized ? "" : item.id;
+    row.dataset.package = item.id;
     const title = document.createElement("div");
     title.className = "row-title";
     const name = document.createElement("strong");
     name.textContent = local?.display_name
-        || (item.unrecognized ? item.name : pkg ? packageLabel(pkg) : item.name || item.id);
+        || (pkg ? packageLabel(pkg) : item.name || item.id);
     const metadata = document.createElement("span");
     const requires = (local?.required_dependencies || []).join(", ");
-    if (item.unrecognized) {
-        const version = local?.version ? `v${local.version}  |  ` : "";
-        metadata.textContent = `${version}${item.path}${requires ? `  |  ${tr("requiresLabel")}: ${requires}` : ""}`;
-    } else {
-        const source = item.requested ? tr("requested") : tr("dependency");
-        const version = local?.version || item.version || "-";
-        metadata.textContent = `${item.id}  |  ${version}  |  ${source}${requires ? `  |  ${tr("requiresLabel")}: ${requires}` : ""}`;
-    }
+    const source = item.requested ? tr("requested") : tr("dependency");
+    const version = local?.version || item.version || "-";
+    metadata.textContent = `${item.id}  |  ${version}  |  ${source}${requires ? `  |  ${tr("requiresLabel")}: ${requires}` : ""}`;
     title.append(name, metadata);
     const actions = document.createElement("div");
     actions.className = "row-actions";
@@ -832,11 +841,9 @@ function renderLegacyModRow(item) {
         kind.textContent = kindLabel;
         actions.append(kind);
     }
-    if (!item.unrecognized) {
-        appendIntegrityChip(actions, item);
-        const installedVerdict = installedVersionVerdict(item);
-        if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
-    }
+    appendIntegrityChip(actions, item);
+    const installedVerdict = installedVersionVerdict(item);
+    if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
     actions.append(...updateChips(item));
     if (installedRowToggleable(item)) {
         const toggle = document.createElement("button");
@@ -847,29 +854,22 @@ function renderLegacyModRow(item) {
         toggle.addEventListener("click", () => toggleLocalMod(local.path, local.disabled));
         actions.append(toggle);
     }
-    if (item.unrecognized && !local?.disabled) {
-        const status = document.createElement("span");
-        status.className = "state-chip unrecognized";
-        status.textContent = tr("unrecognized");
-        actions.append(status);
-    } else if (!item.unrecognized) {
-        const removablePackage = pkg || (item.id.includes(":") ? {
-            id: item.id,
-            name: item.name || item.id,
-            display_name: {en: item.name || item.id, zh: item.name || item.id},
-        } : null);
-        const reinstallId = installedRowReinstallSource(item);
-        if (reinstallId) {
-            actions.append(reinstallButton(reinstallId, Boolean(item.corrupted)));
-        }
-        const remove = document.createElement("button");
-        remove.className = "danger-button";
-        remove.type = "button";
-        remove.textContent = tr("remove");
-        remove.disabled = !removablePackage || queueActive();
-        remove.addEventListener("click", () => removablePackage && confirmRemove(removablePackage));
-        actions.append(remove);
+    const removablePackage = pkg || (item.id.includes(":") ? {
+        id: item.id,
+        name: item.name || item.id,
+        display_name: {en: item.name || item.id, zh: item.name || item.id},
+    } : null);
+    const reinstallId = installedRowReinstallSource(item);
+    if (reinstallId) {
+        actions.append(reinstallButton(reinstallId, Boolean(item.corrupted)));
     }
+    const remove = document.createElement("button");
+    remove.className = "danger-button";
+    remove.type = "button";
+    remove.textContent = tr("remove");
+    remove.disabled = !removablePackage || queueActive();
+    remove.addEventListener("click", () => removablePackage && confirmRemove(removablePackage));
+    actions.append(remove);
     row.append(selectionCheckbox(item, key), title, actions);
     wireInstalledRow(row, item, key);
     return row;

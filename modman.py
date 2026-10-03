@@ -17,7 +17,7 @@ from sprocket_mod_manager.application.preparer import PlanPreparer
 from sprocket_mod_manager.application.local_mods import scan_local_mods, summarize
 from sprocket_mod_manager.application.service import ModManagerService, default_app_dir
 from sprocket_mod_manager.infrastructure.app_logging import configure_logging
-from sprocket_mod_manager.infrastructure.defaults import DEFAULT_INDEX_URL
+from sprocket_mod_manager.presentation.api_support import source_from_config
 from sprocket_mod_manager.infrastructure.mod_toggle import apply_enabled, resolve_mod_path
 from sprocket_mod_manager.infrastructure.self_update import (
     SELF_UPDATE_FLAG,
@@ -80,9 +80,14 @@ def _load_service(args: argparse.Namespace) -> tuple[ModManagerService, dict, Co
     app_dir = Path(args.app_dir).expanduser() if args.app_dir else default_app_dir()
     config_store = ConfigStore(app_dir)
     config = config_store.load()
-    source = args.index_file or args.index or config.get("index_url") or DEFAULT_INDEX_URL
+    if args.index_dir:
+        source: str | Path = Path(args.index_dir).expanduser()
+    elif args.index:
+        source = args.index
+    else:
+        source = source_from_config(config)
     service = ModManagerService(app_dir=app_dir)
-    service.load_registry(Path(source) if args.index_file else source, refresh=args.refresh)
+    service.load_registry(source, refresh=args.refresh)
     return service, config, config_store
 
 
@@ -127,8 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true", help="enable verbose diagnostic logging")
     parser.add_argument("--app-dir", help="manager data directory")
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--index", help="HTTPS registry index URL")
-    source.add_argument("--index-file", help="local registry index path")
+    source.add_argument("--index", help="registry directory URL")
+    source.add_argument("--index-dir", help="local registry directory")
     parser.add_argument("--game-path", help="Sprocket installation directory")
     parser.add_argument("--refresh", action="store_true", help="bypass short-lived API caches")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")

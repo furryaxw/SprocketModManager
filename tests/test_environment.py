@@ -62,10 +62,14 @@ def unity_payload(version: str) -> bytes:
     return b"2022.3.62f2\x00" + b"\x08\x00\x00\x00" + version.encode() + b"\x01\x00\x00\x00"
 
 
-def _index_file(root: Path, *, sprocket_range: str = "<0.2.54.0") -> Path:
-    """一个能过 Registry 校验的最小索引，顶层带着供给表（注册表那份的来源）。"""
-    path = root / "index.json"
-    path.write_text(
+def _index_dir(root: Path, *, sprocket_range: str = "<0.2.54.0") -> Path:
+    """一个能过 Registry 校验的最小索引目录（注册表那份的来源）。"""
+    directory = root / "registry" / "data"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "packages.json").write_text(
+        json.dumps({"schema_version": 1, "packages": []}), encoding="utf-8"
+    )
+    (directory / "environment.json").write_text(
         json.dumps(
             {
                 "schema_version": 1,
@@ -74,12 +78,14 @@ def _index_file(root: Path, *, sprocket_range: str = "<0.2.54.0") -> Path:
                     "schema_version": 2,
                     "entries": [{"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": sprocket_range}],
                 },
-                "packages": [],
             }
         ),
         encoding="utf-8",
     )
-    return path
+    (directory / "diagnosis.json").write_text(
+        json.dumps({"schema_version": 1, "entries": []}), encoding="utf-8"
+    )
+    return directory
 
 
 def loader_package() -> RegistryPackage:
@@ -1097,7 +1103,7 @@ class EnvironmentApiTests(unittest.TestCase):
             api = self._api(root, game)
             try:
                 # 第一次：索引里带着表 → 用注册表那份，并写进缓存。
-                api.service.load_registry(_index_file(root), refresh=True)
+                api.service.load_registry(_index_dir(root), refresh=True)
                 api._environment_monitor.note_latest_loaders({LOADER_ID: "0.7.3"})
                 indexed = api.get_environment()
                 self.assertEqual(indexed["environment"]["table_source"], "registry")
