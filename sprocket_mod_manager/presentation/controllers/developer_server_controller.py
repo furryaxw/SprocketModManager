@@ -16,6 +16,7 @@ from typing import Any
 from .base import ApiController
 from ...application.data_hub import KEY_SERVERS
 from ...application.private_packages import PrivatePackageSource
+from ...domain.models import RegistryPackage
 from ...infrastructure.private_servers import (
     GITHUB_OAUTH_CLIENT_ID,
     DeveloperServerClient,
@@ -204,7 +205,7 @@ class DeveloperServerController(ApiController):
                             "server_name": str(entry.get("name", "")),
                             "server_url": str(entry.get("url", "")),
                         }
-                        for item in entries
+                        for item in self._catalog_entries(entries)
                     ]
                 except DeveloperServerError as exc:
                     data["status"] = (
@@ -480,6 +481,27 @@ class DeveloperServerController(ApiController):
                 continue
             connected.append(server_id)
         return connected
+
+    def _catalog_entries(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把服务器下发的条目加工成**目录形状**。
+
+        界面判「有没有可装的版本」看的是 `release` 与 `install_assets`；把条目原样递过去，
+        每一条都会显示「无可用版本」——原始条目只有 `releases`。转不成包的条目单条跳过。
+        """
+        packages: list[RegistryPackage] = []
+        for item in entries:
+            try:
+                packages.append(RegistryPackage.from_dict(item))
+            except Exception as exc:  # noqa: BLE001 - 一条坏条目只丢它自己
+                LOGGER.warning(
+                    "private entry is not a package id=%s error=%s", item.get("id"), exc
+                )
+        if not packages:
+            return []
+        service = self.service
+        if service is None:
+            return [dict(item) for item in entries]
+        return self.api._catalog_controller.entries_for(packages, service)
 
     def _server_packages(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
         """取这台服务器的私有包；存着的会话过期时换一份新的再试一次。

@@ -21,6 +21,36 @@ from sprocket_mod_manager.presentation.web_gui import ClientApi
 SERVER_ID = "test-server"
 SERVER_NAME = "Test server"
 FINGERPRINT = "sha256:" + "ab" * 32
+# 一条服务器下发的私有条目：**只有 `releases`，没有 `release`**（抓取规则被剪掉了）。
+PRIVATE_ENTRY = {
+    "schema_version": 3,
+    "id": "team1.private-mod",
+    "name": "PrivateMod",
+    "authors": ["team1"],
+    "license": "Private distribution",
+    "display_name": {"en": "Private Mod", "zh": "私有模组"},
+    "description": {"en": "private", "zh": "私有"},
+    "dependencies": [],
+    "recommendations": [],
+    "category": "other",
+    "tags": [],
+    "install": {"files": [{"match": "**", "type": "melonloader:mod", "layout": "tree"}]},
+    "releases": [
+        {
+            "id": 1,
+            "version": "1.0.0",
+            "assets": [
+                {
+                    "id": 11,
+                    "name": "mod.zip",
+                    "size": 10,
+                    "download_url": "http://127.0.0.1:8787/v1/packages/team1.private-mod/download",
+                    "digest": "sha256:" + "ab" * 32,
+                }
+            ],
+        }
+    ],
+}
 IDENTITY = {
     "algorithm": "ed25519",
     "encoding": "base64url",
@@ -44,6 +74,7 @@ class FakeServerClient:
     """一台假服务器。`expired_sessions` 模拟服务端那边已经失效的会话。"""
 
     expired_sessions: set[str] = set()
+    packages_result: list[dict] = []
 
     def __init__(self, url, *, session_token="", trusted_signing_identity=None):
         self.url = url
@@ -62,7 +93,7 @@ class FakeServerClient:
             raise DeveloperServerError(
                 "session is invalid or expired", status=401, code="invalid_session"
             )
-        return []
+        return [dict(item) for item in type(self).packages_result]
 
     def redeem(self, key, github_user_id, **kwargs):
         return {"team_id": "team1"}
@@ -82,6 +113,7 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.root = Path(self._temporary.name)
         self.addCleanup(self._temporary.cleanup)
         FakeServerClient.expired_sessions = set()
+        FakeServerClient.packages_result = []
         self._patches = [
             patch.object(module, "DeveloperServerClient", FakeServerClient),
             patch.object(module, "github_gist_sync", gist_stub),
@@ -253,6 +285,29 @@ class DeveloperServerControllerTests(unittest.TestCase):
         payload = self.api.servers_payload()
 
         self.assertEqual(payload["servers"][0]["status"], "reauth_required")
+
+    def test_a_private_package_carries_an_installable_release(self) -> None:
+        """界面判「有没有可装的版本」看 `release` 与 `install_assets`。
+
+        服务器只下发 `releases`（抓取规则那条 `release` 被剪掉了）；原样递给界面，每一条都会
+        显示成「无可用版本」——所以要让它们过一遍目录那套加工。
+        """
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        FakeServerClient.packages_result = [PRIVATE_ENTRY]
+
+        payload = self.api.servers_payload()
+
+        self.assertEqual(payload["servers"][0]["status"], "active")
+        package = payload["packages"][0]
+        self.assertEqual(package["id"], "team1.private-mod")
+        self.assertTrue(package["private"], "私有标记要留着，界面按它区分来源")
+        self.assertIsNotNone(package["release"], "没有它界面会判「无可用版本」")
+        self.assertEqual(package["release"]["version"], "1.0.0")
+        self.assertEqual(package["install_assets"], ["mod.zip"])
+        self.assertEqual(package["install_target"], "1.0.0")
 
     # ---- remove -----------------------------------------------------------
 
