@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import webbrowser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Sequence
 from urllib.parse import urlparse
 
 from .base import ApiController
@@ -47,6 +47,19 @@ from ...infrastructure.mod_toggle import (
 from ...utilities.package_paths import validate_relative_path
 
 LOGGER = logging.getLogger(__name__)
+
+
+def private_installable_assets(release: ReleaseInfo) -> tuple[Any, ...]:
+    """私有包的可安装资产：服务器下发的那些归档或单个 DLL。
+
+    公开包靠 `release.assets.include` 规则从一次发布里挑文件；私有条目没有那套规则
+    （服务端把抓取规则剪掉了），照规则挑会得到空——于是每一条都显示成「无可用版本」。
+    """
+    return tuple(
+        asset
+        for asset in release.assets
+        if Path(asset.name).suffix.casefold() in {".dll", ".zip"}
+    )
 
 
 class CatalogController(ApiController):
@@ -129,6 +142,47 @@ class CatalogController(ApiController):
         packages.sort(key=_release_order_key, reverse=True)
         return packages
 
+    def entries_for(
+            self,
+            packages: Sequence[RegistryPackage],
+            service: ModManagerService | None = None,
+    ) -> list[dict[str, Any]]:
+        """把一批**不在注册表里**的包加工成目录条目（私有服务器下发的那些）。
+
+        必须走与公开目录同一套：界面判「有没有可装的版本」看的是 `release` 与
+        `install_assets`，把服务器下发的原始条目直接塞过去，每一条都会显示「无可用版本」。
+        私有条目自带 `releases`，`github.releases` 会原地返回，所以这里不联网。
+        """
+        target = service or self.service
+        environment = self._environment()
+        records = self._installed(target)
+        latest: dict[str, ReleaseInfo | None] = {}
+        for package in packages:
+            try:
+                releases = target.github.releases(package, refresh=False)
+                usable = [item for item in releases if private_installable_assets(item)]
+            except Exception as exc:  # 一小包读不出来不牵连别的
+                LOGGER.warning("private release lookup failed package=%s error=%s", package.id, exc)
+                latest[package.id] = None
+                continue
+            latest[package.id] = usable[0] if usable else None
+        entries: list[dict[str, Any]] = []
+        for package in packages:
+            try:
+                entry = self._package_entry(
+                    target,
+                    package,
+                    latest,
+                    environment,
+                    records,
+                    select_assets=lambda _package, release: private_installable_assets(release),
+                )
+            except Exception as exc:  # noqa: BLE001 - 单条坏数据只让自己不可用
+                LOGGER.warning("private catalog entry failed package=%s error=%s", package.id, exc)
+                entry = self._unavailable_entry(package)
+            entries.append(entry)
+        return entries
+
     def _package_entry(
             self,
             service: ModManagerService,
@@ -136,13 +190,12 @@ class CatalogController(ApiController):
             latest: dict[str, ReleaseInfo | None],
             environment: CapabilityEnvironment,
             records: dict[str, dict[str, Any]],
+            *,
+            select_assets: Callable[[RegistryPackage, ReleaseInfo], tuple[Any, ...]] | None = None,
     ) -> dict[str, Any]:
         release = latest.get(package.id)
-        selected_assets = (
-            service.github.install_assets(package, release)
-            if release is not None
-            else ()
-        )
+        chooser = select_assets or service.github.install_assets
+        selected_assets = chooser(package, release) if release is not None else ()
         release_data = _release_data(release)
         if release_data is not None:
             release_data["verdict"] = release_verdict(
