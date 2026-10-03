@@ -34,6 +34,14 @@ def _steam_install_roots() -> tuple[Path, ...]:
                     continue
         except (ImportError, AttributeError):
             pass
+    else:
+        # Standard Linux and Flatpak install directories
+        home = Path.home()
+        candidates.extend((
+            home / ".local" / "share" / "Steam",
+            home / ".steam" / "steam",
+            home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+        ))
 
     for environment_name in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
         program_files = os.environ.get(environment_name)
