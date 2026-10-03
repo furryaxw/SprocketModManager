@@ -28,6 +28,9 @@ PRIVATE_ENTRY = {
     "name": "PrivateMod",
     "authors": ["team1"],
     "license": "Private distribution",
+    # 真实私有包是**带 repository** 的：下载地址的校验会走「必须落在 github.com」那条，
+    # 于是私有服务端的地址被判非法。fixture 里也写上一个，免得测出假绿。
+    "repository": "team1/private-mod",
     "display_name": {"en": "Private Mod", "zh": "私有模组"},
     "description": {"en": "private", "zh": "私有"},
     "dependencies": [],
@@ -44,7 +47,7 @@ PRIVATE_ENTRY = {
                     "id": 11,
                     "name": "mod.zip",
                     "size": 10,
-                    "download_url": "http://127.0.0.1:8787/v1/packages/team1.private-mod/download",
+                    "download_url": "https://mods.example.invalid/v1/packages/team1.private-mod/download",
                     "digest": "sha256:" + "ab" * 32,
                 }
             ],
@@ -308,6 +311,45 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.assertEqual(package["release"]["version"], "1.0.0")
         self.assertEqual(package["install_assets"], ["mod.zip"])
         self.assertEqual(package["install_target"], "1.0.0")
+
+    def test_a_private_entry_that_cannot_be_read_is_still_listed(self) -> None:
+        """读不出来的条目也要露出来，并带上原因。
+
+        静默丢掉会让界面显示成「这台服务器上没有包」，而事实是「有包，但读不出来」——
+        这两种情况必须能分辨，否则只能靠翻日志。这里用一条 http 的下载地址复现真实场景：
+        客户端要求 https，非 https 的地址会被判非法。
+        """
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        broken = {
+            **PRIVATE_ENTRY,
+            "releases": [
+                {
+                    "id": 1,
+                    "version": "1.0.0",
+                    "assets": [
+                        {
+                            "id": 11,
+                            "name": "mod.zip",
+                            "size": 10,
+                            "download_url": "http://plain.example.invalid/mod.zip",
+                            "digest": "sha256:" + "ab" * 32,
+                        }
+                    ],
+                }
+            ],
+        }
+        FakeServerClient.packages_result = [broken]
+
+        payload = self.api.servers_payload()
+
+        self.assertEqual(len(payload["packages"]), 1, "读不出来也得列出来")
+        package = payload["packages"][0]
+        self.assertEqual(package["id"], "team1.private-mod")
+        self.assertFalse(package["available"])
+        self.assertTrue(package["issues"], "原因要带给界面")
 
     # ---- remove -----------------------------------------------------------
 
