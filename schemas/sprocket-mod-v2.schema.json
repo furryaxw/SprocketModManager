@@ -1,17 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sprocketmods.furryaxw.top/schemas/sprocket-mod.schema.json",
-  "title": "SprocketModManager Registry Entry",
+  "$id": "https://sprocketmods.furryaxw.top/schemas/sprocket-mod-v2.schema.json",
+  "title": "SprocketModManager Registry Entry v2",
+  "description": "Frozen v2 entry shape.",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "schema_version",
     "id",
     "name",
-    "install"
+    "authors",
+    "repository",
+    "license",
+    "display_name",
+    "release",
+    "dependencies",
+    "install",
+    "category",
+    "tags"
   ],
   "properties": {
     "$schema": { "type": "string" },
-    "schema_version": { "const": 3 },
+    "schema_version": { "const": 2 },
     "id": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
@@ -36,7 +46,7 @@
     "release": { "$ref": "#/$defs/release" },
     "releases": {
       "type": "array",
-      "items": { "$ref": "#/$defs/releaseRecord" }
+      "items": { "type": "object" }
     },
     "dependencies": {
       "type": "array",
@@ -108,7 +118,7 @@
       },
       "else": {
         "properties": {
-          "install": { "not": { "required": ["payload"] } }
+          "install": { "required": ["files"], "not": { "required": ["payload"] } }
         }
       }
     }
@@ -128,13 +138,15 @@
     },
     "release": {
       "type": "object",
-      "required": ["version_pattern", "assets"],
+      "additionalProperties": false,
+      "required": ["include_prerelease", "version_pattern", "assets"],
       "properties": {
         "include_prerelease": { "type": "boolean" },
         "version_pattern": { "type": "string", "minLength": 1 },
         "assets": {
           "type": "object",
-          "required": ["include"],
+          "additionalProperties": false,
+          "required": ["include", "exclude"],
           "properties": {
             "include": {
               "type": "array",
@@ -153,6 +165,7 @@
     "releaseSource": {
       "description": "Where the binaries come from. `github` reads the package's own GitHub Releases; `external` reads an allowlisted HTTPS host and requires the entry to carry its `releases`.",
       "type": "object",
+      "additionalProperties": false,
       "required": ["type"],
       "properties": {
         "type": { "enum": ["github", "external"] },
@@ -162,67 +175,11 @@
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$" }
         }
-      },
-      "allOf": [
-        {
-          "if": { "required": ["type"], "properties": { "type": { "const": "external" } } },
-          "then": { "required": ["hosts"] }
-        }
-      ]
-    },
-    "releaseRecord": {
-      "description": "One release the entry carries itself, used when release.source is external. `assets` is the download set; `dependencies` and `compatibility` are written by the index build from the release body's sp-compat block.",
-      "type": "object",
-      "required": ["id", "version", "assets"],
-      "properties": {
-        "id": { "type": "integer" },
-        "tag": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
-        "prerelease": { "type": "boolean" },
-        "published_at": { "type": "string" },
-        "page_url": { "type": "string" },
-        "assets": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/releaseAsset" }
-        },
-        "dependencies": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": { "type": "string", "minLength": 1 },
-              "version": { "type": "string", "minLength": 1 }
-            }
-          }
-        },
-        "compatibility": {
-          "type": "object",
-          "properties": {
-            "source": { "enum": ["declared", "inherited"] },
-            "from_tag": { "type": "string" },
-            "warnings": {
-              "type": "array",
-              "items": { "type": "string" }
-            }
-          }
-        }
-      }
-    },
-    "releaseAsset": {
-      "description": "One downloadable file of a carried release. `digest` is the publisher SHA-256 (`sha256:<hex>`), or null when the publisher gives none.",
-      "type": "object",
-      "required": ["id", "download_url"],
-      "properties": {
-        "id": { "type": "integer" },
-        "name": { "type": "string", "minLength": 1 },
-        "size": { "type": "integer" },
-        "download_url": { "type": "string", "minLength": 1 },
-        "digest": { "type": ["string", "null"] },
-        "updated_at": { "type": "string" }
       }
     },
     "dependency": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["id", "version", "when"],
       "properties": {
         "id": {
@@ -261,6 +218,7 @@
     },
     "install": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "mode": { "enum": ["standard", "patch"] },
         "files": {
@@ -287,6 +245,14 @@
       "allOf": [
         { "not": { "required": ["files", "payload"] } },
         {
+          "if": { "required": ["files"] },
+          "then": { "required": ["scan_dlls", "exclude"] }
+        },
+        {
+          "if": { "required": ["payload"] },
+          "then": { "required": ["exclude"], "not": { "required": ["scan_dlls"] } }
+        },
+        {
           "if": { "required": ["replace"] },
           "then": {
             "required": ["mode"],
@@ -297,6 +263,7 @@
     },
     "fileRule": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["match", "type"],
       "properties": {
         "match": { "type": "string", "minLength": 1 },
@@ -313,6 +280,7 @@
     },
     "payloadRule": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["match", "target"],
       "properties": {
         "match": { "type": "string", "minLength": 1 },

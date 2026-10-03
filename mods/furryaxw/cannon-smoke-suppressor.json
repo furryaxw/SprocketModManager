@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "furryaxw.cannon-smoke-suppressor",
   "name": "CannonSmokeSuppressor",
   "authors": ["furryAxw"],

@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
   "name": "XUnity.AutoTranslator-MelonMod-IL2CPP",
   "authors": ["bbepis"],

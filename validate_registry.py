@@ -82,10 +82,15 @@ class GitHubApi:
 
 
 def matching_release_assets(meta: dict[str, Any], releases: list[dict[str, Any]]) -> list[str]:
-    version_pattern = re.compile(meta["release"]["version_pattern"])
-    include_prerelease = meta["release"]["include_prerelease"]
-    includes = [pattern.casefold() for pattern in meta["release"]["assets"]["include"]]
-    excludes = [pattern.casefold() for pattern in meta["release"]["assets"]["exclude"]]
+    """Released assets that match the entry's `release` rules; no rules mean nothing to match."""
+    release = meta.get("release")
+    if not isinstance(release, dict) or not isinstance(release.get("version_pattern"), str):
+        return []
+    version_pattern = re.compile(release["version_pattern"])
+    include_prerelease = bool(release.get("include_prerelease"))
+    assets = release.get("assets") if isinstance(release.get("assets"), dict) else {}
+    includes = [pattern.casefold() for pattern in assets.get("include") or []]
+    excludes = [pattern.casefold() for pattern in assets.get("exclude") or []]
     matches: list[str] = []
     for release in releases:
         if release.get("draft") or (release.get("prerelease") and not include_prerelease):
@@ -109,7 +114,10 @@ def matching_release_assets(meta: dict[str, Any], releases: list[dict[str, Any]]
 
 def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
     errors: list[str] = []
-    repository = meta["repository"]
+    repository = str(meta.get("repository") or "")
+    if not repository:
+        # 没有仓库地址就没有可核对的公开来源。
+        return []
     encoded = "/".join(quote(part, safe="") for part in repository.split("/", 1))
     try:
         repo = api.get(f"/repos/{encoded}")
@@ -157,8 +165,10 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
             latest = None
         if isinstance(latest, dict):
             releases = [latest]
-    if releases_available and (not isinstance(releases, list) or not matching_release_assets(meta, releases)):
-        errors.append("no compatible GitHub Release asset matches release.assets")
+    release = meta.get("release")
+    if releases_available and isinstance(release, dict) and release.get("version_pattern"):
+        if not isinstance(releases, list) or not matching_release_assets(meta, releases):
+            errors.append("no compatible GitHub Release asset matches release.assets")
     return errors
 
 

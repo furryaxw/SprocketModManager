@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sprocketmods.furryaxw.top/schemas/sprocket-mod-v1.schema.json",
   "title": "SprocketModManager Registry Entry v1",
-  "description": "Frozen v1 entry shape. Readers accept it; new entries are authored as v2.",
+  "description": "Frozen v1 entry shape.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -32,31 +32,13 @@ REQUIRED_FIELDS = {
     "schema_version",
     "id",
     "name",
-    "authors",
-    "repository",
-    "license",
-    "display_name",
-    "release",
-    "dependencies",
     "install",
-    "category",
-    "tags",
-}
-OPTIONAL_FIELDS = {
-    "description",
-    "recommendations",
-    "featured",
-    "supply",
-    "releases",
-    "kind",
-    "provides",
 }
 HOST_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 FORBIDDEN_VERSION_FIELDS = {"version", "latest_version", "download_url", "tag"}
 ALLOWED_TARGET_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
 ALLOWED_CATEGORIES = {"gameplay", "utility", "library", "visual", "audio", "translation", "other"}
 PATCH_MODE = "patch"
-SCHEMA_VERSION = 2
 PACKAGE_KINDS = ("modfile", "modloader", "loaderbridge", "translateloader", "patch")
 LOADER_KINDS = ("modloader", "loaderbridge", "translateloader", "patch")
 # `provides` 里的这个字面量表示「这条发布自己的版本」。
@@ -68,7 +50,8 @@ LANGUAGE_TAG_RE = re.compile(
 )
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
-FALLBACK_INDEX_URL = "https://sprocketmods.furryaxw.top/index.json"
+# 上一版索引的包列表：拉取失败时从它取已知的 releases。
+FALLBACK_INDEX_URL = "https://sprocketmods.furryaxw.top/data/packages.json"
 INSTALLABLE_SUFFIXES = {".dll", ".zip"}
 
 # 能力用版本化名字表达：模组的依赖区间就是对某个能力的区间。游戏那项是本地能力，
@@ -103,6 +86,15 @@ PROVIDERS_FILE = Path(__file__).resolve().parent / PROVIDERS_FILE_NAME
 # 诊断规则包：日志签名与环境检查。改动靠发索引生效，所以坏条目在这里挡住，别留着让客户端猜。
 DIAGNOSIS_FILE_NAME = "diagnosis.json"
 DIAGNOSIS_FILE = Path(__file__).resolve().parent / DIAGNOSIS_FILE_NAME
+# 索引目录里的三份文件：包列表、游戏与加载器环境、诊断规则包。
+# 诊断那份与规则源文件同名，但落在输出目录里。
+PACKAGES_FILE_NAME = "packages.json"
+ENVIRONMENT_FILE_NAME = "environment.json"
+# 站点把这三份放在固定的 `data/` 下：客户端拿站点根（或站点根目录）拼出它们的地址。
+INDEX_DATA_DIR = "data"
+# 兼容层：只读单文件的老客户端按站点根的 `index.json` 取注册表，条目声明 v2。
+LEGACY_INDEX_FILE_NAME = "index.json"
+LEGACY_ENTRY_SCHEMA_VERSION = 2
 DIAGNOSIS_ENTRY_KEYS = frozenset(
     {"id", "bucket", "level", "title", "explain", "evidence", "tutorial", "go_to", "check", "match"}
 )
@@ -743,7 +735,8 @@ def validate_localized(value: object, field: str) -> None:
 
 def release_source_type(package: dict[str, Any]) -> str:
     """条目的二进制来源：默认是它自己的 GitHub Releases。"""
-    source = package.get("release", {}).get("source")
+    release = package.get("release")
+    source = release.get("source") if isinstance(release, dict) else None
     if isinstance(source, dict) and isinstance(source.get("type"), str):
         return source["type"]
     return "github"
@@ -755,8 +748,8 @@ def validate_file_rules(rules: object) -> None:
     for rule in rules:
         if not isinstance(rule, dict):
             raise RegistryError("install file rules must be objects")
-        if not {"match", "type"} <= set(rule) or set(rule) - {"match", "type", "subpath", "layout"}:
-            raise RegistryError("install file rule requires match and type, and allows subpath and layout")
+        if not {"match", "type"} <= set(rule):
+            raise RegistryError("install file rule requires match and type")
         if not isinstance(rule["match"], str) or not rule["match"]:
             raise RegistryError("install file rule match must be a non-empty string")
         if not isinstance(rule["type"], str) or not (
@@ -778,10 +771,8 @@ def validate_payload_rules(rules: object) -> None:
     for rule in rules:
         if not isinstance(rule, dict):
             raise RegistryError("install payload rules must be objects")
-        if not {"match", "target"} <= set(rule) or set(rule) - {"match", "target", "subpath", "layout"}:
-            raise RegistryError(
-                "install payload rule requires match and target, and allows subpath and layout"
-            )
+        if not {"match", "target"} <= set(rule):
+            raise RegistryError("install payload rule requires match and target")
         if not isinstance(rule["match"], str) or not rule["match"]:
             raise RegistryError("install payload rule match must be a non-empty string")
         if not isinstance(rule["target"], str) or not SUPPLY_TARGET_RE.fullmatch(rule["target"]):
@@ -819,9 +810,9 @@ def validate_replace_types(install: dict[str, Any], mode: str) -> None:
 
 def validate_provides(meta: dict[str, Any]) -> None:
     """`provides`：能力 id -> 版本字符串；`{version}` 表示这条发布自己的版本。"""
-    provides = meta.get("provides")
-    if provides is None:
+    if "provides" not in meta:
         return
+    provides = meta["provides"]
     if not isinstance(provides, dict) or not provides:
         raise RegistryError("provides must be a non-empty object")
     for capability_id, version in provides.items():
@@ -838,14 +829,56 @@ def validate_provides(meta: dict[str, Any]) -> None:
                 ) from exc
 
 
+def validate_release_records(meta: dict[str, Any]) -> None:
+    """条目自带的发布记录：每条要有 `id`、`version`、`assets`，每条资产要有 `id` 与 `download_url`。
+
+    这几项是客户端定位版本、下载与校验所依赖的最小集合；`tag`、`page_url`、`digest`
+    这类字段由条目自己决定写不写。
+    """
+    package_id = meta.get("id")
+    records = meta.get("releases")
+    if not isinstance(records, list) or not records:
+        raise RegistryError("an external release source needs the entry to carry its releases")
+    for record in records:
+        if not isinstance(record, dict):
+            raise RegistryError(f"{package_id}: release records must be objects")
+        for field in ("id", "version", "assets"):
+            if field not in record:
+                raise RegistryError(f"{package_id}: release record is missing {field}")
+        if not isinstance(record["id"], int) or isinstance(record["id"], bool):
+            raise RegistryError(f"{package_id}: release id must be an integer")
+        version = record["version"]
+        if not isinstance(version, str) or not version:
+            raise RegistryError(f"{package_id}: release version must be a non-empty string")
+        try:
+            Version.parse(version)
+        except (IndexError, ValueError) as exc:
+            raise RegistryError(f"{package_id}: release version is not SemVer: {version!r}") from exc
+        assets = record["assets"]
+        if not isinstance(assets, list):
+            raise RegistryError(f"{package_id}: release assets must be a list")
+        for asset in assets:
+            if not isinstance(asset, dict):
+                raise RegistryError(f"{package_id}: release assets must be objects")
+            for field in ("id", "download_url"):
+                if field not in asset:
+                    raise RegistryError(f"{package_id}: release asset is missing {field}")
+            if not isinstance(asset["id"], int) or isinstance(asset["id"], bool):
+                raise RegistryError(f"{package_id}: release asset id must be an integer")
+            if not isinstance(asset["download_url"], str) or not asset["download_url"]:
+                raise RegistryError(
+                    f"{package_id}: release asset download_url must be a non-empty string"
+                )
+
+
 def validate_meta(meta: dict, expected_id: str) -> None:
+    """必填只有 schema_version、id、name、install，其余字段写了才校验形状。
+
+    未定义的键原样进索引：条目是作者的文件，索引不替它筛字段。
+    """
     missing = sorted(REQUIRED_FIELDS - set(meta))
     if missing:
         raise RegistryError(f"missing fields: {', '.join(missing)}")
-
-    extra = sorted(set(meta) - REQUIRED_FIELDS - OPTIONAL_FIELDS - {"$schema"})
-    if extra:
-        raise RegistryError(f"unknown fields: {', '.join(extra)}")
 
     forbidden = sorted(FORBIDDEN_VERSION_FIELDS & set(meta))
     if forbidden:
@@ -854,101 +887,103 @@ def validate_meta(meta: dict, expected_id: str) -> None:
         )
 
     schema_version = meta.get("schema_version")
-    if schema_version not in (1, 2):
-        raise RegistryError("schema_version must be 1 or 2")
+    if schema_version not in (1, 2, 3):
+        raise RegistryError("schema_version must be 1, 2, or 3")
     package_id = meta.get("id", "")
     if not ID_RE.fullmatch(package_id):
         raise RegistryError(f"invalid package id: {package_id!r}")
     if package_id != expected_id:
         raise RegistryError(f"id {package_id!r} does not match its file path (expected {expected_id!r})")
-    if not REPOSITORY_RE.fullmatch(meta.get("repository", "")):
-        raise RegistryError(f"invalid GitHub repository: {meta.get('repository')!r}")
-    if not meta.get("license"):
-        raise RegistryError("license is required")
-    if not isinstance(meta.get("authors"), list) or not meta["authors"]:
-        raise RegistryError("authors must be a non-empty list")
-    if not all(isinstance(author, str) and author.strip() for author in meta["authors"]):
-        raise RegistryError("authors must contain non-empty strings")
-    validate_localized(meta.get("display_name"), "display_name")
+    if "repository" in meta and not REPOSITORY_RE.fullmatch(str(meta["repository"])):
+        raise RegistryError(f"invalid GitHub repository: {meta['repository']!r}")
+    if "license" in meta and not meta["license"]:
+        raise RegistryError("license must be a non-empty string")
+    if "authors" in meta:
+        authors = meta["authors"]
+        if not isinstance(authors, list) or not authors:
+            raise RegistryError("authors must be a non-empty list")
+        if not all(isinstance(author, str) and author.strip() for author in authors):
+            raise RegistryError("authors must contain non-empty strings")
+    if "display_name" in meta:
+        validate_localized(meta["display_name"], "display_name")
     if "description" in meta:
         validate_localized(meta["description"], "description")
-    if meta.get("category") not in ALLOWED_CATEGORIES:
+    if "category" in meta and meta["category"] not in ALLOWED_CATEGORIES:
         raise RegistryError(f"invalid category: {meta.get('category')!r}")
-    tags = meta.get("tags")
-    if not isinstance(tags, list) or len(tags) != len(set(tags)):
-        raise RegistryError("tags must be a list without duplicates")
-    if not all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", tag or "") for tag in tags):
-        raise RegistryError("tags must use lowercase letters, digits, and hyphens")
+    if "tags" in meta:
+        tags = meta["tags"]
+        if not isinstance(tags, list) or len(tags) != len(set(tags)):
+            raise RegistryError("tags must be a list without duplicates")
+        if not all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", tag or "") for tag in tags):
+            raise RegistryError("tags must use lowercase letters, digits, and hyphens")
 
     kind = str(meta.get("kind", "modfile"))
     if kind not in PACKAGE_KINDS:
         raise RegistryError(f"invalid kind: {meta.get('kind')!r}")
     validate_provides(meta)
 
-    release = meta.get("release")
-    if not isinstance(release, dict):
-        raise RegistryError("release must be an object")
-    if set(release) not in (
-        {"include_prerelease", "version_pattern", "assets"},
-        {"include_prerelease", "version_pattern", "assets", "source"},
-    ):
-        raise RegistryError(
-            "release requires include_prerelease, version_pattern, assets, and optional source"
-        )
-    if not isinstance(release.get("include_prerelease"), bool):
-        raise RegistryError("release.include_prerelease must be a boolean")
-    pattern = release.get("version_pattern", "")
-    try:
-        compiled = re.compile(pattern)
-    except re.error as exc:
-        raise RegistryError(f"invalid version_pattern: {exc}") from exc
-    if compiled.groups < 1:
-        raise RegistryError("version_pattern must contain a capture group for SemVer")
-    assets = release.get("assets", {})
-    if not isinstance(assets.get("include"), list) or not assets["include"]:
-        raise RegistryError("release.assets.include must be a non-empty list")
-    if not isinstance(assets.get("exclude", []), list):
-        raise RegistryError("release.assets.exclude must be a list")
-    if set(assets) != {"include", "exclude"}:
-        raise RegistryError("release.assets requires exactly include and exclude")
-    if not all(isinstance(item, str) and item for item in assets["include"] + assets["exclude"]):
-        raise RegistryError("release asset patterns must be non-empty strings")
+    if "release" in meta:
+        release = meta["release"]
+        if not isinstance(release, dict):
+            raise RegistryError("release must be an object")
+        if "include_prerelease" in release and not isinstance(release["include_prerelease"], bool):
+            raise RegistryError("release.include_prerelease must be a boolean")
+        if "version_pattern" in release:
+            pattern = release["version_pattern"]
+            if not isinstance(pattern, str) or not pattern:
+                raise RegistryError("release.version_pattern must be a non-empty string")
+            try:
+                compiled = re.compile(pattern)
+            except re.error as exc:
+                raise RegistryError(f"invalid version_pattern: {exc}") from exc
+            if compiled.groups < 1:
+                raise RegistryError("version_pattern must contain a capture group for SemVer")
+        if "assets" in release:
+            assets = release["assets"]
+            if not isinstance(assets, dict):
+                raise RegistryError("release.assets must be an object")
+            if "include" in assets and (
+                not isinstance(assets["include"], list) or not assets["include"]
+            ):
+                raise RegistryError("release.assets.include must be a non-empty list")
+            if "exclude" in assets and not isinstance(assets["exclude"], list):
+                raise RegistryError("release.assets.exclude must be a list")
+            patterns = list(assets.get("include") or []) + list(assets.get("exclude") or [])
+            if not all(isinstance(item, str) and item for item in patterns):
+                raise RegistryError("release asset patterns must be non-empty strings")
 
-    source = release.get("source")
-    if source is not None:
-        if not isinstance(source, dict) or not isinstance(source.get("type"), str):
-            raise RegistryError("release.source must be an object naming a type")
-        if set(source) - {"type", "hosts"}:
-            raise RegistryError("release.source allows only type and hosts")
-        if source["type"] not in {"github", "external"}:
-            raise RegistryError(f"invalid release source type: {source['type']!r}")
-        if source["type"] == "external":
-            if kind != "modloader":
-                raise RegistryError("only a modloader may declare an external release source")
-            hosts = source.get("hosts")
-            if not isinstance(hosts, list) or not hosts or len(hosts) != len(set(hosts)):
-                raise RegistryError("an external release source needs a non-empty host list")
-            if not all(isinstance(host, str) and HOST_RE.fullmatch(host) for host in hosts):
-                raise RegistryError("external release source hosts must be lowercase host names")
-            if not isinstance(meta.get("releases"), list) or not meta["releases"]:
-                raise RegistryError(
-                    "an external release source needs the entry to carry its releases"
-                )
-        elif "hosts" in source:
-            raise RegistryError("release.source.hosts only applies to external sources")
-    elif "releases" in meta:
+        source = release.get("source")
+        if source is not None:
+            if not isinstance(source, dict) or not isinstance(source.get("type"), str):
+                raise RegistryError("release.source must be an object naming a type")
+            if source["type"] not in {"github", "external"}:
+                raise RegistryError(f"invalid release source type: {source['type']!r}")
+            if source["type"] == "external":
+                if kind != "modloader":
+                    raise RegistryError("only a modloader may declare an external release source")
+                hosts = source.get("hosts")
+                if not isinstance(hosts, list) or not hosts or len(hosts) != len(set(hosts)):
+                    raise RegistryError("an external release source needs a non-empty host list")
+                if not all(isinstance(host, str) and HOST_RE.fullmatch(host) for host in hosts):
+                    raise RegistryError("external release source hosts must be lowercase host names")
+                validate_release_records(meta)
+    if "releases" in meta and not (
+        isinstance(meta.get("release"), dict)
+        and isinstance(meta["release"].get("source"), dict)
+        and meta["release"]["source"].get("type") == "external"
+    ):
         raise RegistryError("releases only applies to an external release source")
 
-    dependencies = meta.get("dependencies")
+    dependencies = meta.get("dependencies", [])
     if not isinstance(dependencies, list):
         raise RegistryError("dependencies must be a list")
     seen_rules: set[tuple[str, str]] = set()
     for dependency in dependencies:
         if not isinstance(dependency, dict):
             raise RegistryError("dependency entries must be objects")
-        required = {"id", "version", "when"}
-        if set(dependency) != required:
-            raise RegistryError(f"dependency must contain exactly {sorted(required)}")
+        missing_rule = sorted({"id", "version", "when"} - set(dependency))
+        if missing_rule:
+            raise RegistryError(f"dependency is missing {', '.join(missing_rule)}")
         key = (dependency["id"], dependency["when"])
         if key in seen_rules:
             raise RegistryError(f"duplicate dependency rule: {key[0]} when {key[1]}")
@@ -979,30 +1014,26 @@ def validate_meta(meta: dict, expected_id: str) -> None:
     install = meta.get("install")
     if not isinstance(install, dict):
         raise RegistryError("install must be an object")
-    if not isinstance(install.get("exclude", []), list):
+    if "exclude" in install and not isinstance(install["exclude"], list):
         raise RegistryError("install.exclude must be a list")
     mode = install.get("mode", "standard")
     if mode not in {"standard", PATCH_MODE}:
         raise RegistryError(f"invalid install mode: {mode!r}")
 
     if schema_version == 1:
-        if not isinstance(install.get("scan_dlls"), bool):
+        if "scan_dlls" in install and not isinstance(install["scan_dlls"], bool):
             raise RegistryError("install.scan_dlls must be a boolean")
-        if set(install) not in (
-            {"scan_dlls", "exclude", "overrides"},
-            {"scan_dlls", "exclude", "overrides", "mode"},
-        ):
-            raise RegistryError("install requires scan_dlls, exclude, overrides, and optional mode")
-        if not isinstance(install.get("overrides", []), list):
-            raise RegistryError("install.overrides must be a list")
-        for override in install.get("overrides", []):
-            if not isinstance(override, dict):
-                raise RegistryError("install overrides must be objects")
-            if set(override) != {"match", "target"}:
-                raise RegistryError("install override requires exactly match and target")
-            if not isinstance(override["match"], str) or not override["match"]:
-                raise RegistryError("install override match must be a non-empty string")
-            validate_target(override["target"])
+        if "overrides" in install:
+            if not isinstance(install["overrides"], list):
+                raise RegistryError("install.overrides must be a list")
+            for override in install["overrides"]:
+                if not isinstance(override, dict):
+                    raise RegistryError("install overrides must be objects")
+                if not {"match", "target"} <= set(override):
+                    raise RegistryError("install override requires match and target")
+                if not isinstance(override["match"], str) or not override["match"]:
+                    raise RegistryError("install override match must be a non-empty string")
+                validate_target(override["target"])
     else:
         if "overrides" in install:
             raise RegistryError("install.overrides belongs to schema_version 1; use install.files")
@@ -1013,28 +1044,17 @@ def validate_meta(meta: dict, expected_id: str) -> None:
         if kind == "modfile" and uses_payload:
             raise RegistryError("a modfile installs through install.files")
         if uses_payload:
-            if set(install) not in (
-                {"payload", "exclude"},
-                {"payload", "exclude", "mode"},
-            ):
-                raise RegistryError("install requires payload, exclude, and optional mode")
-            validate_payload_rules(install.get("payload"))
+            validate_payload_rules(install["payload"])
         else:
-            if set(install) not in (
-                {"files", "exclude", "scan_dlls"},
-                {"files", "exclude", "scan_dlls", "mode"},
-                {"files", "exclude", "scan_dlls", "replace"},
-                {"files", "exclude", "scan_dlls", "mode", "replace"},
-            ):
-                raise RegistryError("install requires files, exclude, scan_dlls, and optional mode")
-            if not isinstance(install.get("scan_dlls"), bool):
+            if "scan_dlls" in install and not isinstance(install["scan_dlls"], bool):
                 raise RegistryError("install.scan_dlls must be a boolean")
-            validate_file_rules(install.get("files"))
+            if uses_files:
+                validate_file_rules(install["files"])
             validate_replace_types(install, mode)
 
     supply = meta.get("supply")
-    if supply is not None:
-        if schema_version != 2:
+    if "supply" in meta:
+        if schema_version < 2:
             raise RegistryError("supply requires schema_version 2")
         if not isinstance(supply, dict) or not supply:
             raise RegistryError("supply must be a non-empty object")
@@ -1096,7 +1116,9 @@ def validate_install_types(packages: dict[str, dict]) -> None:
     }
     namespaces = {file_type.split(":", 1)[0] for file_type in suppliers}
     for package_id, package in packages.items():
-        for rule in package["install"].get("files", []):
+        install = package.get("install")
+        rules = install.get("files", []) if isinstance(install, dict) else []
+        for rule in rules:
             file_type = rule["type"]
             if file_type.endswith(":*"):
                 if file_type[: -len(":*")] not in namespaces:
@@ -1445,9 +1467,57 @@ def load_diagnosis_pack(
     return pack, warnings
 
 
+def legacy_index(index: dict[str, Any]) -> dict[str, Any]:
+    """单文件索引：`data/` 下那三份合并回一份，条目声明 v2。
+
+    只读单文件的老客户端从站点根的 `index.json` 取这份。条目内容与 `data/` 同源，
+    只把 `schema_version` 降到 2 —— 完整写出的条目在 v2 规则下同样合法。
+    """
+    return {
+        "schema_version": index["schema_version"],
+        "generated_at": index.get("generated_at", ""),
+        "game": index.get("game") or {},
+        "providers": index.get("providers") or {},
+        "providers_warnings": index.get("providers_warnings") or [],
+        "diagnosis": index.get("diagnosis") or {},
+        "diagnosis_warnings": index.get("diagnosis_warnings") or [],
+        "packages": [
+            {**package, "schema_version": LEGACY_ENTRY_SCHEMA_VERSION}
+            for package in index.get("packages") or []
+        ],
+    }
+
+
+def write_index_files(index: dict[str, Any], output_dir: Path) -> None:
+    """把索引写进输出目录：`data/` 下三份，站点根下一份兼容用的单文件。"""
+    directory = output_dir / INDEX_DATA_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    files = {
+        PACKAGES_FILE_NAME: {
+            "schema_version": index["schema_version"],
+            "generated_at": index.get("generated_at", ""),
+            "packages": index.get("packages") or [],
+        },
+        ENVIRONMENT_FILE_NAME: {
+            "schema_version": index["schema_version"],
+            "game": index.get("game") or {},
+            "providers": index.get("providers") or {},
+            "providers_warnings": index.get("providers_warnings") or [],
+        },
+        DIAGNOSIS_FILE_NAME: dict(index.get("diagnosis") or {}),
+    }
+    for name, payload in files.items():
+        (directory / name).write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    (output_dir / LEGACY_INDEX_FILE_NAME).write_text(
+        json.dumps(legacy_index(index), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
 def generate_index(
     mods_dir: Path,
-    output: Path,
+    output_dir: Path,
     *,
     release_loader: Callable[[dict[str, Any], list[dict[str, Any]], dict[str, int]], list[dict[str, Any]]] | None = None,
     baseline_releases: dict[str, list[dict[str, Any]]] | None = None,
@@ -1544,15 +1614,18 @@ def generate_index(
         ),
         "packages": packages,
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_index_files(index, output_dir)
     return index
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the Sprocket Pages registry index")
     parser.add_argument("--mods-dir", default="mods")
-    parser.add_argument("--output", default="index.json")
+    parser.add_argument(
+        "--output-dir",
+        default="site",
+        help="directory that receives packages.json, environment.json, and diagnosis.json",
+    )
     parser.add_argument(
         "--fetch-releases",
         action="store_true",
@@ -1562,8 +1635,8 @@ def main() -> int:
         "--previous",
         default="",
         help=(
-            "index file or URL holding the releases already known "
-            "(default: the output file when it exists, else --fallback-index-url)"
+            "packages file or URL holding the releases already known "
+            "(default: <output-dir>/packages.json when it exists, else --fallback-index-url)"
         ),
     )
     parser.add_argument(
@@ -1584,14 +1657,17 @@ def main() -> int:
     parser.add_argument(
         "--fallback-index-url",
         default=FALLBACK_INDEX_URL,
-        help="index URL used when no previous index is available",
+        help="packages URL used when no previous packages file is available",
     )
     args = parser.parse_args()
 
-    output = Path(args.output)
+    output_dir = Path(args.output_dir)
+    previous_packages = output_dir / INDEX_DATA_DIR / PACKAGES_FILE_NAME
     baseline: dict[str, list[dict[str, Any]]] = {}
     if args.fetch_releases and not args.refresh:
-        source: str | Path = args.previous or (output if output.is_file() else args.fallback_index_url)
+        source: str | Path = args.previous or (
+            previous_packages if previous_packages.is_file() else args.fallback_index_url
+        )
         try:
             baseline = load_index_releases(source)
         except (OSError, ValueError) as exc:
@@ -1600,7 +1676,7 @@ def main() -> int:
     try:
         index = generate_index(
             Path(args.mods_dir),
-            output,
+            output_dir,
             release_loader=fetch_package_releases if args.fetch_releases else None,
             baseline_releases=baseline,
             fallback_index_url=args.fallback_index_url,
@@ -1615,7 +1691,7 @@ def main() -> int:
     reused = sum(
         1 for package in index["packages"] if baseline.get(package["id"]) == package.get("releases")
     )
-    summary = f"generated {args.output} with {len(index['packages'])} packages"
+    summary = f"generated {args.output_dir} with {len(index['packages'])} packages"
     if args.fetch_releases and not args.refresh:
         summary += f" ({reused} reused from the previous index, {len(index['packages']) - reused} refreshed)"
     print(summary)

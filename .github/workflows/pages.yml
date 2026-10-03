@@ -54,9 +54,9 @@ jobs:
           cp -R mods/. site/mods/
           cp -R schemas/. site/schemas/
           if [ "${{ inputs.refresh }}" = "true" ]; then
-            python gen-index.py --mods-dir mods --output site/index.json --fetch-releases --refresh
+            python gen-index.py --mods-dir mods --output-dir site --fetch-releases --refresh
           else
-            python gen-index.py --mods-dir mods --output site/index.json --fetch-releases
+            python gen-index.py --mods-dir mods --output-dir site --fetch-releases
           fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "sectumsempra.sprocket-material-editor",
   "name": "SprocketMaterialEditor",
   "authors": ["Sectumsempra"],

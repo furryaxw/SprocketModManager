@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "yukieiji.unity-explorer",
   "name": "UnityExplorer.MelonLoader.IL2CPP.CoreCLR",
   "authors": ["Sinai", "yukieiji"],

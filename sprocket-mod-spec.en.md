@@ -10,7 +10,7 @@ assets inside the entry itself.
 ## Data Flow
 
 ```text
-Pages index.json
+Pages data/packages.json
   -> mods/<author>/<modid>.json
   -> GitHub API /repos/<owner>/<repo>/releases (an external source uses the entry's own releases)
   -> select a compatible tag and Release assets
@@ -37,7 +37,7 @@ instead; see "External Download Sources".
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "furryaxw.sprocket-laser-rangefinder",
   "name": "SprocketLaserRangefinder",
   "authors": ["furryAxw"],
@@ -88,9 +88,12 @@ instead; see "External Download Sources".
 }
 ```
 
-`display_name` is required but needs only one language. The entire `description`
-field is optional. When present, it must contain at least one non-empty translation,
-and its languages do not need to match those in `display_name`.
+An entry has four required fields — `schema_version`, `id`, `name`, and `install`. Every
+other field may be omitted entirely and is checked only when present, and keys the schema
+does not define pass through into the index unchanged. `display_name` needs at least one
+language when written. The entire `description` field is optional; when present, it must
+contain at least one non-empty translation, and its languages do not need to match those in
+`display_name`.
 
 Localization keys use open-ended BCP 47-style language tags such as `en`, `ja`,
 `zh-Hans`, `zh-Hant`, `pt-BR`, or the private-use tag `x-example`. The Registry does
@@ -199,8 +202,8 @@ The index writes the game capability through a top-level `game`:
 
 `providers.json` in the Registry root records which game range each version range of a
 loader-kind package supports, with rows written as the `loader`, `version`, and
-`sprocket` ranges, where `loader` is the id of a registered loader-kind package; the
-index carries the table under `providers`, with `providers_warnings` alongside:
+`sprocket` ranges, where `loader` is the id of a registered loader-kind package;
+`data/environment.json` carries the table under `providers`, with `providers_warnings` alongside:
 
 ```json
 {
@@ -510,7 +513,9 @@ GitHub Releases:
 
 An external source has no API to query. Only a modloader may declare one; a mod always
 takes its binaries from its own GitHub Releases. Such an entry must also carry its own
-top-level `releases` array whose `download_url` values sit on one of the listed hosts.
+top-level `releases` array: every record needs `id`, `version`, and `assets`, every asset
+needs `id` and `download_url`, and each `download_url` must sit on one of the listed hosts.
+Fields such as `tag`, `page_url`, and `digest` may be omitted.
 Those hosts are a download allowlist: the client downloads assets only from them, and
 publisher digests are still verified as described under SHA-256. When a tool or an
 upstream document fixes one exact build, such an entry can pin that build's name, URL,

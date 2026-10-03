@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "hans21223.sprocket-quality-of-life",
   "name": "SprocketQoL",
   "authors": ["Hans21223"],

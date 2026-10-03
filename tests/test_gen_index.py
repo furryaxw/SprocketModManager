@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from sprocket_mod_manager.domain.registry import Registry
+
 ROOT = Path(__file__).resolve().parents[1]
 REAL_META = ROOT / "mods" / "furryaxw" / "sprocket-depth.json"
 
@@ -273,14 +275,14 @@ class BaselineTests(unittest.TestCase):
                 seen[package_meta["id"]] = list(previous)
                 raise RuntimeError("network down")
 
-            output = Path(directory) / "index.json"
+            output_dir = Path(directory) / "registry"
             index = GEN_INDEX.generate_index(
                 mods_dir,
-                output,
+                output_dir,
                 release_loader=loader,
                 baseline_releases={"furryaxw.sprocket-depth": known},
             )
-            written = output.is_file()
+            written = sorted(path.name for path in (output_dir / "data").glob("*.json"))
 
         self.assertEqual(seen["furryaxw.sprocket-depth"], known, "拉取前先把已知的交给 loader")
         self.assertEqual(
@@ -288,7 +290,11 @@ class BaselineTests(unittest.TestCase):
             known,
             "拉取失败就沿用基线那份",
         )
-        self.assertTrue(written, "索引仍然要落盘")
+        self.assertEqual(
+            written,
+            ["diagnosis.json", "environment.json", "packages.json"],
+            "索引仍然要落盘",
+        )
 
 
 class CompatibilityBlockTests(unittest.TestCase):
@@ -551,7 +557,7 @@ class CompatibleIndexTests(unittest.TestCase):
 
             index = GEN_INDEX.generate_index(
                 mods_dir,
-                Path(directory) / "index.json",
+                Path(directory) / "registry",
                 release_loader=lambda _package, _known, _capabilities: [dict(recorded)],
             )
 
@@ -696,7 +702,7 @@ class ProvidersTableTests(unittest.TestCase):
 
             index = GEN_INDEX.generate_index(
                 mods_dir,
-                Path(directory) / "index.json",
+                Path(directory) / "registry",
                 providers_file=providers_file,
             )
 
@@ -840,7 +846,7 @@ class DiagnosisPackTests(unittest.TestCase):
 
             index = GEN_INDEX.generate_index(
                 mods_dir,
-                Path(directory) / "index.json",
+                Path(directory) / "registry",
                 diagnosis_file=diagnosis_file,
             )
 
@@ -862,6 +868,68 @@ class DiagnosisPackTests(unittest.TestCase):
         for entry in pack["entries"]:
             self.assertIn(entry["bucket"], GEN_INDEX.BUCKETS, entry["id"])
             self.assertIn(entry["level"], range(GEN_INDEX.MIN_LEVEL, GEN_INDEX.MAX_LEVEL + 1), entry["id"])
+
+
+class LegacyIndexTests(unittest.TestCase):
+    """站点根的单文件索引：只读单文件的老客户端按它取注册表。"""
+
+    def generate(self, directory: str) -> tuple[Path, dict]:
+        mods_dir = Path(directory) / "mods"
+        copy_package(
+            mods_dir,
+            "furryaxw.sprocket-depth",
+            "lavagang.melonloader",
+            "bepinex.bepinex-be",
+            "hans21223.sprocket-mod-loader",
+        )
+        output_dir = Path(directory) / "registry"
+        return output_dir, GEN_INDEX.generate_index(mods_dir, output_dir)
+
+    def test_the_three_documents_also_land_as_one_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir, index = self.generate(directory)
+            legacy = json.loads(
+                (output_dir / GEN_INDEX.LEGACY_INDEX_FILE_NAME).read_text(encoding="utf-8")
+            )
+            environment = json.loads(
+                (output_dir / "data" / "environment.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(legacy["schema_version"], 1, "容器版本仍是索引自身的 1")
+        self.assertEqual(legacy["generated_at"], index["generated_at"])
+        self.assertEqual(legacy["game"], environment["game"])
+        self.assertEqual(legacy["providers"], environment["providers"])
+        self.assertEqual(
+            [entry["id"] for entry in legacy["packages"]],
+            [entry["id"] for entry in index["packages"]],
+        )
+
+    def test_entries_are_declared_as_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir, index = self.generate(directory)
+            legacy = json.loads(
+                (output_dir / GEN_INDEX.LEGACY_INDEX_FILE_NAME).read_text(encoding="utf-8")
+            )
+
+        self.assertTrue(index["packages"], "样例条目要被写出来")
+        self.assertEqual(
+            [entry["schema_version"] for entry in legacy["packages"]],
+            [GEN_INDEX.LEGACY_ENTRY_SCHEMA_VERSION] * len(index["packages"]),
+        )
+
+    def test_a_single_file_reader_gets_the_same_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir, index = self.generate(directory)
+            legacy = json.loads(
+                (output_dir / GEN_INDEX.LEGACY_INDEX_FILE_NAME).read_text(encoding="utf-8")
+            )
+
+        registry = Registry.from_dict(legacy)
+
+        self.assertEqual(
+            [package.id for package in registry.packages],
+            [entry["id"] for entry in index["packages"]],
+        )
 
 
 if __name__ == "__main__":
