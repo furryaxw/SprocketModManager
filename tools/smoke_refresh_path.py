@@ -80,7 +80,6 @@ def child(game: Path, app_dir: Path) -> int:
         "dll_parses": parse_counts,
         "local_mods": len(payload.get("local_mods", [])),
         "installed": len(payload.get("installed", [])),
-        "unrecognized": len(payload.get("unrecognized", [])),
         "summary": payload.get("summary") or payload.get("local_summary"),
     }, ensure_ascii=False, indent=2))
     return 0

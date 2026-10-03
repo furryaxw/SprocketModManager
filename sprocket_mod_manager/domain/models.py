@@ -82,6 +82,8 @@ class RegistryPackage:
     payload_rules: tuple[dict[str, str], ...] = ()
     # 这个包向别处提供的能力：能力 id -> 版本字符串（`{version}` 表示自己的发布版本）。
     provides: dict[str, str] = field(default_factory=dict)
+    # 这条读数读不出来或自相矛盾的地方。非空表示它在目录里标成不可用，但照常列出来。
+    issues: tuple[str, ...] = ()
 
     @property
     def install_mode(self) -> str:
@@ -179,14 +181,16 @@ class RegistryPackage:
             None
             if raw_releases is None
             else tuple(
-                ReleaseInfo.from_dict(item, repository=str(data["repository"]), hosts=asset_hosts)
+                ReleaseInfo.from_dict(
+                    item, repository=str(data.get("repository", "")), hosts=asset_hosts
+                )
                 for item in raw_releases
             )
         )
-        if releases is not None:
+        if releases is not None and release_rules.get("version_pattern") is not None:
             try:
                 version_pattern = re.compile(str(release_rules["version_pattern"]))
-            except (KeyError, re.error) as exc:
+            except re.error as exc:
                 raise ValueError("invalid release version pattern") from exc
             for release in releases:
                 match = version_pattern.fullmatch(release.tag)
@@ -204,7 +208,7 @@ class RegistryPackage:
             id=data["id"],
             name=data["name"],
             authors=tuple(data.get("authors", ())),
-            repository=data["repository"],
+            repository=str(data.get("repository", "")),
             license=data.get("license", ""),
             display_name=dict(data.get("display_name", {})),
             description=dict(data.get("description", {})),
@@ -249,6 +253,66 @@ class RegistryPackage:
             },
         )
 
+    @classmethod
+    def from_invalid(
+            cls,
+            data: dict[str, Any],
+            reason: str,
+            *,
+            fallback_id: str,
+    ) -> "RegistryPackage":
+        """一条读不出来的条目：留一份能显示的最小读数，原因挂在 `issues` 上。
+
+        目录要把坏条目也列出来并说明原因，所以这里不抛错；拿不到的字段给空值。
+        """
+        raw_id = data.get("id")
+        package_id = raw_id if isinstance(raw_id, str) and raw_id else fallback_id
+        raw_name = data.get("name")
+        name = raw_name if isinstance(raw_name, str) and raw_name else package_id
+
+        def localized(field: str) -> dict[str, str]:
+            value = data.get(field)
+            if not isinstance(value, dict):
+                return {}
+            return {
+                str(key): str(text)
+                for key, text in value.items()
+                if isinstance(key, str) and isinstance(text, str)
+            }
+
+        def texts(field: str) -> tuple[str, ...]:
+            value = data.get(field)
+            if not isinstance(value, (list, tuple)):
+                return ()
+            return tuple(str(item) for item in value if isinstance(item, str))
+
+        def mapping(field: str) -> dict[str, Any]:
+            value = data.get(field)
+            return dict(value) if isinstance(value, dict) else {}
+
+        try:
+            schema_version = int(data.get("schema_version", 1))
+        except (TypeError, ValueError):
+            schema_version = 1
+        return cls(
+            id=package_id,
+            name=name,
+            authors=texts("authors"),
+            repository=str(data.get("repository") or ""),
+            license=str(data.get("license") or ""),
+            display_name=localized("display_name"),
+            description=localized("description"),
+            release=mapping("release"),
+            dependencies=(),
+            install=mapping("install"),
+            category=str(data.get("category") or "other"),
+            tags=texts("tags"),
+            meta_url=str(data.get("meta_url") or ""),
+            schema_version=schema_version,
+            kind=str(data.get("kind") or MODFILE_KIND),
+            issues=(reason,),
+        )
+
     def label(self, language: str = "en") -> str:
         return localized_value(self.display_name, language) or self.name
 
@@ -291,7 +355,7 @@ class ReleaseAsset:
                 raise ValueError(f"invalid embedded release asset URL: {download_url}")
         return cls(
             id=int(data.get("id", 0)),
-            name=str(data["name"]),
+            name=str(data.get("name", "")),
             size=int(data.get("size", 0)),
             download_url=download_url,
             digest=str(data["digest"]) if data.get("digest") else None,
@@ -323,28 +387,30 @@ class ReleaseInfo:
     ) -> "ReleaseInfo":
         if not isinstance(data, dict):
             raise TypeError("release must be an object")
+        # 只有写下的页面地址才判断主机；缺失时没有可判断的内容。
         page_url = str(data.get("page_url", ""))
-        parsed = urlparse(page_url)
-        if hosts:
-            if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in {
-                host.casefold() for host in hosts
-            }:
-                raise ValueError(f"release page host is not allowed: {page_url}")
-        elif repository:
-            expected_prefix = f"/{repository}/releases/tag/".casefold()
-            if (
-                    parsed.scheme != "https"
-                    or (parsed.hostname or "").casefold() != "github.com"
-                    or not parsed.path.casefold().startswith(expected_prefix)
-            ):
-                raise ValueError(f"invalid embedded release page URL: {page_url}")
+        if page_url:
+            parsed = urlparse(page_url)
+            if hosts:
+                if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in {
+                    host.casefold() for host in hosts
+                }:
+                    raise ValueError(f"release page host is not allowed: {page_url}")
+            elif repository:
+                expected_prefix = f"/{repository}/releases/tag/".casefold()
+                if (
+                        parsed.scheme != "https"
+                        or (parsed.hostname or "").casefold() != "github.com"
+                        or not parsed.path.casefold().startswith(expected_prefix)
+                ):
+                    raise ValueError(f"invalid embedded release page URL: {page_url}")
         raw_compatibility = data.get("compatibility")
         compatibility = (
             dict(raw_compatibility) if isinstance(raw_compatibility, dict) else None
         )
         return cls(
             id=int(data.get("id", 0)),
-            tag=str(data["tag"]),
+            tag=str(data.get("tag", "")),
             version=Version.parse(str(data["version"])),
             prerelease=bool(data.get("prerelease")),
             published_at=str(data.get("published_at", "")),

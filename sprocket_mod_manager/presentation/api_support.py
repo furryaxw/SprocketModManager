@@ -35,7 +35,7 @@ def app_icon_path() -> Path | None:
 def source_from_config(config: dict[str, Any]) -> str | Path:
     source = effective_index_url(config)
     path = Path(source).expanduser()
-    return path if path.is_file() else source
+    return path if path.is_dir() else source
 
 
 def release_data(release: ReleaseInfo | None) -> dict[str, Any] | None:

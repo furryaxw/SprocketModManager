@@ -375,9 +375,12 @@ function renderEnvironment() {
     const environment = state.environment;
     const sprocketInfo = environment?.sprocket || {};
     const problem = environmentProblem();
+    // 读数自身的毛病优先说出来：那是「没读到」，比「读到了但不匹配」更基础。
+    const issues = (environment?.issues || []).join("; ");
 
     sprocket.classList.toggle("error",
-        sprocketInfo.state === "legacy" || sprocketInfo.state === "unreadable" || Boolean(problem));
+        sprocketInfo.state === "legacy" || sprocketInfo.state === "unreadable"
+        || Boolean(problem) || Boolean(issues));
     const sprocketText = sprocketInfo.state === "legacy"
         ? (sprocketInfo.raw || "-")
         : sprocketInfo.state === "ok" ? (sprocketInfo.version || "-") : "-";
@@ -397,9 +400,9 @@ function renderEnvironment() {
     install.hidden = !environment || installedCount > 0 || sprocketInfo.state === "unconfigured";
     install.disabled = queueActive() || state.modloadersLoading;
 
-    note.hidden = !problem;
+    note.hidden = !problem && !issues;
     note.className = "environment-line environment-note error";
-    note.textContent = problem;
+    note.textContent = issues || problem;
     // 环境是状态栏要看的活状态之一，顺手重算一次。
     renderStatusbar();
 }

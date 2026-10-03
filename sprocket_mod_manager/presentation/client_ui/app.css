@@ -743,12 +743,6 @@ select option {
     background: var(--amber-quiet);
 }
 
-.state-chip.unrecognized {
-    color: #f2ca7e;
-    border-color: #72582c;
-    background: var(--amber-quiet);
-}
-
 .state-chip.corrupted {
     color: #f0a08f;
     border-color: #7a3d31;

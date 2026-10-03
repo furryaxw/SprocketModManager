@@ -24,9 +24,24 @@ PYTHON = REPO / ".venv" / "Scripts" / "python.exe"
 REAL_GAME = Path(r"G:\Sprocket")
 
 
+def write_registry(directory: Path, packages: list[dict]) -> None:
+    """写一份客户端认的索引：三份文件在 `<directory>/data/` 下。"""
+    data_dir = directory / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "packages.json").write_text(
+        json.dumps({"schema_version": 1, "packages": packages}), encoding="utf-8"
+    )
+    (data_dir / "environment.json").write_text(
+        json.dumps({"schema_version": 1, "game": {}, "providers": {}}), encoding="utf-8"
+    )
+    (data_dir / "diagnosis.json").write_text(
+        json.dumps({"schema_version": 1, "entries": []}), encoding="utf-8"
+    )
+
+
 def cli(app: Path, game: Path, *argv: str) -> tuple[int, str]:
     completed = subprocess.run(
-        [str(PYTHON), str(REPO / "modman.py"), "--app-dir", str(app), "--index-file", str(app / "index.json"),
+        [str(PYTHON), str(REPO / "modman.py"), "--app-dir", str(app), "--index-dir", str(app / "registry" / "data"),
          "--game-path", str(game), "--json", *argv],
         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO), timeout=300,
     )
@@ -86,7 +101,8 @@ def main() -> int:
         game.mkdir()
         app.mkdir()
         (game / "Sprocket.exe").write_bytes(b"stub")
-        (app / "index.json").write_text(json.dumps({"schema_version": 1, "packages": []}), encoding="utf-8")
+        index_dir = app / "registry"
+        write_registry(index_dir, [])
 
         copied: list[str] = []
         for kind in ("Mods", "Plugins", "UserLibs"):
@@ -128,27 +144,24 @@ def main() -> int:
             )
             print(f"seeded a v1 state with {len(owned)} owned files: {owned}")
             # 让索引里真的有这两个包，CLI 的 remove 才能解析 id（否则 _require_registry 解析不到 → 报错）。
-            index = {
-                "schema_version": 1,
-                "packages": [
-                    {
-                        "id": f"fixture.package-{index_}",
-                        "name": f"Package {index_}",
-                        "authors": ["fixture"],
-                        "repository": f"fixture/package-{index_}",
-                        "license": "MIT",
-                        "display_name": {"en": f"Package {index_}"},
-                        "description": {"en": "smoke fixture"},
-                        "release": {"assets": {"include": [], "exclude": []}},
-                        "dependencies": [],
-                        "install": {"scan_dlls": False, "exclude": [], "overrides": []},
-                        "category": "utility",
-                        "tags": [],
-                    }
-                    for index_ in range(len(owned))
-                ],
-            }
-            (app / "index.json").write_text(json.dumps(index), encoding="utf-8")
+            packages = [
+                {
+                    "id": f"fixture.package-{index_}",
+                    "name": f"Package {index_}",
+                    "authors": ["fixture"],
+                    "repository": f"fixture/package-{index_}",
+                    "license": "MIT",
+                    "display_name": {"en": f"Package {index_}"},
+                    "description": {"en": "smoke fixture"},
+                    "release": {"assets": {"include": [], "exclude": []}},
+                    "dependencies": [],
+                    "install": {"scan_dlls": False, "exclude": [], "overrides": []},
+                    "category": "utility",
+                    "tags": [],
+                }
+                for index_ in range(len(owned))
+            ]
+            write_registry(index_dir, packages)
             check_invariants("seeded v1 (not yet migrated)", game, state_of(game), results, expect_v2=False)
             # 迁移发生在下一次读写状态之前：先跑一次 local-mods（会加载并回写状态）。
             code, output = cli(app, game, "local-mods")

@@ -64,6 +64,10 @@ UNJUDGED_GAME_NOT_CONFIGURED = "game_not_configured"
 UNJUDGED_LOG_MISSING = "log_missing"
 UNJUDGED_PACK_MISSING = "pack_missing"
 UNJUDGED_TIMEOUT = "timeout"
+# 规则/环境这一侧自己读不出来：不是「没判过」，是判不了。
+UNJUDGED_CHECKS_FAILED = "checks_failed"
+# 某一份日志读不下去（打不开、读到一半坏了）。
+UNJUDGED_LOG_UNREADABLE = "log_unreadable"
 
 # 行内滑窗：单块匹配的规模有界。块间重叠用来保住跨块的命中，所以它必须是「一条命中最多能
 # 有多长」的上界 —— 规则包里出现更长的跨度时，那条命中会被块边界切断。

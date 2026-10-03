@@ -81,20 +81,38 @@ def game_dir(root: Path, version: str = "0.2.53.2") -> Path:
     return game
 
 
-def index_file(root: Path, *, sprocket_range: str = "<0.2.54.0", packages: list | None = None) -> Path:
-    payload = {
-        "schema_version": 1,
-        "game": {"id": "hamish.sprocket", "name": "Sprocket"},
-        "providers": {
-            "schema_version": 2,
-            "entries": [{"loader": "lavagang.melonloader", "version": ">=0.7.0 <0.8.0", "sprocket": sprocket_range}],
-        },
-        "generated_at": "2026-09-25T00:00:00Z",
-        "packages": [PACKAGE] if packages is None else packages,
-    }
-    path = root / "index.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return path
+def index_dir(root: Path, *, sprocket_range: str = "<0.2.54.0", packages: list | None = None) -> Path:
+    directory = root / "registry" / "data"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "packages.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-09-25T00:00:00Z",
+                "packages": [PACKAGE] if packages is None else packages,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (directory / "environment.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "game": {"id": "hamish.sprocket", "name": "Sprocket"},
+                "providers": {
+                    "schema_version": 2,
+                    "entries": [{"loader": "lavagang.melonloader", "version": ">=0.7.0 <0.8.0", "sprocket": sprocket_range}],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (directory / "diagnosis.json").write_text(
+        json.dumps({"schema_version": 1, "entries": []}), encoding="utf-8"
+    )
+    return directory
 
 
 def embedded(
@@ -146,7 +164,7 @@ class CatalogVerdictTests(unittest.TestCase):
         app_dir = root / "app"
         game = game_dir(root)
         ConfigStore(app_dir).save(
-            {"language": "zh", "game_path": str(game), "index_url": str(index_file(root, **kwargs))}
+            {"language": "zh", "game_path": str(game), "index_url": str(index_dir(root, **kwargs))}
         )
         service = ModManagerService(app_dir)
         return ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
@@ -169,7 +187,7 @@ class CatalogVerdictTests(unittest.TestCase):
         self.assertTrue(payload["ok"], payload)
         self.assertEqual(payload["count"], len(packages))
         self.assertTrue(packages, "目录读数在数据层里")
-        for key in ("packages", "installed", "unrecognized", "local_mods", "local_summary", "has_any_mods"):
+        for key in ("packages", "installed", "local_mods", "local_summary", "has_any_mods"):
             self.assertNotIn(key, payload, f"目录读数不该再带 {key}")
 
     def test_the_catalog_carries_the_version_it_would_install(self) -> None:
@@ -327,6 +345,29 @@ class CatalogVerdictTests(unittest.TestCase):
         self.assertEqual(result["code"], "catalog_load_failed")
         self.assertIsNone(reading, "读不出来就不许往数据层写半份读数")
 
+    def test_a_broken_entry_stays_listed_and_does_not_hide_the_others(self) -> None:
+        """一条坏数据只让它自己标成不可用：别的包照常，坏的那条仍列在目录里并说明原因。"""
+        good = json.loads(json.dumps(PACKAGE))
+        good["id"] = "test.good"
+        good["name"] = "test.good"
+        broken = {"id": "test.broken", "name": "Broken", "kind": "plugin"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api = self._api(root, packages=[good, broken])
+            try:
+                result = api.load_catalog()
+                packages = catalog_packages(api)
+            finally:
+                self._close(api)
+
+        self.assertTrue(result["ok"], result)
+        by_id = {package["id"]: package for package in packages}
+        self.assertEqual(len(packages), 2, "坏条目也要列出来")
+        self.assertTrue(by_id["test.good"]["available"])
+        self.assertFalse(by_id["test.broken"]["available"])
+        self.assertTrue(by_id["test.broken"]["issues"])
+
     def test_the_detail_axes_agree_with_the_sidebar(self) -> None:
         """详情各轴里的「本机」值必须能在侧栏那份读数里找到出处：两边读的是同一份环境。
 
@@ -363,7 +404,7 @@ class CatalogVerdictTests(unittest.TestCase):
             app_dir = root / "app"
             game = game_dir(root, "0.2.54.2")
             ConfigStore(app_dir).save(
-                {"language": "zh", "game_path": str(game), "index_url": str(index_file(root))}
+                {"language": "zh", "game_path": str(game), "index_url": str(index_dir(root))}
             )
             service = ModManagerService(app_dir)
             api = ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
@@ -417,7 +458,7 @@ class EnvironmentChainTests(unittest.TestCase):
             {
                 "language": "zh",
                 "game_path": str(game),
-                "index_url": str(index_file(root, packages=packages)),
+                "index_url": str(index_dir(root, packages=packages)),
             }
         )
         service = ModManagerService(app_dir)

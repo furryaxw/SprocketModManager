@@ -172,11 +172,14 @@ class RegistryProviderTests(unittest.TestCase):
         )
         self.assertEqual(registry.supplier_for_type("melonloader:*").id, NATIVE)
 
-    def test_a_wildcard_supply_key_is_rejected(self) -> None:
+    def test_a_wildcard_supply_key_marks_the_loader(self) -> None:
         loader = package(NATIVE, supply={"melonloader:*": "{Sprocket}/Mods"}, kind="modloader")
 
-        with self.assertRaises(ScanError):
-            Registry([loader])
+        registry = Registry([loader])
+
+        self.assertFalse(registry.has_package(NATIVE))
+        self.assertEqual(registry.providers_for_type("melonloader:mod"), ())
+        self.assertTrue(registry.packages[0].issues)
 
 
 class SolverProviderTests(unittest.TestCase):

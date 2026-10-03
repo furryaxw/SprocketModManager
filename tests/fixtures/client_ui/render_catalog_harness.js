@@ -202,7 +202,6 @@ const injected = {
     languageMode: "en",
     catalogLoading: false,
     privatePackages: [],
-    unrecognized: [],
     localMods: [],
     selectedId: payload.selected || null,
     showIncompatible: Boolean(payload.show_incompatible),

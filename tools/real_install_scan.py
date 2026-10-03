@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(r"G:\Sprocket\sprocket-mod-system")
 GAME = Path(r"G:\Sprocket")
-INDEX = REPO / "index.json"
+INDEX = REPO / "site" / "data"
 sys.path.insert(0, str(REPO))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -43,29 +45,38 @@ def why_not_matched(mod, metadata, registry_ids: set[str], registry_repos: set[s
 
 
 def resolve_index() -> Path:
-    """挑一份**最新的** Registry：优先 AppData 里缓存的线上索引，其次仓库里的本地副本。
+    """挑一份**最新的** Registry：优先 AppData 里缓存的线上索引，其次仓库 `site/` 里的本地副本。
 
-    优先取 AppData 里缓存的线上索引，其次仓库里的本地副本：本地 `index.json` 可能已过期
-    （少收录了某些包，例如 SprocketModAPI），所以这里显式检查缓存，并打印实际用了哪份。
+    线上那份是三份文件，缓存里也各存一份；三份凑齐才用它。本地副本可能已过期（少收录了某些包，
+    例如 SprocketModAPI），所以这里显式检查缓存，并打印实际用了哪份。
     """
     cache = Path(os.environ.get("LOCALAPPDATA", "")) / "SprocketModManager" / "cache" / "http"
-    best: tuple[float, Path] | None = None
+    wanted = {"packages.json", "environment.json", "diagnosis.json"}
+    newest: dict[str, tuple[float, Path]] = {}
     for sidecar in cache.glob("*.json"):
         try:
             meta = json.loads(sidecar.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if "sprocketmods.furryaxw.top" not in str(meta.get("url") or ""):
+        url = str(meta.get("url") or "")
+        if "sprocketmods.furryaxw.top" not in url:
+            continue
+        name = url.rsplit("/", 1)[-1]
+        if name not in wanted:
             continue
         body = sidecar.with_suffix(".body")
         if not body.is_file():
             continue
         fetched = float(meta.get("fetched_at") or 0)
-        if best is None or fetched > best[0]:
-            best = (fetched, body)
-    if best is not None:
-        print(f"index 来源: AppData 缓存的线上索引（fetched_at={best[0]:.0f}）")
-        return best[1]
+        if name not in newest or fetched > newest[name][0]:
+            newest[name] = (fetched, body)
+    if len(newest) == len(wanted):
+        directory = Path(tempfile.gettempdir()) / "sprocket-index-cache"
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, (_fetched, body) in newest.items():
+            shutil.copyfile(body, directory / name)
+        print(f"index 来源: AppData 缓存的线上索引（{len(newest)} 份）")
+        return directory
     print("index 来源: 仓库本地副本（注意：可能已过期）")
     return INDEX
 

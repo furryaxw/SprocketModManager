@@ -113,49 +113,92 @@ class CatalogController(ApiController):
         records = self._installed(service) if installed is None else installed
         packages: list[dict[str, Any]] = []
         for package in registry.packages:
-            release = latest.get(package.id)
-            selected_assets = (
-                service.github.install_assets(package, release)
-                if release is not None
-                else ()
-            )
-            release_data = _release_data(release)
-            if release_data is not None:
-                release_data["verdict"] = release_verdict(
-                    environment, category=package.category, dependencies=release.dependencies
-                )
-            releases = self._release_verdicts(service, package, environment)
-            packages.append(
-                {
-                    "id": package.id,
-                    "name": package.name,
-                    "display_name": dict(package.display_name),
-                    "description": dict(package.description),
-                    "authors": list(package.authors),
-                    "repository": package.repository,
-                    "repository_url": f"https://github.com/{package.repository}",
-                    "license": package.license,
-                    "kind": package.kind,
-                    "category": package.category,
-                    "tags": list(package.tags),
-                    "dependencies": [dict(item) for item in package.dependencies],
-                    "recommendations": list(package.recommendations),
-                    "featured": package.featured,
-                    # 兼容性那一行的轴名要按供给关系反查：能力 id 常常不是包 id（`bepinex.bepinex`
-                    # 由 `bepinex.bepinex-be` 供给），界面只拿到包就认不出这根轴。
-                    "provides": dict(package.provides),
-                    "install_target": self._install_target(releases, release_data),
-                    "release": release_data,
-                    "releases": releases,
-                    "install_assets": [asset.name for asset in selected_assets],
-                    "installed": self._installed_entry(records.get(package.id)),
-                }
-            )
+            issues = list(package.issues)
+            try:
+                entry = self._package_entry(service, package, latest, environment, records)
+            except Exception as exc:  # 单条读数的任何毛病都不许拖垮整页目录
+                LOGGER.warning("catalog entry failed package=%s error=%s", package.id, exc)
+                entry = self._unavailable_entry(package)
+                issues.append(f"catalog entry failed: {exc}")
+            entry["issues"] = issues
+            entry["available"] = not issues
+            packages.append(entry)
         # 目录读数按发布版本从新到旧给：版本高低由后端一处排（`domain.semver`），界面照这份次序摆，
         # 不再自己比版本。同版本的按 id，读数才稳定。
         packages.sort(key=lambda package: str(package["id"]))
         packages.sort(key=_release_order_key, reverse=True)
         return packages
+
+    def _package_entry(
+            self,
+            service: ModManagerService,
+            package: RegistryPackage,
+            latest: dict[str, ReleaseInfo | None],
+            environment: CapabilityEnvironment,
+            records: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        release = latest.get(package.id)
+        selected_assets = (
+            service.github.install_assets(package, release)
+            if release is not None
+            else ()
+        )
+        release_data = _release_data(release)
+        if release_data is not None:
+            release_data["verdict"] = release_verdict(
+                environment, category=package.category, dependencies=release.dependencies
+            )
+        releases = self._release_verdicts(service, package, environment)
+        return {
+            "id": package.id,
+            "name": package.name,
+            "display_name": dict(package.display_name),
+            "description": dict(package.description),
+            "authors": list(package.authors),
+            "repository": package.repository,
+            "repository_url": f"https://github.com/{package.repository}",
+            "license": package.license,
+            "kind": package.kind,
+            "category": package.category,
+            "tags": list(package.tags),
+            "dependencies": [dict(item) for item in package.dependencies],
+            "recommendations": list(package.recommendations),
+            "featured": package.featured,
+            # 兼容性那一行的轴名要按供给关系反查：能力 id 常常不是包 id（`bepinex.bepinex`
+            # 由 `bepinex.bepinex-be` 供给），界面只拿到包就认不出这根轴。
+            "provides": dict(package.provides),
+            "install_target": self._install_target(releases, release_data),
+            "release": release_data,
+            "releases": releases,
+            "install_assets": [asset.name for asset in selected_assets],
+            "installed": self._installed_entry(records.get(package.id)),
+        }
+
+    @staticmethod
+    def _unavailable_entry(package: RegistryPackage) -> dict[str, Any]:
+        """一条读不出目录读数的条目：仍列出来，拿不到的字段给空值，原因由调用方补进 `issues`。"""
+        return {
+            "id": package.id,
+            "name": package.name,
+            "display_name": dict(package.display_name),
+            "description": dict(package.description),
+            "authors": list(package.authors),
+            "repository": package.repository,
+            "repository_url": f"https://github.com/{package.repository}",
+            "license": package.license,
+            "kind": package.kind,
+            "category": package.category,
+            "tags": list(package.tags),
+            "dependencies": [dict(item) for item in package.dependencies],
+            "recommendations": [],
+            "featured": False,
+            "provides": {},
+            "install_target": "",
+            "release": None,
+            "releases": [],
+            "install_assets": [],
+            "installed": None,
+        }
 
     @staticmethod
     def _install_target(
@@ -271,15 +314,19 @@ class CatalogController(ApiController):
         target = service or self.service
         records = self._installed(target) if installed is None else installed
         environment = self._environment()
-        return [
-            {
-                "id": package_id,
-                **(self._installed_entry(info) or {}),
-                **(self._package_shape(target, package_id, info)),
-                **(self._update_info(target, package_id, info, environment)),
-            }
-            for package_id, info in sorted(records.items())
-        ]
+        entries: list[dict[str, Any]] = []
+        for package_id, info in sorted(records.items()):
+            entry: dict[str, Any] = {"id": package_id, **(self._installed_entry(info) or {})}
+            try:
+                entry.update(self._package_shape(target, package_id, info))
+                entry.update(self._update_info(target, package_id, info, environment))
+                entry["issues"] = []
+            except Exception as exc:  # 一条记录的任何毛病都不许废掉整页已安装读数
+                LOGGER.warning("installed entry failed package=%s error=%s", package_id, exc)
+                entry["issues"] = [f"installed entry failed: {exc}"]
+            entry["available"] = not entry["issues"]
+            entries.append(entry)
+        return entries
 
     def _update_info(
             self,
@@ -381,7 +428,6 @@ class CatalogController(ApiController):
             snapshot = self._snapshot(service)
             return self._success(
                 installed=self._installed_data(service, installed=snapshot["installed"]),
-                unrecognized=self._unrecognized_mods(service, local=snapshot["local"]),
                 local_mods=snapshot["local"]["mods"],
                 local_summary=snapshot["local"]["summary"],
                 has_any_mods=self._has_any_mods(snapshot["local"]),
@@ -392,8 +438,8 @@ class CatalogController(ApiController):
     def adopt_existing(self) -> dict[str, Any]:
         """把磁盘上已存在、且能对上 Registry 的模组与加载器登记进安装记录。
 
-        模组会访问 GitHub Release 挑出该记的发布版本；磁盘上检测到、记录里没有的加载器只查索引
-        自带的发布数据。登记后它们和普通安装的没有区别。
+        版本、资产与摘要都取自索引自带的发布记录（`package.releases`），所以这一步不访问 GitHub；
+        磁盘上检测到、记录里没有的加载器同理。登记后它们和普通安装的没有区别。
         `changed` 只表示这次有没有改动安装记录；读数照旧由数据层重算并推送。
         """
         try:
@@ -685,18 +731,28 @@ class CatalogController(ApiController):
         }
         registry = service.registry if service is not None else None
         packages = registry.packages if registry is not None else ()
-        local = scan_local_mods(
-            game_path,
-            managed,
-            packages,
-            installed=tuple(records),
-            capabilities=self._capabilities(service),
-            compute_hashes=hashes,
-        )
+        try:
+            local = scan_local_mods(
+                game_path,
+                managed,
+                packages,
+                installed=tuple(records),
+                capabilities=self._capabilities(service),
+                compute_hashes=hashes,
+            )
+        except Exception as exc:  # 扫描整体失败也要给出一张空表，别让这一页没有读数
+            LOGGER.warning("local mod scan failed error=%s", exc)
+            return {"mods": [], "summary": summarize([])}
         # 扫描自己已经落盘缓存（`scan_local_mods` 末尾 flush）；这里再兜一次，覆盖"同一请求里先认领、
         # 后扫描"的顺序问题——认领也会新增缓存条目。
         flush_metadata_cache()
-        return {"mods": [mod.as_dict() for mod in local], "summary": summarize(local)}
+        mods: list[dict[str, Any]] = []
+        for mod in local:
+            try:
+                mods.append(mod.as_dict())
+            except Exception as exc:  # 一个条目的读数坏掉只跳过它自己
+                LOGGER.warning("local mod entry failed path=%s error=%s", getattr(mod, "path", "?"), exc)
+        return {"mods": mods, "summary": summarize(local)}
 
     def _adopt_existing(self, service: ModManagerService) -> list[dict[str, Any]]:
         value = effective_game_path(self.config)
@@ -759,24 +815,6 @@ class CatalogController(ApiController):
             ):
                 return True
         return False
-
-    def _unrecognized_mods(
-            self,
-            service: ModManagerService,
-            *,
-            local: dict[str, Any] | None = None,
-    ) -> list[dict[str, str]]:
-        """磁盘上存在、但没有安装记录归属的 DLL（含 Plugins、含被禁用的条目）。
-
-        返回 ``{"name", "path"}``；完整身份信息见 ``local_mods``。
-        """
-        snapshot = local if local is not None else self._local_mods_payload(service)
-        mods = snapshot["mods"]
-        return [
-            {"name": str(mod["name"]), "path": str(mod["path"])}
-            for mod in mods
-            if not mod["installed_package_id"]
-        ]
 
     def get_package_readme(self, package_id: str, refresh: bool = False) -> dict[str, Any]:
         try:

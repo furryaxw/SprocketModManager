@@ -403,6 +403,7 @@ function renderDetail() {
     // 事实、依赖/推荐、兼容性共用一个 <dl>：一行一项，标签就是分组标题。
     const block = document.createElement("dl");
     block.className = "detail-block";
+    if (pkg.issues?.length) appendFact(block, tr("dataIssuesLabel"), pkg.issues.join("; "));
     appendFact(block, tr("license"), pkg.license || tr("none"));
     appendFact(block, tr("categoryLabel"), categoryText(pkg.category));
     appendFact(block, tr("assets"), (pkg.install_assets || []).join(", ") || tr("none"));

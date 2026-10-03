@@ -187,11 +187,6 @@ class ReadingAgreementTests(unittest.TestCase):
             [item["id"] for item in (api.data.get("installed") or {}).get("installed", [])],
             "禁用不许把归属弄丢（应该仍然是一条已安装记录）",
         )
-        self.assertEqual(
-            [item["path"] for item in (api.data.get("installed") or {}).get("unrecognized", [])],
-            [],
-            "它有归属，不许同时出现在未识别里",
-        )
 
         enabled = api.toggle_mod("Mods/FixtureMod.dll.disable", True)
         self.assertTrue(enabled["ok"], enabled)

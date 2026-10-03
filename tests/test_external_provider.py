@@ -117,10 +117,14 @@ class ExternalSourceRuleTests(unittest.TestCase):
         mod = package(MOD, install_type="melonloader:mod")
         mod = replace(mod, release=dict(self.EXTERNAL), releases=(release("2.0.0"),))
 
-        with self.assertRaisesRegex(
-            RegistryError, "only a modloader may declare an external release source"
-        ):
-            Registry([loader, mod])
+        registry = Registry([loader, mod])
+
+        self.assertTrue(registry.has_package(NATIVE))
+        self.assertFalse(registry.has_package(MOD))
+        marked = next(item for item in registry.packages if item.id == MOD)
+        self.assertIn(
+            "only a modloader may declare an external release source", marked.issues
+        )
 
     def test_a_modloader_can_declare_an_external_source(self) -> None:
         loader = package(NATIVE, supply=NATIVE_SUPPLY, kind="modloader")

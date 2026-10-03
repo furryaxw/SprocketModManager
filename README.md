@@ -5,7 +5,7 @@
 Sprocket 模组注册表、GitHub Pages 目录与 Windows GUI 客户端。
 
 仓库只人工维护模组级基础 meta。GitHub Actions 每小时从每个模组仓库读取一次 Release，
-把规范化的版本、tag 与资产写入 Pages `index.json`；网页和默认客户端不直接消耗匿名
+把规范化的版本、tag 与资产写入 Pages 的 `data/packages.json`；网页和默认客户端不直接消耗匿名
 GitHub API 配额。二进制仍始终来自模组自己的 GitHub Release。客户端使用快照求解依赖、
 验证可用的发布者 SHA-256、按安装规则与 PE 元数据判断文件类型，再将文件事务式安装到供给
 该类型的加载器声明的目录（`{Sprocket}/Mods`、`{Sprocket}/BepInEx/plugins` 等）。
@@ -93,18 +93,19 @@ GitHub 渲染结果并在本地净化后显示。安装确认页会列出 Regist
 加载目录和刷新“已安装”页面时，客户端会扫描活跃运行时标识符的目录中尚未受控的 DLL。
 只有文件名、静态安装目标和 GitHub Release 提供的 SHA-256 完全匹配且结果唯一时才会自动接管；
 未知、本地修改、缺少摘要或存在多重匹配的文件保持不受控。接管后的模组可以正常更新和卸载；
-其余 DLL 会在“已安装”页显示为“无法识别”，只提供文件名和路径，不能更新或卸载。
+其余 DLL 在“已安装”页标为“仅本地”，只显示文件名和路径，不能更新或卸载。
 
 CLI 使用本地 Registry：
 
 ```powershell
-.\.venv\Scripts\python.exe modman.py --index-file index.json packages
-.\.venv\Scripts\python.exe modman.py --index-file index.json plan furryaxw.sprocket-laser-rangefinder --scan
-.\.venv\Scripts\python.exe modman.py --index-file index.json --game-path G:\Sprocket install furryaxw.sprocket-laser-rangefinder
+.\.venv\Scripts\python.exe modman.py --index-dir site packages
+.\.venv\Scripts\python.exe modman.py --index-dir site plan furryaxw.sprocket-laser-rangefinder --scan
+.\.venv\Scripts\python.exe modman.py --index-dir site --game-path G:\Sprocket install furryaxw.sprocket-laser-rangefinder
 ```
 
 CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
-`https://sprocketmods.furryaxw.top/index.json`。
+`https://sprocketmods.furryaxw.top/data`，下面分 `packages.json`、`environment.json` 与
+`diagnosis.json` 三份文件。
 
 ## 卸载
 
@@ -121,8 +122,8 @@ CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods --offline
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json --fetch-releases
+.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site
+.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site --fetch-releases
 ```
 
 在线校验仅调用 GitHub API；它不会克隆、构建或执行第三方模组代码。

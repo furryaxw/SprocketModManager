@@ -51,15 +51,24 @@ class CliLocalModsTests(unittest.TestCase):
         (game / "Sprocket.exe").touch()
         install_melonloader(game)
         shutil.copyfile(FIXTURE_MOD, game / "Mods" / "FixtureMod.dll")
-        index = root / "index.json"
-        index.write_text(json.dumps({"schema_version": 1, "packages": []}), encoding="utf-8")
-        return game, index, root / "app"
+        data_dir = root / "registry" / "data"
+        data_dir.mkdir(parents=True)
+        (data_dir / "packages.json").write_text(
+            json.dumps({"schema_version": 1, "packages": []}), encoding="utf-8"
+        )
+        (data_dir / "environment.json").write_text(
+            json.dumps({"schema_version": 1, "game": {}, "providers": {}}), encoding="utf-8"
+        )
+        (data_dir / "diagnosis.json").write_text(
+            json.dumps({"schema_version": 1, "entries": []}), encoding="utf-8"
+        )
+        return game, data_dir, root / "app"
 
     def _run(self, app: Path, index: Path, game: Path, *argv: str) -> tuple[int, str]:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             code = modman.cli_main(
-                ["--app-dir", str(app), "--index-file", str(index), "--game-path", str(game), *argv]
+                ["--app-dir", str(app), "--index-dir", str(index), "--game-path", str(game), *argv]
             )
         return code, buffer.getvalue()
 
@@ -212,7 +221,7 @@ class CliLocalModsTests(unittest.TestCase):
                     buffer = io.StringIO()
                     with contextlib.redirect_stdout(buffer):
                         code = modman.cli_main(
-                            ["--app-dir", str(app), "--index-file", str(index), "--game-path", str(game), "disable", candidate]
+                            ["--app-dir", str(app), "--index-dir", str(index), "--game-path", str(game), "disable", candidate]
                         )
                 self.assertEqual(code, 1, candidate)
                 self.assertFalse((game.parent / "outside.dll").exists())

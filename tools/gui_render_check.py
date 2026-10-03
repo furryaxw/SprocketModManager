@@ -57,7 +57,6 @@ INSTALLED_PAYLOAD = {
             "files": ["Mods/SprocketModAPI.dll"],
         },
     ],
-    "unrecognized": [],
     "local_mods": [
         {
             "path": "Mods/SprocketLaserRangefinder.dll",
@@ -274,7 +273,7 @@ const BOOTSTRAP = {
     version: "0.0.0-headless-precheck",
     settings: {
         language: "en", debug: false, game_path: "C:\\\\Sprocket", index_url: "",
-        index_placeholder: "https://example.invalid/index.json",
+        index_placeholder: "https://example.invalid",
         proxy_enabled: false, proxy_url: "", proxy_placeholder: "http://127.0.0.1:7890",
         github_proxy_enabled: false, github_proxy_url: "", github_proxy_placeholder: "http://127.0.0.1:7890",
         text_scale: 1.0,
@@ -287,7 +286,7 @@ const METHODS = {
     verify_installed: async () => ({ok: true, checked: INSTALLED.installed.length, corrupted: ["Mods/CorruptedMod.dll"],
         missing: [], installed: INSTALLED.installed}),
     load_catalog: async () => ({ok: true, packages: CATALOG, installed: INSTALLED.installed,
-        unrecognized: INSTALLED.unrecognized, local_mods: INSTALLED.local_mods,
+        local_mods: INSTALLED.local_mods,
         local_summary: INSTALLED.local_summary, has_any_mods: true, source: "headless pre-check"}),
     get_queue: async () => ({ok: true, entries: [], close_pending: false}),
     get_modloaders: async () => ({ok: true, modloaders: MODLOADERS}),
@@ -326,7 +325,7 @@ window.tr = (key, values = {}) => {
     const table = {
         detectedMods: `${values.count} detected mods`, noInstalled: "No mods detected",
         missingDepsCount: `${values.count} missing deps`, corrupted: "Corrupted", reinstall: "Reinstall",
-        unrecognized: "Unrecognized", requested: "User-installed", dependency: "Installed dependency",
+        requested: "User-installed", dependency: "Installed dependency",
         enableMod: "Enable", disableMod: "Disable", disabledMod: "Disabled",
         requiresLabel: "Requires", missingLabel: "Missing", incompatibleLabel: "Incompatible", localOnly: "Local only",
     };

@@ -56,7 +56,6 @@ function installDataMirror() {
     const views = {
         // 「已安装」页的一整份读数：磁盘扫描优先，安装记录只用来标注归属。
         installed: () => dataValue("installed")?.installed || [],
-        unrecognized: () => dataValue("installed")?.unrecognized || [],
         localMods: () => dataValue("installed")?.local_mods || [],
         localSummary: () => dataValue("installed")?.local_summary || null,
         hasAnyMods: () => Boolean(dataValue("installed")?.has_any_mods),

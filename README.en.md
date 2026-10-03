@@ -6,7 +6,7 @@ A Sprocket mod registry, GitHub Pages catalog, and Windows GUI client.
 
 Only package-level metadata is maintained by hand. Every hour, GitHub Actions reads
 each mod repository once and writes normalized versions, tags, and assets into the
-Pages `index.json`. The website and default client therefore consume no anonymous
+Pages `data/packages.json`. The website and default client therefore consume no anonymous
 GitHub API quota for the catalog. Binaries still come directly from each mod's own
 GitHub Release. The client resolves the cached snapshot, verifies publisher-provided
 SHA-256 digests when available, derives each file's type from the install rules and PE
@@ -97,20 +97,20 @@ When the catalog loads or the Installed page refreshes, the client scans unmanag
 under the active runtime identifiers' directories. It adopts a package only when the file
 name, static install target, and GitHub Release SHA-256 all match uniquely. Unknown,
 locally modified, digest-less, or ambiguous files remain unmanaged. Adopted packages can
-be updated and removed normally; all other DLLs appear as read-only "Unrecognized" rows on
-the Installed page, showing only their file name and path with no update or removal
-action.
+be updated and removed normally; all other DLLs are marked "Local only" on the Installed
+page, showing only their file name and path with no update or removal action.
 
 Use a local Registry with the CLI:
 
 ```powershell
-.\.venv\Scripts\python.exe modman.py --index-file index.json packages
-.\.venv\Scripts\python.exe modman.py --index-file index.json plan furryaxw.sprocket-laser-rangefinder --scan
-.\.venv\Scripts\python.exe modman.py --index-file index.json --game-path G:\Sprocket install furryaxw.sprocket-laser-rangefinder
+.\.venv\Scripts\python.exe modman.py --index-dir site packages
+.\.venv\Scripts\python.exe modman.py --index-dir site plan furryaxw.sprocket-laser-rangefinder --scan
+.\.venv\Scripts\python.exe modman.py --index-dir site --game-path G:\Sprocket install furryaxw.sprocket-laser-rangefinder
 ```
 
 Global CLI options must appear before the subcommand. The default remote Registry
-is `https://sprocketmods.furryaxw.top/index.json`.
+is `https://sprocketmods.furryaxw.top/data`, holding `packages.json`, `environment.json`, and
+`diagnosis.json`.
 
 ## Uninstalling
 
@@ -129,8 +129,8 @@ files).
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods --offline
 .\.venv\Scripts\python.exe validate_registry.py --mods-dir mods
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output index.json --fetch-releases
+.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site
+.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site --fetch-releases
 ```
 
 Online validation calls only the GitHub API. It does not clone, build, or execute

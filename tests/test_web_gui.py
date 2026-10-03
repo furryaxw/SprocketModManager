@@ -326,7 +326,7 @@ class WebGuiTests(unittest.TestCase):
         self.assertEqual(result["settings"]["text_scale"], 100)
         self.assertEqual(
             result["settings"]["index_placeholder"],
-            "https://sprocketmods.furryaxw.top/index.json",
+            "https://sprocketmods.furryaxw.top/data",
         )
 
     def test_close_waits_for_running_install_then_destroys_window(self):
@@ -497,13 +497,18 @@ class WebGuiTests(unittest.TestCase):
         self.assertTrue(adopted_result["ok"])
         self.assertTrue(adopted_result["changed"], "认领成功要报告 changed")
         self.assertEqual(after["installed"][0]["id"], package.id)
+        # 每个模组只上一次屏；「仅本地」只留给既没记录、又没匹配上注册表的那个。
         self.assertEqual(
-            after["unrecognized"],
-            [{"name": "UnknownMod.dll", "path": "Mods/UnknownMod.dll"}],
+            [
+                row["path"]
+                for row in after["local_mods"]
+                if not row["installed_package_id"] and not row["registry_id"]
+            ],
+            ["Mods/UnknownMod.dll"],
         )
         self.assertEqual(unknown_content, b"unknown mod")
 
-    def test_get_installed_reports_unrecognized_userlib_without_mods(self):
+    def test_get_installed_reports_an_unowned_userlib_without_mods(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             app_dir = root / "app"
@@ -530,8 +535,12 @@ class WebGuiTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(
-            result["unrecognized"],
-            [{"name": "LocalLibrary.dll", "path": "UserLibs/LocalLibrary.dll"}],
+            [
+                row["path"]
+                for row in result["local_mods"]
+                if not row["installed_package_id"] and not row["registry_id"]
+            ],
+            ["UserLibs/LocalLibrary.dll"],
         )
         self.assertFalse(result["has_any_mods"])
 
@@ -639,9 +648,6 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn('star.textContent = "★"', javascript)
         self.assertIn('tr("starterRecommended")', javascript)
         self.assertIn("function showStarterRecommendations()", javascript)
-        self.assertIn('unrecognized: () => dataValue("installed")?.unrecognized || []', javascript)
-        self.assertIn('status.textContent = tr("unrecognized")', javascript)
-        self.assertIn("if (item.unrecognized)", javascript)
         self.assertIn('class="brand-line" aria-hidden="true"', html)
         self.assertIn('id="open-manager-directory"', html)
         self.assertIn('id="diagnosis-upload-logs"', html)

@@ -170,7 +170,13 @@ class ExistingModsAdopter:
         game_dir = self.installer.validate_game_dir(game_dir)
         state = self.installer.state_store.load()
         installed_ids = tuple(state["packages"])
-        managed_paths = {relative.casefold() for relative in state["files"]}
+        # 只有**有包主**的文件才算已管理：`unowned` 收的正是没有包主的那批，
+        # 把它们一并挡住，认领就永远看不见它们，记录也永远补不上。
+        managed_paths = {
+            relative.casefold()
+            for relative, entry in state["files"].items()
+            if entry.get("owners")
+        }
         # 扫描目录与目标目录必须来自同一处：活跃标识符的目录表，即已装供给者的 `supply`
         # 加上磁盘上检测到的运行时。加载器只在磁盘上、记录里没有时，它的供给表同样给出
         # 目录（`melonloader:mod` -> `Mods`），认领不会因为记录为空而空转。
@@ -433,10 +439,8 @@ class ExistingModsAdopter:
         资产比对 —— 对得上旧版本资产的构建照常算正常，对不上任何发布资产的构建在已安装列表里
         标成损坏。
         """
-        try:
-            releases = self.github.releases(package)
-        except (ModManagerError, OSError, ValueError):
-            return None
+        # 索引自带每个包的发布记录（版本 + 资产 + 摘要）：认领不必再问 GitHub。
+        releases = tuple(package.releases or ())
         for release in releases:
             if matches_release_version(version, release.version):
                 return release
@@ -450,10 +454,8 @@ class ExistingModsAdopter:
             digest_cache: dict[Path, str],
     ) -> tuple[_Candidate, ...]:
         candidates: list[_Candidate] = []
-        try:
-            releases = self.github.releases(package)
-        except (ModManagerError, OSError, ValueError):
-            return ()
+        # 同上：发布记录随索引下发，内容兜底也读本地那份。
+        releases = tuple(package.releases or ())
         for release in releases:
             assets = self.github.install_assets(package, release)
             if not assets or any(Path(asset.name).suffix.casefold() != ".dll" for asset in assets):

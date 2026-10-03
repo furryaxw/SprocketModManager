@@ -81,7 +81,6 @@ def payload(
     first_mod_dependencies = ["SprocketDepth"] if missing else []
     document = {
         "installed": [installed_record],
-        "unrecognized": [],
         "local_mods": [
             {
                 "path": "Mods/SprocketLaserRangefinder.dll",
