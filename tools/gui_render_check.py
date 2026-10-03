@@ -280,8 +280,53 @@ const BOOTSTRAP = {
     },
     links: {repository: "https://example.invalid", registry: "https://example.invalid"},
 };
+const SERVERS = {
+    servers: [
+        {server_id: "development-server", name: "Sprocket Developer Server",
+         url: "http://127.0.0.1:8787", status: "active", packages: []},
+        {server_id: "offline-server", name: "Offline Server",
+         url: "https://offline.invalid", status: "offline",
+         error: "cannot connect to developer server", packages: []},
+    ],
+    packages: [
+        {id: "team1.private-stub", name: "PrivateStub", schema_version: 3,
+         display_name: {en: "Private Stub", zh: "私有桩"},
+         description: {en: "stub", zh: "桩"},
+         version: "1.0.0", private: true, server_id: "development-server",
+         server_name: "Sprocket Developer Server", server_url: "http://127.0.0.1:8787",
+         category: "other", tags: [], authors: ["team1"]},
+    ],
+    github_login_expired: false,
+    github_user_id: "93119225",
+};
+
 const METHODS = {
     bootstrap: async () => BOOTSTRAP,
+    // 数据层：前端订的是它，长期显示的东西都靠这里的快照 + 之后的推送。
+    data_subscribe: async (keys) => ({
+        ok: true,
+        keys: keys || [],
+        snapshot: {
+            installed: {known: true, value: INSTALLED, revision: 1},
+            catalog: {known: true, value: {ok: true, packages: CATALOG, source: "headless pre-check"}, revision: 1},
+            servers: {known: true, value: SERVERS, revision: 1},
+            environment: {known: true, value: {
+                ok: true,
+                sprocket: {state: "ok", version: "0.2.53.2"},
+                loaders: {
+                    "lavagang.melonloader": {installed: true, version: "0.7.2", latest_version: "0.7.3", used_version: "0.7.2"},
+                    "bepinex.bepinex-be": {installed: false, version: null, latest_version: "6.0.0-be.788", used_version: "6.0.0-be.788"},
+                },
+                environment: {state: "unknown", entry: null, loader: "", table_source: "missing",
+                    sprocket: "0.2.53.2", loaders: {"lavagang.melonloader": "0.7.2"}},
+                sprocket_running: true, revision: 1,
+            }, revision: 1},
+            queue: {known: true, value: {entries: []}, revision: 1},
+            loaders: {known: true, value: {modloaders: MODLOADERS}, revision: 1},
+            diagnosis: {known: false, value: null, revision: 0},
+        },
+    }),
+    data_request: async (key) => ({ok: true, key}),
     get_installed: async () => INSTALLED,
     verify_installed: async () => ({ok: true, checked: INSTALLED.installed.length, corrupted: ["Mods/CorruptedMod.dll"],
         missing: [], installed: INSTALLED.installed}),
@@ -306,9 +351,17 @@ const METHODS = {
     get_settings: async () => ({ok: true, settings: BOOTSTRAP.settings}),
     get_manager_update: async () => ({ok: true, newer: false, page_url: ""}),
     login_status: async () => ({ok: true, logged_in: false}),
-    get_developer_servers: async () => ({ok: true, servers: []}),
+    // 读数归数据层：这条只回 ack，界面照旧按 `servers` 的推送重画。
+    get_developer_servers: async () => ({ok: true}),
     startup_trace: async () => ({ok: true}),
-    client_log: async () => ({ok: true}),
+    // 前端上报的 error/warning 走 console：预检把 Edge 的 stderr 打出来就能看到。
+    // 不往页面上写 —— 状态栏那个红点背后的日志量足以把截图拖没。
+    client_log: async (level, message) => {
+        if (String(level) === "error" || String(level) === "warning") {
+            console.log("CLIENT_LOG " + String(level) + ": " + String(message || "").slice(0, 300));
+        }
+        return {ok: true};
+    },
     find_game_path: async () => ({ok: true, path: ""}),
 };
 window.pywebview = {
@@ -373,6 +426,11 @@ def main(argv: list[str] | None = None) -> int:
         help="package id to jump to through focusPackage() before the screenshot",
     )
     parser.add_argument("--window-size", default="1400,1000")
+    parser.add_argument(
+        "--show-console",
+        action="store_true",
+        help="print Edge's console output (frontend errors land there)",
+    )
     args = parser.parse_args(argv)
 
     # Edge 按**自己的**工作目录解析 --screenshot 的相对路径，所以这里必须先转成绝对路径，
@@ -416,6 +474,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"--user-data-dir={root / 'edge-profile'}",
                 f"--window-size={args.window_size}",
                 "--virtual-time-budget=8000",
+                "--enable-logging=stderr",
+                "--v=0",
                 f"--screenshot={output}",
                 index.as_uri(),
             ],
@@ -427,6 +487,11 @@ def main(argv: list[str] | None = None) -> int:
             errors="replace",
             timeout=180,
         )
+        if args.show_console:
+            print("--- edge stdout ---")
+            print((completed.stdout or "")[-4000:])
+            print("--- edge stderr ---")
+            print((completed.stderr or "")[-6000:])
         if not output.is_file():
             print((completed.stdout or "")[-2000:], file=sys.stderr)
             print((completed.stderr or "")[-2000:], file=sys.stderr)
