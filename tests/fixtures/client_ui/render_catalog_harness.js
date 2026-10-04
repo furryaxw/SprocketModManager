@@ -217,6 +217,8 @@ const source = [
     `dataDeliver(${JSON.stringify({key: "environment", value: payload.environment || null, revision: 1})});`,
     `dataDeliver(${JSON.stringify({key: "loaders", value: {modloaders: payload.modloaders || []}, revision: 1})});`,
     `dataDeliver(${JSON.stringify({key: "catalog", value: {packages: payload.packages || [], source: payload.source || ""}, revision: 1})});`,
+    // 私有包和线上一样从 `servers` 这份读数来（`data.js` 把两个来源合成一个目录）。
+    `dataDeliver(${JSON.stringify({key: "servers", value: {servers: [], packages: payload.private_packages || []}, revision: 1})});`,
     fs.readFileSync(path.join(clientUiDir, "js", "compatibility.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "catalog.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "modloaders.js"), "utf8"),

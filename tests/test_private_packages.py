@@ -112,12 +112,34 @@ class PrivatePackageSourceTests(unittest.TestCase):
         source, _first, _second = self.source()
         source.learn("server-a", [{"id": "team1.one"}, {"id": "team1.two"}])
         source.learn("server-b", [{"id": "team2.three"}])
+        source.remember("server-a", [package("team1.one"), package("team1.two")])
+        source.remember("server-b", [package("team2.three")])
 
         source.forget("server-a")
 
         self.assertFalse(source.handles(package("team1.one")))
         self.assertFalse(source.handles(package("team1.two")))
         self.assertTrue(source.handles(package("team2.three")), "别的服务器不受牵连")
+        self.assertEqual([item.id for item in source.packages()], ["team2.three"])
+
+    def test_remembering_replaces_what_that_server_had(self) -> None:
+        """一台服务器最近一次刷新没读出包来，它上一轮那些就不算数了。"""
+        source, _first, _second = self.source()
+        source.learn("server-a", [{"id": "team1.one"}])
+        source.remember("server-a", [package("team1.one")])
+
+        source.remember("server-a", ())
+
+        self.assertEqual(source.packages(), ())
+
+    def test_every_remembered_server_hands_over_its_packages(self) -> None:
+        source, _first, _second = self.source()
+        source.remember("server-a", [package("team1.one")])
+        source.remember("server-b", [package("team2.two")])
+
+        self.assertEqual(
+            [item.id for item in source.packages()], ["team1.one", "team2.two"]
+        )
 
     def test_an_unowned_download_is_an_error_not_a_silent_skip(self) -> None:
         source, _first, _second = self.source()

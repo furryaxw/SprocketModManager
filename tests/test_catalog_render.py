@@ -373,6 +373,25 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertIn("test.translation", visible)
         self.assertNotIn("test.dep", visible, "非翻译包不进翻译列表")
 
+    def test_a_private_package_can_be_installed(self) -> None:
+        """私有服务器下发的包和索引里的包一样能装：详情页那颗「安装」不该对它们一直是灰的。"""
+        entry = {
+            **package("team1.private", [("1.0.0", "unknown")]),
+            "private": True,
+            "server_id": "test-server",
+            "server_name": "Test server",
+            "server_url": "https://mods.example.invalid",
+        }
+
+        result = self._render(private_packages=[entry], selected="team1.private")
+
+        self.assertEqual(len(result["rows"]), 1, "私有来源也列在目录里")
+        install = next(
+            node for node in _walk(result["detail"]) if node["className"] == "primary-button"
+        )
+        self.assertEqual(install["text"], "Install")
+        self.assertFalse(install["disabled"], "有可装版本就该能装")
+
     def test_the_detail_page_merges_the_facts_dependencies_and_compatibility(self) -> None:
         result = self._render(
             packages=[package(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import webbrowser
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 from urllib.parse import urlparse
 
 from .base import ApiController
@@ -49,19 +49,6 @@ from ...utilities.package_paths import validate_relative_path
 LOGGER = logging.getLogger(__name__)
 
 
-def private_installable_assets(release: ReleaseInfo) -> tuple[Any, ...]:
-    """私有包的可安装资产：服务器下发的那些归档或单个 DLL。
-
-    公开包靠 `release.assets.include` 规则从一次发布里挑文件；私有条目没有那套规则
-    （服务端把抓取规则剪掉了），照规则挑会得到空——于是每一条都显示成「无可用版本」。
-    """
-    return tuple(
-        asset
-        for asset in release.assets
-        if Path(asset.name).suffix.casefold() in {".dll", ".zip"}
-    )
-
-
 class CatalogController(ApiController):
     def catalog_payload(self, refresh: bool = False) -> dict[str, Any]:
         """重算目录读数：注册表里的包（每条 release 带判定）+ 索引来源。
@@ -98,6 +85,7 @@ class CatalogController(ApiController):
             _source_from_config(self.config),
             refresh=bool(refresh),
         )
+        self.attach_private_source(service)
         self._adopt_existing(service)
         with self._state_lock:
             self.service = service
@@ -125,7 +113,8 @@ class CatalogController(ApiController):
         environment = self._environment()
         records = self._installed(service) if installed is None else installed
         packages: list[dict[str, Any]] = []
-        for package in registry.packages:
+        # 这份读数是索引那一份：私有包由服务器那份读数列（`KEY_SERVERS`），这里再列一遍就会重复。
+        for package in registry.index_packages:
             issues = list(package.issues)
             try:
                 entry = self._package_entry(service, package, latest, environment, records)
@@ -160,7 +149,9 @@ class CatalogController(ApiController):
         for package in packages:
             try:
                 releases = target.github.releases(package, refresh=False)
-                usable = [item for item in releases if private_installable_assets(item)]
+                usable = [
+                    item for item in releases if target.github.install_assets(package, item)
+                ]
             except Exception as exc:  # 一小包读不出来不牵连别的
                 LOGGER.warning("private release lookup failed package=%s error=%s", package.id, exc)
                 latest[package.id] = None
@@ -176,7 +167,6 @@ class CatalogController(ApiController):
                     latest,
                     environment,
                     records,
-                    select_assets=lambda _package, release: private_installable_assets(release),
                 )
             except Exception as exc:  # noqa: BLE001 - 单条坏数据只让自己不可用
                 LOGGER.warning("private catalog entry failed package=%s error=%s", package.id, exc)
@@ -194,12 +184,11 @@ class CatalogController(ApiController):
             latest: dict[str, ReleaseInfo | None],
             environment: CapabilityEnvironment,
             records: dict[str, dict[str, Any]],
-            *,
-            select_assets: Callable[[RegistryPackage, ReleaseInfo], tuple[Any, ...]] | None = None,
     ) -> dict[str, Any]:
         release = latest.get(package.id)
-        chooser = select_assets or service.github.install_assets
-        selected_assets = chooser(package, release) if release is not None else ()
+        selected_assets = (
+            service.github.install_assets(package, release) if release is not None else ()
+        )
         release_data = _release_data(release)
         if release_data is not None:
             release_data["verdict"] = release_verdict(

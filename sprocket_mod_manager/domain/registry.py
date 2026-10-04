@@ -26,39 +26,50 @@ class Registry:
             game_id: str = DEFAULT_GAME_CAPABILITY,
             game_name: str = "",
             diagnosis: dict[str, Any] | None = None,
+            *,
+            server_packages: Iterable[RegistryPackage] = (),
     ):
         self.game_id = str(game_id)
         self.game_name = str(game_name)
         self.provider_table = providers_table(provider_table)
         self.diagnosis = diagnosis_pack(diagnosis)
+        # 索引带来的那些包。私有包是整批换的（见 `merged_with`），所以这份底子要留着。
+        self._index_packages = tuple(packages)
+        # 开发者服务器下发的包：二进制来自那台服务器而不是各自的 GitHub Releases。
+        sourced = tuple(server_packages)
+        combined = [*packages, *sourced]
+        first_sourced = len(packages)
 
         # 逐包校验：一条坏数据只让它自己标成不可用 —— 目录照常列出它并说明原因，
         # 别的包、供给表与能力表都不受牵连。
-        problems: list[list[str]] = [list(package.issues) for package in packages]
+        problems: list[list[str]] = [list(package.issues) for package in combined]
         clean_indexes: list[int] = []
-        for index, package in enumerate(packages):
-            problems[index].extend(self._source_problems(package) + self._supply_problems(package))
+        for index, package in enumerate(combined):
+            problems[index].extend(
+                self._source_problems(package, server_sourced=index >= first_sourced)
+                + self._supply_problems(package)
+            )
             if not problems[index]:
                 clean_indexes.append(index)
 
-        clean = [packages[index] for index in clean_indexes]
+        clean = [combined[index] for index in clean_indexes]
         self._suppliers = self._build_suppliers(clean)
         supplied_types = set(self._suppliers)
         for index in clean_indexes:
-            for file_type in packages[index].declared_types():
+            for file_type in combined[index].declared_types():
                 if not self._type_is_supplied(file_type, supplied_types):
                     problems[index].append(
                         f"install file type is not supplied by any modloader: {file_type}"
                     )
 
         self._capabilities = self._build_capabilities(
-            [packages[index] for index in clean_indexes if not problems[index]]
+            [combined[index] for index in clean_indexes if not problems[index]]
         )
         seen_ids: set[str] = set()
         for index in clean_indexes:
             if problems[index]:
                 continue
-            package_id = packages[index].id
+            package_id = combined[index].id
             if package_id in seen_ids:
                 problems[index].append(f"duplicate package id: {package_id}")
                 continue
@@ -66,7 +77,7 @@ class Registry:
 
         self.packages = tuple(
             replace(package, issues=tuple(dict.fromkeys(found))) if found else package
-            for package, found in zip(packages, problems)
+            for package, found in zip(combined, problems)
         )
         # 只有没有问题的包能被按 id 找到：坏条目在目录里看得见，但解析不到、装不了。
         # 依赖/推荐指向没注册的 id 不在这儿判 —— 那是求解器与界面的事（缺失依赖照常显示）。
@@ -75,12 +86,13 @@ class Registry:
         }
 
     @staticmethod
-    def _source_problems(package: RegistryPackage) -> list[str]:
+    def _source_problems(package: RegistryPackage, *, server_sourced: bool = False) -> list[str]:
         """这个包的二进制来源是否自洽。
 
         外部来源没有可以查询的 API，所以版本与资产只能由注册表条目自己给出；主机白名单
-        保证下载地址不会漂到任意站点。只有基础运行时可以声明外部来源：安装类型目录由加载器的
-        供给表定义，模组的二进制始终来自它自己的 GitHub Releases。
+        保证下载地址不会漂到任意站点。基础运行时之外的包只允许从它自己的 GitHub Releases 出货，
+        唯一的例外是开发者服务器下发的包（`server_sourced`）：那台服务器的条目本来就不在 GitHub 上，
+        二进制由它自己分发，客户端按指纹确认过身份、下载时再核对它声明的下行主机。
         """
         problems: list[str] = []
         source = package.source
@@ -94,7 +106,7 @@ class Registry:
         if source_type != "external":
             problems.append(f"unknown release source type: {source_type}")
             return problems
-        if not package.is_modloader:
+        if not package.is_modloader and not server_sourced:
             problems.append("only a modloader may declare an external release source")
         if not package.asset_hosts():
             problems.append("external release source needs at least one allowed host")
@@ -265,6 +277,32 @@ class Registry:
         return cls(
             packages, data.get("providers"), game_id, game_name, diagnosis=data.get("diagnosis")
         )
+
+    @property
+    def index_packages(self) -> tuple[RegistryPackage, ...]:
+        """索引带来的那些包；开发者服务器下发的那些不在其中。
+
+        只列一个来源的读数要这一份：私有包有服务器那份读数（`KEY_SERVERS`），跟着 `packages`
+        一起列出来，同一个模组就会在目录里出现两次。
+        """
+        return self.packages[: len(self._index_packages)]
+
+    def merged_with(self, packages: Iterable[RegistryPackage]) -> Registry:
+        """换成这批**开发者服务器下发的**包：结果里索引那些包照旧，只有这批是新的。
+
+        那批包不在索引里，界面却把它们和索引一起列出来；解析、安装、卸载因此也要能按 id 找到
+        它们，否则私有包永远停在「看得见、装不了」。每次都给全量 —— 一台服务器掉线，它上一轮
+        那些包就该跟着消失。供给表与诊断规则包是索引的事实，原样带过去。
+        """
+        merged = Registry(
+            list(self._index_packages),
+            game_id=self.game_id,
+            game_name=self.game_name,
+            server_packages=tuple(packages),
+        )
+        merged.provider_table = self.provider_table
+        merged.diagnosis = self.diagnosis
+        return merged
 
     def get(self, package_id: str) -> RegistryPackage:
         try:

@@ -369,6 +369,18 @@ class ClientApi:
                 effective_github_proxy_url(self.config),
             )
 
+    def attach_private_source(self, service: ModManagerService | None) -> None:
+        """把本机的私有来源挂到这份 service 上：下载口，以及它下发的那些包。
+
+        私有来源是会话状态，不在索引里；读一次索引就换一份 `service`，所以每一份新 service
+        都要重挂 —— 私有载荷的取回与私有包的解析都认这一次挂载。
+        """
+        source = getattr(self, "_private_packages", None)
+        if source is None or service is None:
+            return
+        service.private_assets = source
+        service.register_private_packages(source.packages())
+
     def bind_window(self, window: Any) -> None:
         self._window = window
 

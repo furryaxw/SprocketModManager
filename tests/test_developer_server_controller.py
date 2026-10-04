@@ -11,6 +11,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from sprocket_mod_manager.domain.models import (
+    MODLOADER_KIND,
+    RegistryPackage,
+    ReleaseAsset,
+    ReleaseInfo,
+)
+from sprocket_mod_manager.domain.registry import Registry
+from sprocket_mod_manager.domain.semver import Version
 from sprocket_mod_manager.infrastructure.private_servers import (
     DeveloperServerError,
     DeveloperServerInfo,
@@ -125,6 +133,44 @@ class FakeServerClient:
 def gist_stub(*args, **kwargs):
     """默认不同步：这些用例关心的是列表维护，不是 Gist 往返。"""
     return ("", [], [])
+
+
+LOADER_ID = "test.melonloader"
+LOADER_REPOSITORY = "test/loader"
+
+
+def public_loader() -> RegistryPackage:
+    """索引里的加载器：私有模组声明 `melonloader:mod`，求解时按它推出一条隐式依赖。
+
+    发布数据内嵌，所以计划这一路不联网。
+    """
+    rule = {"match": "**", "target": "{Sprocket}", "layout": "tree"}
+    asset = ReleaseAsset(
+        1,
+        "loader.zip",
+        4,
+        f"https://github.com/{LOADER_REPOSITORY}/releases/download/v1.0.0/loader.zip",
+    )
+    return RegistryPackage(
+        id=LOADER_ID,
+        name="Loader",
+        authors=("test",),
+        repository=LOADER_REPOSITORY,
+        license="MIT",
+        display_name={"en": "Loader"},
+        description={"en": "test loader"},
+        release={"assets": {"include": ["loader.zip"], "exclude": []}},
+        dependencies=(),
+        install={"payload": [dict(rule)]},
+        category="utility",
+        tags=(),
+        kind=MODLOADER_KIND,
+        supply={"melonloader:mod": "{Sprocket}/Mods"},
+        payload_rules=(dict(rule),),
+        releases=(
+            ReleaseInfo(1, "v1.0.0", Version.parse("1.0.0"), False, "", (asset,)),
+        ),
+    )
 
 
 class DeveloperServerControllerTests(unittest.TestCase):
@@ -445,6 +491,79 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.assertEqual(package["id"], "team1.private-mod")
         self.assertFalse(package["available"])
         self.assertTrue(package["issues"], "原因要带给界面")
+
+    # ---- 私有包进安装计划 -------------------------------------------------
+
+    def connect_server_with(self, entry: dict) -> None:
+        """注册一台服务器、登录 GitHub 并让它下发这条包。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        config = self.api.config_store.load()
+        config["github_user_id"] = "12345"
+        self.api.config_store.save(config)
+        self.api.config = config
+        self.api.credentials.save("github-access-token", "github-token")
+        FakeServerClient.packages_result = [dict(entry)]
+
+    def installable_game(self) -> None:
+        game = self.root / "game"
+        (game / "Sprocket_Data").mkdir(parents=True)
+        (game / "Sprocket.exe").touch()
+        (game / "Sprocket_Data" / "globalgamemanagers").write_bytes(b"0.2.53.2")
+        config = self.api.config_store.load()
+        config["game_path"] = str(game)
+        self.api.config_store.save(config)
+        self.api.config = config
+
+    def test_a_private_package_reaches_the_install_plan(self) -> None:
+        """界面点「安装」走的就是这条路：解析得到才算装得上。"""
+        self.installable_game()
+        self.api.service.registry = Registry([public_loader()])
+        self.connect_server_with(PRIVATE_ENTRY)
+
+        self.api.servers_payload()
+        result = self.api.plan_install(["team1.private-mod"])
+
+        self.assertTrue(self.api.service.registry.has_package("team1.private-mod"))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            [item["id"] for item in result["plans"][0]["packages"]],
+            [LOADER_ID, "team1.private-mod"],
+        )
+
+    def test_the_public_catalog_does_not_list_private_packages(self) -> None:
+        """私有包只出现在服务器那份读数里：跟着索引一起列，同一个模组会出现两次。"""
+        self.installable_game()
+        self.api.service.registry = Registry([public_loader()])
+        self.connect_server_with(PRIVATE_ENTRY)
+
+        self.api.servers_payload()
+        listed = [item["id"] for item in self.api._catalog_data(self.api.service, {})]
+
+        self.assertTrue(self.api.service.registry.has_package("team1.private-mod"))
+        self.assertNotIn("team1.private-mod", listed, "目录读数只列索引里的包")
+        self.assertIn(LOADER_ID, listed)
+
+    def test_a_server_that_goes_offline_takes_its_packages_back(self) -> None:
+        """一台服务器掉线，它上一轮那些包就不该再解析得到。"""
+        self.installable_game()
+        self.api.service.registry = Registry([public_loader()])
+        self.connect_server_with(PRIVATE_ENTRY)
+        self.api.servers_payload()
+        self.assertTrue(self.api.service.registry.has_package("team1.private-mod"))
+
+        class Offline(FakeServerClient):
+            def packages(self):
+                raise DeveloperServerError("cannot connect", unreachable=True)
+
+        with patch.object(
+            module.DeveloperServerController,
+            "_connected_client",
+            lambda self, entry: Offline("https://mods.example.invalid"),
+        ):
+            self.api.servers_payload()
+
+        self.assertFalse(self.api.service.registry.has_package("team1.private-mod"))
+        self.assertFalse(self.api.plan_install(["team1.private-mod"])["ok"])
 
     # ---- remove -----------------------------------------------------------
 
