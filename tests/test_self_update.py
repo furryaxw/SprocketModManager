@@ -302,14 +302,25 @@ class FrozenModeTests(unittest.TestCase):
             self.assertIsNone(self_update.frozen_executable())
             self.assertFalse(self_update.can_self_update())
 
-    def test_a_packaged_build_points_at_its_own_executable(self) -> None:
-        with patch.object(sys, "frozen", True, create=True), patch.object(
-            sys, "executable", r"C:\tools\SprocketModManager.exe"
+    def test_a_packaged_windows_build_points_at_its_own_executable(self) -> None:
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "platform", "win32"),
+            patch.object(sys, "executable", r"C:\tools\SprocketModManager.exe"),
         ):
             self.assertEqual(
                 self_update.frozen_executable(), Path(r"C:\tools\SprocketModManager.exe")
             )
             self.assertTrue(self_update.can_self_update())
+
+    def test_a_packaged_build_without_a_windows_release_cannot_self_update(self) -> None:
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "platform", "linux"),
+            patch.object(sys, "executable", "/opt/sprocket/SprocketModManager"),
+        ):
+            self.assertIsNone(self_update.updatable_executable())
+            self.assertFalse(self_update.can_self_update())
 
 
 if __name__ == "__main__":

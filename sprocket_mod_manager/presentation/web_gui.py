@@ -59,10 +59,10 @@ from ..infrastructure.log_upload import upload_log_file
 from ..infrastructure.self_update import (
     can_self_update,
     download_update,
-    frozen_executable,
     launch_self_update,
     staged_executable,
     update_from_release,
+    updatable_executable,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -768,10 +768,10 @@ class ClientApi:
     def apply_manager_update(self) -> dict[str, Any]:
         """下载新版并交给换壳子进程，随后关窗口退出，让新版本替换掉正在运行的自己。"""
         try:
-            current = frozen_executable()
+            current = updatable_executable()
             if current is None:
                 return self._failure(
-                    RuntimeError("self-update needs the packaged single-file build"),
+                    RuntimeError("self-update needs the packaged Windows build"),
                     code="self_update_unavailable",
                 )
             service = self._current_service()
