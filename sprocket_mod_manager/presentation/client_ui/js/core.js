@@ -141,14 +141,29 @@ function applyTranslations() {
 }
 
 /**
+ * 后端桥通了没有。
+ *
+ * Qt 的 QWebChannel 是异步挂上的：方法壳先出现、通道后到。pywebview 在这中间只等 100ms，
+ * 之后那次调用会在它自己的 setTimeout 里抛 `Cannot read properties of undefined`，而交回
+ * 给我们的 promise 永远不落地 —— 所以光看方法在不在不够，还要等通道本身。WebView2 与测试
+ * 桩没有这一层，按平台名放行。
+ */
+function bridgeReady() {
+    if (window.pywebview?.platform === "qtwebengine") {
+        return Boolean(window.pywebview._QWebChannel);
+    }
+    return true;
+}
+
+/**
  * 调后端。
  *
  * WebView2 有时候先注入 `pywebview.api` 这个空壳、再把方法挂上（启动时就是这样），
- * 所以方法暂时不存在要**等一会儿**，别把它当成「接口没了」直接抛。
+ * 所以方法和通道都还没就绪时要**等一会儿**，别把它当成「接口没了」直接抛。
  */
 async function callApi(method, ...args) {
-    const deadline = Date.now() + 2000;
-    while (!window.pywebview?.api?.[method]) {
+    const deadline = Date.now() + 5000;
+    while (!bridgeReady() || !window.pywebview?.api?.[method]) {
         if (Date.now() >= deadline) throw new Error(`API unavailable: ${method}`);
         await new Promise((resolve) => window.setTimeout(resolve, 50));
     }
@@ -167,13 +182,14 @@ async function callApi(method, ...args) {
 
 /** 启动期的诊断打点：只写日志，绝不因为它让启动失败。 */
 function traceStartup(message) {
+    if (!bridgeReady()) return;
     void Promise.resolve()
         .then(() => window.pywebview?.api?.startup_trace?.(String(message)))
         .catch(() => {});
 }
 
 function reportClientLog(level, message) {
-    if (!window.pywebview?.api?.client_log) return;
+    if (!bridgeReady() || !window.pywebview?.api?.client_log) return;
     void window.pywebview.api.client_log(level, String(message)).catch(() => {
     });
 }
