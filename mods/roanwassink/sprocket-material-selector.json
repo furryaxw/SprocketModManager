@@ -1,0 +1,51 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "roanwassink.sprocket-material-selector",
+  "name": "SprocketMaterialSelector",
+  "authors": ["RoanWassink"],
+  "repository": "RoanWassink/SprocketMaterialSelector",
+  "license": "MIT",
+  "display_name": {
+    "en": "Sprocket Armour Material Selector",
+    "zh": "Sprocket 装甲材料选择器"
+  },
+  "description": {
+    "en": "Adds an armour material dropdown to the plate structure editor, reading custom material JSON files from StreamingAssets/Technology. Runtime cost floors are calculated from protection per millimetre and per kilogram; requests below the floor are raised to it.",
+    "zh": "在板件结构编辑器里加入装甲材料下拉菜单，读取 StreamingAssets/Technology 下的自定义材料 JSON。运行时成本下限按每毫米与每千克防护计算，低于下限的取值会被抬到下限。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketMaterialSelector.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    },
+    {
+      "id": "hans21223.sprocket-mod-loader",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "bepinex:plugin"
+      }
+    ],
+    "scan_dlls": false,
+    "exclude": []
+  },
+  "category": "utility",
+  "tags": ["materials", "armour", "editor", "bepinex"]
+}
