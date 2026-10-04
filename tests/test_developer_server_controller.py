@@ -74,10 +74,15 @@ def server_info(*, signed: bool = True) -> DeveloperServerInfo:
 
 
 class FakeServerClient:
-    """一台假服务器。`expired_sessions` 模拟服务端那边已经失效的会话。"""
+    """一台假服务器。`expired_sessions` 模拟服务端那边已经失效的会话；
+    `rejected_tokens` / `forbidden_tokens` 模拟服务器把 GitHub 令牌送去 GitHub 之后被拒的那两种码。"""
 
     expired_sessions: set[str] = set()
     packages_result: list[dict] = []
+    # GitHub 判这张访问令牌无效（401）；`github_token_rejected`。
+    rejected_tokens: set[str] = set()
+    # GitHub 限流或 scope 不足（403）；`github_token_forbidden`。
+    forbidden_tokens: set[str] = set()
 
     def __init__(self, url, *, session_token="", trusted_signing_identity=None):
         self.url = url
@@ -89,6 +94,18 @@ class FakeServerClient:
         return server_info()
 
     def exchange_github_token(self, access_token):
+        if access_token in self.rejected_tokens:
+            raise DeveloperServerError(
+                "GitHub rejected the access token (check token validity and permissions)",
+                status=401,
+                code="github_token_rejected",
+            )
+        if access_token in self.forbidden_tokens:
+            raise DeveloperServerError(
+                "GitHub rejected the access token (check token validity and permissions)",
+                status=403,
+                code="github_token_forbidden",
+            )
         return {"token": "session-token"}
 
     def packages(self):
@@ -117,6 +134,8 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.addCleanup(self._temporary.cleanup)
         FakeServerClient.expired_sessions = set()
         FakeServerClient.packages_result = []
+        FakeServerClient.rejected_tokens = set()
+        FakeServerClient.forbidden_tokens = set()
         self._patches = [
             patch.object(module, "DeveloperServerClient", FakeServerClient),
             patch.object(module, "github_gist_sync", gist_stub),
@@ -129,6 +148,9 @@ class DeveloperServerControllerTests(unittest.TestCase):
 
     def servers(self) -> list[dict]:
         return self.api.config_store.load().get("developer_servers") or []
+
+    def credential_file(self, name: str) -> Path:
+        return self.root / "credentials" / f"{name}.bin"
 
     # ---- add --------------------------------------------------------------
 
@@ -289,6 +311,79 @@ class DeveloperServerControllerTests(unittest.TestCase):
 
         self.assertEqual(payload["servers"][0]["status"], "reauth_required")
 
+    def test_a_github_token_github_rejects_is_replaced_by_the_refresh_token(self) -> None:
+        """服务器答 `github_token_rejected`：先拿刷新令牌换一张，再换会话。
+
+        刷新令牌是一次性的 —— 换回来的那一张不落盘，下一次就没得换了。
+        """
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "stale-github-token")
+        self.api.credentials.save("github-refresh-token", "refresh-token")
+        FakeServerClient.rejected_tokens = {"stale-github-token"}
+
+        with patch.object(
+                module, "github_token_refresh",
+                return_value={
+                    "access_token": "fresh-github-token",
+                    "refresh_token": "next-refresh-token",
+                },
+        ) as renew:
+            result = self.api.refresh_developer_server(SERVER_ID)
+
+        self.assertTrue(result["ok"], result)
+        renew.assert_called_once_with(module.GITHUB_OAUTH_CLIENT_ID, "refresh-token")
+        self.assertEqual(self.api.credentials.load("github-access-token"), "fresh-github-token")
+        self.assertEqual(
+            self.api.credentials.load("github-refresh-token"), "next-refresh-token",
+            "刷新令牌只能用一次：换回来的那张必须落盘",
+        )
+        self.assertEqual(self.api.credentials.load(SERVER_ID), "session-token")
+
+    def test_a_dead_refresh_token_asks_for_a_new_login(self) -> None:
+        """刷新令牌也换不出新的来：报「登录过期」，并把作废的两份凭据从本机撤掉。
+
+        撤掉是重点：留着的话下一次还会拿同一张死令牌去撞服务器。
+        """
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "stale-github-token")
+        self.api.credentials.save("github-refresh-token", "dead-refresh-token")
+        for name in ("github-access-token", "github-refresh-token"):
+            self.assertTrue(self.credential_file(name).is_file(), f"{name} 该先落在盘上")
+        FakeServerClient.rejected_tokens = {"stale-github-token"}
+
+        with patch.object(
+                module, "github_token_refresh",
+                side_effect=module.GitHubLoginExpired("refresh token was rejected"),
+        ):
+            result = self.api.refresh_developer_server(SERVER_ID)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "github_login_expired", "界面按这个码说「重新登录」")
+        self.assertFalse(self.credential_file("github-access-token").exists())
+        self.assertFalse(self.credential_file("github-refresh-token").exists())
+        self.assertEqual(self.api.config_store.load().get("github_user_id"), "")
+
+    def test_a_rate_limited_github_token_is_kept(self) -> None:
+        """403 是限流或 scope 不足，令牌本身可能还有效：不许像 401 那样把它删掉。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "rate-limited-github-token")
+        self.api.credentials.save("github-refresh-token", "refresh-token")
+        FakeServerClient.forbidden_tokens = {"rate-limited-github-token"}
+
+        result = self.api.refresh_developer_server(SERVER_ID)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "developer_server_refresh_failed")
+        self.assertIn("GitHub rejected the access token", result["message"])
+        self.assertEqual(self.api.credentials.load("github-access-token"), "rate-limited-github-token")
+        self.assertEqual(self.api.credentials.load("github-refresh-token"), "refresh-token")
+
     def test_a_private_package_carries_an_installable_release(self) -> None:
         """界面判「有没有可装的版本」看 `release` 与 `install_assets`。
 
@@ -383,6 +478,38 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(self.api.config_store.load().get("github_user_id"), "")
         self.assertEqual(len(self.servers()), 1, "退出登录不是注销服务器")
+
+    def test_logging_out_clears_both_github_credentials(self) -> None:
+        self.api.credentials.save("github-access-token", "github-token")
+        self.api.credentials.save("github-refresh-token", "refresh-token")
+        for name in ("github-access-token", "github-refresh-token"):
+            self.assertTrue(self.credential_file(name).is_file(), f"{name} 该先落在盘上")
+
+        self.api.logout_github()
+
+        for name in ("github-access-token", "github-refresh-token"):
+            with self.subTest(name=name):
+                self.assertFalse(self.credential_file(name).exists())
+
+    # ---- GitHub 登录 ------------------------------------------------------
+
+    def test_a_github_login_stores_the_refresh_token_the_reply_carries(self) -> None:
+        """设备流那一次回答里就有刷新令牌；只存访问令牌的话，令牌一过期就再也换不回来。"""
+        self.api._developer_server_controller._github_device = {
+            "client_id": module.GITHUB_OAUTH_CLIENT_ID,
+            "device_code": "device-code",
+            "interval": 5,
+        }
+        reply = {"access_token": "github-token", "refresh_token": "refresh-token"}
+
+        with patch.object(module, "github_device_poll", return_value=reply), patch.object(
+            module, "github_current_user", return_value={"id": 12345}
+        ):
+            result = self.api.poll_github_device_login()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self.api.credentials.load("github-access-token"), "github-token")
+        self.assertEqual(self.api.credentials.load("github-refresh-token"), "refresh-token")
 
     # ---- gist conflicts ---------------------------------------------------
 

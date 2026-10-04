@@ -22,16 +22,20 @@ from ...infrastructure.private_servers import (
     GITHUB_OAUTH_CLIENT_ID,
     DeveloperServerClient,
     DeveloperServerError,
+    GitHubLoginExpired,
     github_current_user,
     github_device_poll,
     github_device_start,
     github_gist_sync,
+    github_token_refresh,
     normalize_server_url,
 )
 
 LOGGER = logging.getLogger(__name__)
 
 GITHUB_TOKEN_NAME = "github-access-token"
+# 刷新令牌单独放一份：`github-access-token` 这个名字与格式是已发布的，不动它。
+GITHUB_REFRESH_TOKEN_NAME = "github-refresh-token"
 
 
 class DeveloperServerController(ApiController):
@@ -88,7 +92,11 @@ class DeveloperServerController(ApiController):
                 raise ValueError("GitHub did not return an access token")
             identity = github_current_user(access_token)
             self._github_device = None
-            self._remember_github_token(access_token, user_id=str(identity["id"]))
+            self._remember_github_token(
+                access_token,
+                refresh_token=str(result.get("refresh_token", "")).strip(),
+                user_id=str(identity["id"]),
+            )
             # 换了账号，恢复索引里的服务器列表可能也变了：立刻对一次。
             synced = self.sync_github_gist()
             # 已经注册的服务器要换用新账号的会话 —— 旧会话属于上一个账号。
@@ -109,16 +117,7 @@ class DeveloperServerController(ApiController):
     def logout_github(self) -> dict[str, Any]:
         """忘掉本机的 GitHub 身份：清令牌与用户号，但**不动**已注册的服务器。"""
         self._github_device = None
-        self._github_access_token = ""
-        try:
-            self.credentials.delete(GITHUB_TOKEN_NAME)
-        except (OSError, ValueError) as exc:
-            LOGGER.warning("cannot clear the stored GitHub token error=%s", exc)
-        with self._config_lock:
-            config = self.config_store.load()
-            config["github_user_id"] = ""
-            self.config = config
-            self.config_store.save(self.config)
+        self._forget_github_login()
         return self._success(logged_in=False)
 
     # ---- 恢复 Gist --------------------------------------------------------
@@ -345,7 +344,7 @@ class DeveloperServerController(ApiController):
             source.learn(target, packages)
             return self._success(server_id=target, packages=len(packages))
         except (OSError, ValueError, TypeError, DeveloperServerError) as exc:
-            return self._failure(exc, code="developer_server_refresh_failed")
+            return self._failure(exc, code=self._auth_code(exc, "developer_server_refresh_failed"))
 
     def activate_developer_server(self, server_id: str, key: str) -> dict[str, Any]:
         """用激活 Key 换取这台服务器上某个 Team 的权限分配。"""
@@ -364,7 +363,7 @@ class DeveloperServerController(ApiController):
             result = client.redeem(str(key).strip(), self._github_user_id())
             return self._success(server_id=target, team_id=result.get("team_id", ""))
         except (OSError, ValueError, TypeError, DeveloperServerError) as exc:
-            return self._failure(exc, code="developer_server_activation_failed")
+            return self._failure(exc, code=self._auth_code(exc, "developer_server_activation_failed"))
 
     def accept_developer_server_invitation(self, server_id: str, token: str) -> dict[str, Any]:
         """用邀请码加入服务器上的某个 Team；邀请码本身就是凭据。"""
@@ -383,7 +382,7 @@ class DeveloperServerController(ApiController):
             result = client.accept_invitation(str(token).strip())
             return self._success(server_id=target, team_id=result.get("team_id", ""))
         except (OSError, ValueError, TypeError, DeveloperServerError) as exc:
-            return self._failure(exc, code="developer_server_invitation_failed")
+            return self._failure(exc, code=self._auth_code(exc, "developer_server_invitation_failed"))
 
     # ---- 内部 -------------------------------------------------------------
 
@@ -452,7 +451,7 @@ class DeveloperServerController(ApiController):
             if not github_token:
                 raise ValueError("GitHub login is required before connecting to a developer server")
             client = self._trusted_client(entry)
-            value = client.exchange_github_token(github_token)
+            value = self._session_from_github(client, github_token)
             session = str(value.get("token", "")).strip()
             if not session:
                 raise ValueError("developer server did not return a session token")
@@ -462,6 +461,83 @@ class DeveloperServerController(ApiController):
             self._persist_rotation(entry, client)
         self._private_source().register(server_id, client)
         return client
+
+    def _session_from_github(
+            self, client: DeveloperServerClient, github_token: str
+    ) -> dict[str, Any]:
+        """用 GitHub 令牌换一份服务器会话；GitHub 自己判它无效时先换一张再试一次。
+
+        `github_token_rejected` 是 GitHub 说这张访问令牌不认 —— 本机存着的已经作废，
+        再送几次也只会拿到同一句。`github_token_forbidden`（限流、scope 不足）另说：
+        令牌本身可能还有效，照原样报出去，存着的东西一个都不动。
+        """
+        try:
+            return client.exchange_github_token(github_token)
+        except DeveloperServerError as exc:
+            if exc.code != "github_token_rejected":
+                raise
+        return client.exchange_github_token(self._renew_github_token())
+
+    def _renew_github_token(self) -> str:
+        """拿刷新令牌换一张访问令牌；没有可用的刷新令牌就只能重新登录。
+
+        刷新令牌是一次性的，换回来的那一张必须落盘 —— 落不下等于把这次刷新丢了。
+        """
+        refresh_token = self._github_refresh_token()
+        if not refresh_token:
+            self._forget_github_login()
+            raise GitHubLoginExpired("GitHub login is no longer usable; sign in to GitHub again")
+        try:
+            value = github_token_refresh(GITHUB_OAUTH_CLIENT_ID, refresh_token)
+        except GitHubLoginExpired:
+            self._forget_github_login()
+            raise
+        access_token = str(value.get("access_token", "")).strip()
+        self._remember_github_token(
+            access_token,
+            refresh_token=str(value.get("refresh_token", "")).strip() or refresh_token,
+            user_id=self._github_user_id(),
+        )
+        return access_token
+
+    def _github_refresh_token(self) -> str:
+        try:
+            return str(self.credentials.load(GITHUB_REFRESH_TOKEN_NAME) or "").strip()
+        except (OSError, ValueError) as exc:
+            LOGGER.warning("cannot read the stored GitHub refresh token error=%s", exc)
+            return ""
+
+    def _forget_github_login(self) -> None:
+        """撤掉本机的 GitHub 身份：两份凭据与用户号一起清。
+
+        留着 `github_user_id` 会摆出一个「已登录」的样子，而它背后已经没有令牌了。
+        """
+        self._github_access_token = ""
+        self._store_credential(GITHUB_TOKEN_NAME, "")
+        self._store_credential(GITHUB_REFRESH_TOKEN_NAME, "")
+        with self._config_lock:
+            config = self.config_store.load()
+            config["github_user_id"] = ""
+            self.config = config
+            self.config_store.save(self.config)
+
+    def _store_credential(self, name: str, value: str) -> None:
+        """写一份凭据；空值就是「这份不该在」，删掉它。
+
+        写不下只记一条日志：内存里那份这次还能用，重启后需要重新登录。
+        """
+        try:
+            if str(value).strip():
+                self.credentials.save(name, value)
+            else:
+                self.credentials.delete(name)
+        except (OSError, ValueError) as exc:
+            LOGGER.warning("cannot write the stored GitHub credential name=%s error=%s", name, exc)
+
+    @staticmethod
+    def _auth_code(exc: Exception, fallback: str) -> str:
+        """登录不能用了要报到界面认得的码上：`github_login_expired` 才有「重新登录」那句文案。"""
+        return "github_login_expired" if isinstance(exc, GitHubLoginExpired) else fallback
 
     def _reconnect_servers(self) -> list[str]:
         """给每台服务器换一份新会话；返回换成功的 server_id。
@@ -626,13 +702,16 @@ class DeveloperServerController(ApiController):
             self._github_access_token = ""
         return self._github_access_token
 
-    def _remember_github_token(self, access_token: str, *, user_id: str) -> None:
+    def _remember_github_token(
+            self, access_token: str, *, refresh_token: str, user_id: str
+    ) -> None:
+        """记下这一次登录：访问令牌与刷新令牌都进凭据库。
+
+        刷新令牌为空（OAuth App 没开令牌过期）就把上一份登录留下的那张擦掉 —— 它属于上一次登录。
+        """
         self._github_access_token = access_token
-        try:
-            self.credentials.save(GITHUB_TOKEN_NAME, access_token)
-        except (OSError, ValueError) as exc:
-            # 存不下也得能用这一次：令牌活在内存里，重启后需要重新登录。
-            LOGGER.warning("cannot store the GitHub token error=%s", exc)
+        self._store_credential(GITHUB_TOKEN_NAME, access_token)
+        self._store_credential(GITHUB_REFRESH_TOKEN_NAME, refresh_token)
         with self._config_lock:
             config = self.config_store.load()
             config["github_user_id"] = user_id
