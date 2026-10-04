@@ -20,7 +20,9 @@ class EntrypointTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertTrue(configure.call_args.kwargs["debug"])
-        run_gui.assert_called_once_with(modman.APP_VERSION, debug=True, debug_override=True)
+        run_gui.assert_called_once_with(
+            modman.APP_VERSION, debug=True, debug_override=True, disable_gpu=False, enable_gpu=False,
+        )
 
     def test_config_debug_enables_gui_without_command_line_flag(self) -> None:
         with TemporaryDirectory() as directory:
@@ -36,7 +38,23 @@ class EntrypointTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertTrue(configure.call_args.kwargs["debug"])
-        run_gui.assert_called_once_with(modman.APP_VERSION, debug=True, debug_override=False)
+        run_gui.assert_called_once_with(
+            modman.APP_VERSION, debug=True, debug_override=False, disable_gpu=False, enable_gpu=False,
+        )
+
+    def test_gpu_flags_start_the_gui_and_reach_the_desktop_host(self) -> None:
+        """这两个开关只管客户端窗口：带上它们仍然是 GUI 启动。"""
+        with (
+            patch.object(modman.sys, "argv", ["modman.py", "--disable-gpu", "--debug"]),
+            patch("modman.configure_logging"),
+            patch("sprocket_mod_manager.presentation.webview_app.run_gui") as run_gui,
+        ):
+            result = modman.main()
+
+        self.assertEqual(result, 0)
+        run_gui.assert_called_once_with(
+            modman.APP_VERSION, debug=True, debug_override=True, disable_gpu=True, enable_gpu=False,
+        )
 
     def test_debug_argument_is_forwarded_to_cli(self) -> None:
         with (
