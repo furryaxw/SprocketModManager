@@ -27,6 +27,8 @@ from sprocket_mod_manager.infrastructure.self_update import (
 )
 
 APP_VERSION = "0.6.1"
+# 只影响客户端窗口的开关：带上它们仍然是 GUI 启动，不算走 CLI。
+GUI_FLAGS = ("--debug", "--disable-gpu", "--enable-gpu")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -356,9 +358,11 @@ def main() -> int:
     if argv and argv[0] == SELF_UPDATE_FLAG:
         return run_self_update_child(argv)
     debug_flag = "--debug" in argv
+    disable_gpu = "--disable-gpu" in argv
+    enable_gpu = "--enable-gpu" in argv
     cli_marker = "--cli" in argv
     cli_args = [argument for argument in argv if argument != "--cli"]
-    is_cli = cli_marker or any(argument != "--debug" for argument in cli_args)
+    is_cli = cli_marker or any(argument not in GUI_FLAGS for argument in cli_args)
     app_dir = default_app_dir()
     if "--app-dir" in cli_args:
         index = cli_args.index("--app-dir")
@@ -395,7 +399,13 @@ def main() -> int:
         print(f"GUI dependencies are unavailable: {exc}", file=sys.stderr)
         return 1
     try:
-        run_gui(APP_VERSION, debug=debug, debug_override=debug_flag)
+        run_gui(
+            APP_VERSION,
+            debug=debug,
+            debug_override=debug_flag,
+            disable_gpu=disable_gpu,
+            enable_gpu=enable_gpu,
+        )
     except Exception:
         LOGGER.exception("GUI terminated with an unhandled error")
         raise
