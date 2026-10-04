@@ -43,12 +43,34 @@ def _unprotect(blob: bytes) -> bytes:
         ctypes.windll.Kernel32.LocalFree(output.pbData)
 
 
+def _seal(data: bytes) -> bytes:
+    """Windows keys the file to the account through DPAPI; elsewhere the file mode is the protection."""
+    return _protect(data) if os.name == "nt" else data
+
+
+def _unseal(blob: bytes) -> bytes:
+    return _unprotect(blob) if os.name == "nt" else blob
+
+
+def _write_private(path: Path, payload: bytes) -> None:
+    """Write so the file is 0600 from creation wherever the mode is what protects it."""
+    if os.name == "nt":
+        path.write_bytes(payload)
+        return
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(payload)
+
+
 class CredentialStore:
     """Per-name secrets for one manager installation.
 
-    Credentials live in DPAPI-encrypted files inside the application directory, so they follow
-    that directory and are removed with it. The user-level Windows vault is read as well,
-    because a token may already sit there under the same name; nothing is written back to it.
+    Credentials live in files inside the application directory, so they follow that directory and
+    are removed with it. Windows encrypts each file with the account's DPAPI key; elsewhere the
+    file is created 0600, where the mode is the whole protection.
+
+    The user-level Windows vault is read as well, because a token may already sit there under the
+    same name; nothing is written back to it.
 
     `directory` is what selects file storage. Without one the store keeps using the vault,
     which is also where every name it does not find on disk is looked up.
@@ -83,7 +105,7 @@ class CredentialStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(path.name + ".tmp")
         try:
-            temporary.write_bytes(_protect(value))
+            _write_private(temporary, _seal(value))
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -94,7 +116,7 @@ class CredentialStore:
             path = self._file(name)
             if path.is_file():
                 try:
-                    return _unprotect(path.read_bytes()).decode("utf-8")
+                    return _unseal(path.read_bytes()).decode("utf-8")
                 except (OSError, ValueError, UnicodeDecodeError):
                     pass
         return self._read_vault(self._target(name))
