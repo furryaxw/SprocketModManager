@@ -183,6 +183,7 @@ class DeveloperServerController(ApiController):
 
         既给数据层当 `KEY_SERVERS` 的刷新器，也供 `get_developer_servers` 自己调。
         单台连不上只降级它自己 —— 一台服务器离线不该让整个私有来源看起来是空的。
+        这一趟同时换掉本机认得的私有包（列表与注册表都照它）。
         """
         self.config = self.config_store.load()
         source = self._private_source()
@@ -192,10 +193,14 @@ class DeveloperServerController(ApiController):
         for entry in self._developer_server_entries():
             server_id = str(entry.get("server_id", ""))
             data: dict[str, Any] = {**entry, "status": "registered", "packages": []}
+            # 这一趟没读出包来的服务器不留上一轮那批：掉线的服务器会跳过下面整段。
+            source.remember(server_id, ())
             if identity:
                 try:
                     entries = self._server_packages(entry)
                     source.learn(server_id, entries)
+                    catalog, learned = self._catalog_entries(entries, str(entry.get("url", "")))
+                    source.remember(server_id, learned)
                     data["status"] = "active"
                     data["packages"] = [
                         {
@@ -205,7 +210,7 @@ class DeveloperServerController(ApiController):
                             "server_name": str(entry.get("name", "")),
                             "server_url": str(entry.get("url", "")),
                         }
-                        for item in self._catalog_entries(entries, str(entry.get("url", "")))
+                        for item in catalog
                     ]
                 except DeveloperServerError as exc:
                     data["status"] = (
@@ -217,6 +222,7 @@ class DeveloperServerController(ApiController):
                     data["error"] = str(exc)
             servers.append(data)
             packages.extend(data["packages"])
+        self.attach_private_source(self.service)
         return {
             "servers": servers,
             "packages": packages,
@@ -561,29 +567,32 @@ class DeveloperServerController(ApiController):
 
     @staticmethod
     def _with_private_source(item: dict[str, Any], server_url: str) -> dict[str, Any]:
-        """给私有条目补上它的来源声明。
+        """给私有条目补上它的来源声明与资产规则。
 
-        服务端把抓取规则那条 `release` 剪掉了。没有它，解析下载地址会走「必须落在 github.com」
+        服务端把抓取规则那条 `release` 剪掉了。没有来源声明，解析下载地址会走「必须落在 github.com」
         那条分支（条目带 `repository` 时），或者干脆不校验（不带时）；补上外来源与主机，
-        白名单才对得上，下载那一步的主机判定也才有依据。
+        白名单才对得上，下载那一步的主机判定也才有依据。没有资产规则，挑可安装资产的那几处
+        （解析、版本选择、安装计划）一个资产都挑不出来：服务器下发的就是能装的那几个，规则照收。
         """
         host = str(urlparse(server_url).hostname or "").strip()
         if not host:
             return item
         release = dict(item.get("release") or {})
         release["source"] = {"type": "external", "hosts": [host]}
+        release.setdefault("assets", {"include": ["*"], "exclude": []})
         return {**item, "release": release}
 
     def _catalog_entries(
             self, entries: list[dict[str, Any]], server_url: str = ""
-    ) -> list[dict[str, Any]]:
-        """把服务器下发的条目加工成**目录形状**。
+    ) -> tuple[list[dict[str, Any]], list[RegistryPackage]]:
+        """把服务器下发的条目加工成**目录形状**，并交回解析出来的包。
 
         界面判「有没有可装的版本」看的是 `release` 与 `install_assets`；把条目原样递过去，
         每一条都会显示「无可用版本」——原始条目只有 `releases`。
 
         解析不了的条目**也交出去**，带上原因：静默丢掉会让界面显示成「这台服务器上没有包」，
-        而事实是「有包，但它读不出来」。这两种情况要能分辨。
+        而事实是「有包，但它读不出来」。这两种情况要能分辨。交回的包只有解析成功的那些：
+        它们要进注册表，解析、安装、卸载才按 id 找得到。
         """
         packages: list[RegistryPackage] = []
         unreadable: list[tuple[dict[str, Any], str]] = []
@@ -604,7 +613,7 @@ class DeveloperServerController(ApiController):
             else []
         )
         catalog.extend(self._unreadable_entry(item, reason) for item, reason in unreadable)
-        return catalog
+        return catalog, packages
 
     @staticmethod
     def _unreadable_entry(item: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -674,12 +683,15 @@ class DeveloperServerController(ApiController):
             self.config_store.save(self.config)
 
     def _forget_server_runtime(self, server_id: str) -> None:
-        """这台服务器的会话与它下发的包归属一起撤掉，免得留下指向空会话的归属。"""
+        """这台服务器的会话与它下发的包一起撤掉，免得留下指向空会话的归属。"""
         try:
             self.credentials.delete(self._server_session_name(server_id))
         except (OSError, ValueError) as exc:
             LOGGER.warning("cannot clear the stored server session error=%s", exc)
-        self._private_source().forget(server_id)
+        source = getattr(self, "_private_packages", None)
+        if source is not None:
+            source.forget(server_id)
+        self.attach_private_source(self.service)
 
     def _private_source(self) -> PrivatePackageSource:
         """本机的私有包来源；第一次用到时才建，并挂到 service 上供安装计划使用。"""
@@ -687,9 +699,7 @@ class DeveloperServerController(ApiController):
         if source is None:
             source = PrivatePackageSource()
             self._private_packages = source
-        service = self.service
-        if service is not None and service.private_assets is not source:
-            service.private_assets = source
+        self.attach_private_source(self.service)
         return source
 
     def _github_token(self) -> str:

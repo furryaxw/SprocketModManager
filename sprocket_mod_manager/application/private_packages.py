@@ -1,8 +1,10 @@
-"""私有包载荷的下载口。
+"""私有包的本地索引与载荷下载口。
 
 包归属**不是猜出来的**：它就是「这次刷新是哪个服务器下发了这个包」。包 id 的第一段是 Team，
 但 Team 不告诉你服务器 —— 同一个人在两台服务器上都可能有同名 Team —— 所以归属只能来自
 下发它的那次响应。谁下发的谁负责取回，会话也就用对了。
+
+已解析出来的那些包另存一份：它们要进注册表才解析得到、装得上（`ModManagerService`）。
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ class PrivatePackageSource:
         self._clients: dict[str, DeveloperServerClient] = dict(clients or {})
         # package id → 下发它的 server id
         self._owners: dict[str, str] = {}
+        # server id → 这台服务器这次下发的包（已解析）。掉线或被移除的那台整份撤掉。
+        self._packages: dict[str, dict[str, RegistryPackage]] = {}
 
     def register(self, server_id: str, client: DeveloperServerClient) -> None:
         """交进来一台已连上的服务器：它下发的包才路由得回去，也才敢记归属。"""
@@ -40,10 +44,30 @@ class PrivatePackageSource:
             if package_id:
                 self._owners[package_id] = owner
 
+    def remember(self, server_id: str, packages: Iterable[RegistryPackage]) -> None:
+        """换成这台服务器这次能解析出来的包。空的可迭代对象就是「它这次一个都没读出来」。
+
+        与 `learn` 分开：归属要从服务器下发的原始条目上学（那是唯一知道来源的一刻），
+        而进注册表的是解析出来的包对象 —— 解析不了的条目没有包对象，也就没有可装的东西。
+        """
+        owner = str(server_id).strip()
+        if not owner:
+            return
+        self._packages[owner] = {package.id: package for package in packages}
+
+    def packages(self) -> tuple[RegistryPackage, ...]:
+        """当前认得的全部私有包（各服务器最近一次下发的那批）。"""
+        return tuple(
+            package
+            for packages in self._packages.values()
+            for package in packages.values()
+        )
+
     def forget(self, server_id: str) -> None:
-        """忘掉一台服务器：它的会话与它下发的包归属一起撤掉。"""
+        """忘掉一台服务器：它的会话、它下发的包与包归属一起撤掉。"""
         owner = str(server_id).strip()
         self._clients.pop(owner, None)
+        self._packages.pop(owner, None)
         for package_id in [key for key, value in self._owners.items() if value == owner]:
             del self._owners[package_id]
 

@@ -401,5 +401,5 @@ function packageState(pkg) {
 function packageEligible(pkg) {
     if (packageUnavailable(pkg)) return false;
     const installed = packageInstalled(pkg);
-    return Boolean(pkg.release && (pkg.install_assets || []).length && !pkg.cached && (!pkg.private || pkg.archive) && (!installed || installed.version !== pkg.release.version));
+    return Boolean(pkg.release && (pkg.install_assets || []).length && !pkg.cached && (!installed || installed.version !== pkg.release.version));
 }

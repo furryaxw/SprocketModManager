@@ -14,7 +14,7 @@ from .solver import DependencySolver
 from ..domain.compatibility import CapabilityEnvironment
 from ..domain.errors import ModManagerError, RegistryError, ScanError
 from ..infrastructure.mod_toggle import canonical_relative
-from ..domain.models import PreparedPlan, ProgressCallback, ResolutionPlan
+from ..domain.models import PreparedPlan, ProgressCallback, RegistryPackage, ResolutionPlan
 from ..domain.registry import Registry
 from ..infrastructure.defaults import default_app_dir
 from ..infrastructure.dll_metadata import cached_sha256, configure_metadata_backend
@@ -46,6 +46,8 @@ class ModManagerService:
         # 一起放在游戏目录里，AppData 里不留任何游戏相关的东西。
         self._metadata_game_dir: Path | None = None
         self.registry: Registry | None = None
+        # 开发者服务器下发的包：不在索引里，但和索引里的包一样要能按 id 解析、安装、卸载。
+        self.private_packages: tuple[RegistryPackage, ...] = ()
         # 私有包载荷的下载口：持有开发者服务器会话的一方设置它；None 表示这台机器没有私有来源。
         self.private_assets: PrivateAssetSource | None = None
         # 求解时用的能力表（界面每拿到一次 service 就刷新它）：给了就淘汰跑不了这个环境的版本；
@@ -71,13 +73,24 @@ class ModManagerService:
     def load_registry(self, source: str | Path, *, refresh: bool = False) -> Registry:
         LOGGER.info("loading registry source=%s refresh=%s", source, refresh)
         registry = self._registry_loader.load(source, refresh=refresh)
-        self.registry = registry
-        # 供给表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。
+        # 供给表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。诊断规则包同理：
+        # 它靠发索引在线更新，缓存是索引还没拉下来时的那一份。这两份缓存都只装索引里的事实 ——
+        # 私有包随服务器会话在变，下次启动可能一台都连不上，缓存里留着它们只会让读数对不上。
         write_providers_table(self.app_dir, registry.provider_table)
-        # 诊断规则包同理：它靠发索引在线更新，缓存是索引还没拉下来时的那一份。
         write_diagnosis_pack(self.app_dir, registry.diagnosis)
-        LOGGER.info("registry loaded packages=%d", len(registry.packages))
-        return registry
+        self.registry = registry.merged_with(self.private_packages)
+        LOGGER.info("registry loaded packages=%d", len(self.registry.packages))
+        return self.registry
+
+    def register_private_packages(self, packages: Iterable[RegistryPackage]) -> None:
+        """换成这批开发者服务器下发的包。
+
+        它们不随索引刷新出现或消失：连接、重取、掉线都只改这一份。索引已经读过一次就地重挂，
+        没读过就等 `load_registry` 时一起并进去。
+        """
+        self.private_packages = tuple(packages)
+        if self.registry is not None:
+            self.registry = self.registry.merged_with(self.private_packages)
 
     def _require_registry(self) -> Registry:
         if not self.registry:

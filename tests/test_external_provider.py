@@ -132,6 +132,23 @@ class ExternalSourceRuleTests(unittest.TestCase):
 
         self.assertEqual(Registry([loader]).packages, (loader,))
 
+    def test_a_server_sourced_mod_joins_the_registry(self) -> None:
+        """开发者服务器下发的模组：二进制由那台服务器分发，不是它自己的 GitHub Releases。
+
+        它走 `merged_with` 进注册表 —— 只有「从服务器来的」这条明说的入口才放宽上面那条规则，
+        索引本身照旧只让加载器声明外来源。
+        """
+        loader = package(NATIVE, supply=NATIVE_SUPPLY, kind="modloader")
+        mod = package(MOD, install_type="melonloader:mod")
+        mod = replace(mod, release=dict(self.EXTERNAL), releases=(release("2.0.0"),))
+
+        registry = Registry([loader]).merged_with([mod])
+
+        self.assertTrue(registry.has_package(MOD), "解析、安装、卸载都要按 id 找得到它")
+        self.assertEqual(registry.resolve_identifier(MOD).id, MOD)
+        self.assertEqual([item.id for item in registry.index_packages], [NATIVE])
+        self.assertEqual([item.id for item in registry.packages], [NATIVE, MOD])
+
 
 class FakeResponse:
     def __init__(self, body: bytes, final_url: str):
