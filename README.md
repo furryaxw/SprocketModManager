@@ -2,7 +2,7 @@
 
 **中文** | [English](README.en.md)
 
-Sprocket 模组注册表、GitHub Pages 目录与 Windows GUI 客户端。
+Sprocket 模组注册表、GitHub Pages 目录与 Windows/Linux 桌面客户端。
 
 仓库只人工维护模组级基础 meta。GitHub Actions 每小时从每个模组仓库读取一次 Release，
 把规范化的版本、tag 与资产写入 Pages 的 `data/packages.json`；网页和默认客户端不直接消耗匿名
@@ -107,14 +107,69 @@ CLI 全局参数必须写在子命令前。远端 Registry 默认地址为
 `https://sprocketmods.furryaxw.top/data`，下面分 `packages.json`、`environment.json` 与
 `diagnosis.json` 三份文件。
 
+## 在 Linux 上运行
+
+Linux 客户端可以从源码跑，也可以用 `build_linux.sh` 打成单文件；两种方式的数据都在
+`~/.sprocket-mod-manager`。`requirements.txt` 在 Linux 上会装上 PyQt6 与 Qt WebEngine，
+pywebview 用它们代替 WebView2：
+
+```sh
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python modman.py
+```
+
+Qt 还需要桌面发行版自带的 X11 运行库（Debian/Ubuntu 上是 `libxcb-cursor0`、`libxkbcommon-x11-0`
+这些）；裸窗口管理器或容器里可能要自己装。
+
+Qt WebEngine 默认开硬件加速。某次启动没能把窗口带起来（部分 Mesa 驱动的 GPU 路径会崩）会记在
+`~/.sprocket-mod-manager` 里，之后的启动改用软件渲染；`--disable-gpu` 让这一次走软件渲染，
+`--enable-gpu` 清掉记录再试一次硬件加速，`QTWEBENGINE_CHROMIUM_FLAGS` 仍然可以覆盖 Chromium 参数。
+日志与配置在 `~/.sprocket-mod-manager`。`--debug` 记录 `DEBUG` 并开放 Qt 的远程调试端口，但不打开
+会挡住启动的 DevTools 窗口。
+
+游戏路径从 `~/.local/share/Steam`、`~/.steam/steam` 与 Flatpak 版 Steam 目录下的游戏库中检测。
+Sprocket 通过 Proton 运行，用的是 Wine 自带的代理 DLL，会忽略游戏目录里的那一份，所以要把
+已装加载器的覆盖项加进 Sprocket 的 Steam 启动选项：
+
+```text
+WINEDLLOVERRIDES="winhttp=n,b" %command%     # BepInEx
+WINEDLLOVERRIDES="version=n,b" %command%     # MelonLoader
+```
+
+启动游戏后如果没出现加载器日志（`BepInEx/LogOutput.log`、`MelonLoader/Latest.log`），就是覆盖项没写。
+
+客户端从 `/proc` 读出游戏目录里的那个进程，游戏在跑时和 Windows 上一样会拦住安装。打开目录走
+`xdg-open`，定位文件走桌面的 `org.freedesktop.FileManager1` 服务，没有该服务时退回打开所在目录。
+凭据（GitHub 登录与私服会话）是 `~/.sprocket-mod-manager/credentials` 下的文件，创建时权限就是
+`0600`；Windows 上同一批文件由账户的 DPAPI 密钥加密。发布资产按平台分开，这里的更新检查找的是
+`SprocketModManager-linux-x64`。
+
+`build_linux.sh` 产出那份单文件构建；它和 Windows 版一样能原地换掉自己：
+
+```sh
+sh build_linux.sh
+./dist/SprocketModManager-linux-x64
+```
+
+把它放在用户可写的目录里（`~/.local/bin`、`~/Applications` 之类）：自更新做的就是替换正在运行的
+这份文件，root 拥有的安装目录会拒绝。只有单文件构建能换掉自己，源码运行只报告更新并打开发布页。
+
+用 Linux 解释器跑测试；UI 渲染相关的用例需要 `PATH` 里有 `node`：
+
+```sh
+.venv/bin/python -m unittest discover -s tests
+```
+
 ## 卸载
 
 模组、加载器与补丁包都在客户端的“已安装”页卸载；卸载按安装记录交还文件，受保护或被用户改过的
 文件保留。
 
-程序本体不写注册表、不建快捷方式，删除 `SprocketModManager.exe` 即完成卸载。管理器另有两处状态
-目录，可以按需清理：`%LOCALAPPDATA%\SprocketModManager`（配置、日志与 WebView 存储），以及
-`<游戏目录>\SprocketModManager`（安装记录、DLL 元数据缓存与被覆盖文件的备份）。
+程序本体不写注册表、不建快捷方式，删除本体（`SprocketModManager.exe`、
+`SprocketModManager-linux-x64`）即完成卸载。管理器另有两处状态目录，可以按需清理：管理器目录
+（`%LOCALAPPDATA%\SprocketModManager`、`~/.sprocket-mod-manager`；配置、日志与 WebView 存储），
+以及 `<游戏目录>/SprocketModManager`（安装记录、DLL 元数据缓存与被覆盖文件的备份）。
 
 ## 验证
 
@@ -155,10 +210,12 @@ Runtime；受支持的 Windows 和当前 Microsoft Edge 通常已预装该 Runti
 - 安装状态按游戏目录隔离；卸载不会删除已被用户修改的文件。普通安装前已存在的文件仍受保护；
   通过 Release 哈希自动接管的文件会成为受管文件，并且仅在内容未变化时允许卸载删除。
 
-模组管理器自身的更新：启动时查一次 GitHub Release（tag `v<版本>`，资产 `SprocketModManager.exe`）。
-有新版本就弹窗给两条路 —— **立即更新**把新 EXE 下载到同目录、核对 GitHub 给出的资产 SHA-256，
-再交给一个换壳子进程重启（Windows 下运行中的 EXE 不能覆盖自己，由子进程等旧进程退出后替换）；
-**暂缓**则这次会话继续用，下次启动重新问一次。源码运行或没打包成单文件时不给自更新，只把人带到发布页。
+模组管理器自身的更新：启动时查一次 GitHub Release（tag `v<版本>`），找当前平台的资产
+（`SprocketModManager.exe`、`SprocketModManager-linux-x64`）。有新版本就弹窗给两条路 ——
+**立即更新**把新构建下载到同目录、核对 GitHub 给出的资产 SHA-256，再交给一个换壳子进程替换并启动
+新构建；Windows 下运行中的 EXE 不能覆盖自己，子进程才需要等旧进程退出，Linux 上直接换掉正在运行的
+文件（旧进程继续用自己的 inode）。**暂缓**则这次会话继续用，下次启动重新问一次。源码运行或没打包成
+单文件时不给自更新，只把人带到发布页。
 
 这条链路的信任到「GitHub 的 HTTPS + GitHub 自己算的资产摘要」为止。要防到「发布账号被拿走」这一层，
 还需要固定公钥验证的更新清单或可验证的 Windows 代码签名。
