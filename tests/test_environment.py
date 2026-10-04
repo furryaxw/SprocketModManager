@@ -1177,11 +1177,13 @@ class EnvironmentUiTests(unittest.TestCase):
         )
 
     def test_the_bridge_is_waited_for_and_diagnostics_never_break_startup(self) -> None:
-        """WebView2 会先注入空壳再挂方法：启动期别把「还没有这个方法」当成接口不存在。"""
+        """WebView2 会先注入空壳再挂方法，Qt 的通道还要更晚：启动期别把「还没就绪」当成接口不存在。"""
         core = (CLIENT_UI / "js" / "core.js").read_text(encoding="utf-8")
         main = (CLIENT_UI / "js" / "main.js").read_text(encoding="utf-8")
 
-        self.assertIn("while (!window.pywebview?.api?.[method])", core)
+        self.assertIn("while (!bridgeReady() || !window.pywebview?.api?.[method])", core)
+        self.assertIn('window.pywebview?.platform === "qtwebengine"', core, "Qt 要等 QWebChannel 挂上")
+        self.assertIn("window.pywebview._QWebChannel", core)
         self.assertIn("function traceStartup(message)", core)
         self.assertIn('startup_trace?.(String(message))', core, "诊断打点允许还不存在")
         self.assertNotIn('callApi("startup_trace"', main, "打点不再走 callApi")
