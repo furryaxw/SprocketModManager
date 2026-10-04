@@ -1,0 +1,56 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "hans21223.sprocket-battle-editor",
+  "name": "SprocketBattleEditor",
+  "authors": ["Hans21223"],
+  "repository": "Hans21223/Sprocket-Battle-Editor",
+  "license": "MIT",
+  "display_name": {
+    "en": "Sprocket Battle Editor",
+    "zh": "Sprocket 战斗编辑器"
+  },
+  "description": {
+    "en": "Editor and mission framework for custom battles: place your own designs or the game's tanks and AT guns, give them paths, targets and reserves, add zones, mines, obstacles, rules and artillery, film a keyframed multi-camera cinematic, and command or take over any tank in the battle. Bundles Map Framework, which opens Ambush, The Crossroad, Silent Border and Sandbox to custom battles. Alpha.",
+    "zh": "自定义战斗的编辑器与任务框架：布置自己的载具或游戏自带的坦克与反坦克炮，为它们设置路径、目标与预备队，添加区域、地雷、障碍、规则与炮火支援，用关键帧多机位拍摄过场，并可在战斗中指挥任意坦克或接管驾驶、炮塔与火炮。内含 Map Framework，让 Ambush、The Crossroad、Silent Border 与 Sandbox 可用于自定义战斗。Alpha 阶段。"
+  },
+  "release": {
+    "include_prerelease": true,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["Sprocket-Battle-Editor*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    },
+    {
+      "id": "hans21223.sprocket-mod-loader",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "files": [
+      {
+        "match": "BepInEx/plugins/SprocketMaps/*",
+        "type": "bepinex:plugin",
+        "subpath": "SprocketMaps"
+      },
+      {
+        "match": "*.dll",
+        "type": "bepinex:plugin"
+      }
+    ],
+    "scan_dlls": false,
+    "exclude": ["*.txt"]
+  },
+  "category": "gameplay",
+  "tags": ["editor", "custom-battle", "mission", "cinematic", "bepinex"]
+}
