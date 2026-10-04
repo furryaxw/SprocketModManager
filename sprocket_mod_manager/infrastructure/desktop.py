@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+_FILE_MANAGER_TIMEOUT_SECONDS = 5
+
 
 def open_directory(path: Path) -> None:
     directory = path.expanduser().resolve()
@@ -27,13 +29,44 @@ def reveal_in_file_manager(path: Path) -> None:
 
 
 def _start(path: Path, *, select: bool = False) -> None:
-    if os.name != "nt":
-        raise OSError("opening locations is only supported on Windows")
     if select:
+        _select(path)
+        return
+    _open(path)
+
+
+def _select(path: Path) -> None:
+    if os.name == "nt":
         # `explorer /select,<路径>`：打开文件所在目录，并在这个目录里选中它。
         subprocess.Popen(["explorer", f"/select,{path}"])
         return
-    startfile = getattr(os, "startfile", None)
-    if startfile is None:
-        raise OSError("opening locations is only supported on Windows")
-    startfile(str(path))
+    # freedesktop 的 FileManager1 才能选中文件；桌面没提供这个服务时就只打开目录。
+    if _show_items(path):
+        return
+    _open(path.parent)
+
+
+def _show_items(path: Path) -> bool:
+    try:
+        result = subprocess.run(
+            [
+                "dbus-send", "--session", "--dest=org.freedesktop.FileManager1", "--type=method_call",
+                "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
+                f"array:string:{path.as_uri()}", "string:",
+            ],
+            capture_output=True,
+            timeout=_FILE_MANAGER_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _open(path: Path) -> None:
+    if os.name == "nt":
+        os.startfile(str(path))
+        return
+    try:
+        subprocess.Popen(["xdg-open", str(path)])
+    except FileNotFoundError as exc:
+        raise OSError("xdg-open is required to open locations") from exc
