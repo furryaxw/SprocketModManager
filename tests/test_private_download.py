@@ -41,16 +41,26 @@ class _FakeOpener:
     def __init__(self, responses: dict[str, object]) -> None:
         self.responses = responses
         self.requested: list[str] = []
+        self.requests: list[object] = []
 
     def open(self, request, timeout: int = 0):  # noqa: ARG002 - 契约如此
         url = getattr(request, "full_url", str(request))
         self.requested.append(url)
+        self.requests.append(request)
         result = self.responses.get(url)
         if result is None:
             raise AssertionError(f"unexpected request: {url}")
         if isinstance(result, Exception):
             raise result
         return result
+
+
+def authorization(request) -> str:
+    """这一跳带的 `Authorization`；没有就是空串（`Request` 会把头名首字母大写）。"""
+    for name, value in getattr(request, "headers", {}).items():
+        if name.lower() == "authorization":
+            return str(value)
+    return ""
 
 
 def redirect(location: str) -> HTTPError:
@@ -97,6 +107,33 @@ class PrivateDownloadTests(unittest.TestCase):
             self.assertEqual(written, len(payload))
             self.assertEqual(target.read_bytes(), payload)
             self.assertEqual(opener.requested, [DOWNLOAD_URL, signed])
+
+    def test_a_redirect_to_another_origin_carries_no_session(self) -> None:
+        """签名直链自带鉴权：再捎上 Bearer，存储端会按两种鉴权同时出现拒掉（400），
+        那也等于把会话令牌交给第三方。"""
+        signed = "https://cdn.example.invalid/signed/mod.zip?X-Amz-Signature=abc"
+        opener = _FakeOpener({DOWNLOAD_URL: redirect(signed), signed: _Response(b"bytes")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            download(Path(directory) / "mod.zip", opener, client(origins=("cdn.example.invalid",)))
+
+        server_hop, storage_hop = opener.requests
+        self.assertIn("Bearer", authorization(server_hop), "服务器自己的端点要会话")
+        self.assertEqual(authorization(storage_hop), "", "换个源就不带会话")
+
+    def test_a_failure_names_the_hop_that_failed(self) -> None:
+        """失败的那一跳可能是对象存储：它的错误体不是我们的 JSON 契约，得点名是谁。"""
+        signed = "https://cdn.example.invalid/signed/mod.zip?X-Amz-Signature=secret"
+        failure = HTTPError(signed, 400, "Bad Request", {}, None)
+        opener = _FakeOpener({DOWNLOAD_URL: redirect(signed), signed: failure})
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(DeveloperServerError) as caught:
+                download(Path(directory) / "mod.zip", opener, client(origins=("cdn.example.invalid",)))
+
+            message = str(caught.exception)
+            self.assertIn("cdn.example.invalid/signed/mod.zip", message)
+            self.assertNotIn("secret", message, "签名是一次性凭据，不进报错文案")
 
     def test_an_undeclared_origin_is_refused(self) -> None:
         signed = "https://evil.example.invalid/mod.zip"

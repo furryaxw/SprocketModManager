@@ -387,14 +387,19 @@ class DeveloperServerClient:
             raise
 
     def _open_download(self, opener: Any, url: str) -> Any:
-        """发下载请求；跳转自己跟着走，每一跳的目标都要落在信任的源里。"""
+        """发下载请求；跳转自己跟着走，每一跳的目标都要落在信任的源里。
+
+        会话只发给服务器自己的 origin：跳转目标是对象存储的签名直链，它自己带着签名，
+        再捎上 `Authorization` 会被存储端当成两种鉴权同时出现而拒（400），也等于把会话令牌
+        交给第三方。
+        """
         current = url
         for _ in range(self.MAX_DOWNLOAD_REDIRECTS + 1):
             if not self._origin_allowed(current):
                 raise DeveloperServerError(
                     f"developer server download points outside its allowed origins: {current}"
                 )
-            request = Request(current, headers=self._headers("application/octet-stream"))
+            request = Request(current, headers=self._hop_headers(current))
             try:
                 return opener.open(request, timeout=self.timeout)
             except HTTPError as exc:
@@ -410,6 +415,21 @@ class DeveloperServerClient:
                 current = urljoin(current, location)
         raise DeveloperServerError("developer server download redirected too many times")
 
+    def _hop_headers(self, url: str) -> dict[str, str]:
+        """这一跳该带的头：服务器自己的 origin 带会话，别的源只带裸请求。"""
+        headers = self._headers("application/octet-stream")
+        if not self._is_server_origin(url):
+            headers.pop("Authorization", None)
+        return headers
+
+    def _is_server_origin(self, url: str) -> bool:
+        parsed = urlparse(url)
+        base = urlparse(self.base_url)
+        return (
+            f"{str(parsed.scheme).lower()}://{str(parsed.netloc).lower()}"
+            == f"{str(base.scheme).lower()}://{str(base.netloc).lower()}"
+        )
+
     def _origin_allowed(self, url: str) -> bool:
         """同源天然可信；跨源必须被 `download_origins` 显式允许。"""
         parsed = urlparse(url)
@@ -417,10 +437,9 @@ class DeveloperServerClient:
         host = str(parsed.hostname or "").lower()
         if scheme not in {"http", "https"} or not host:
             return False
-        origin = f"{scheme}://{str(parsed.netloc).lower()}"
-        base = urlparse(self.base_url)
-        if origin == f"{str(base.scheme).lower()}://{str(base.netloc).lower()}":
+        if self._is_server_origin(url):
             return True
+        origin = f"{scheme}://{str(parsed.netloc).lower()}"
         for allowed in self._download_origins:
             candidate = allowed.strip().lower().rstrip("/")
             if not candidate:
@@ -466,6 +485,11 @@ class DeveloperServerClient:
 
     @staticmethod
     def _download_failure(exc: HTTPError) -> DeveloperServerError:
+        """把 HTTP 失败翻成带原因的错，并点出失败的是哪一跳。
+
+        跳转之后那一跳可能是对象存储的签名直链：它的错误体不是我们的 JSON 契约，
+        不说清是哪一跳，看到的就只是一句「HTTP 400」。
+        """
         code = ""
         message = ""
         try:
@@ -475,11 +499,21 @@ class DeveloperServerClient:
                 message = str(body.get("message") or body.get("error") or "")
         except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, OSError):
             message = ""
+        detail = message or f"developer server returned HTTP {exc.code}"
+        hop = DeveloperServerClient._hop_label(str(getattr(exc, "url", "")))
         return DeveloperServerError(
-            message or f"developer server returned HTTP {exc.code}",
+            f"{detail} ({hop})" if hop else detail,
             status=exc.code,
             code=code,
         )
+
+    @staticmethod
+    def _hop_label(url: str) -> str:
+        """那一跳的「源 + 路径」，不带查询串：签名直链的查询串是一次性凭据。"""
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return ""
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
     def key_status_snapshot(self) -> dict[str, Any]:
         if not self._info_loaded:
