@@ -203,6 +203,9 @@ def download_update(
             )
         destination.parent.mkdir(parents=True, exist_ok=True)
         os.replace(partial, destination)
+        if os.name != "nt":
+            # 下载写出来的文件不带权限位；换壳子进程要执行的就是这一份，丢了可执行位它起不来。
+            os.chmod(destination, 0o755)
     except BaseException:
         _remove(partial)
         raise

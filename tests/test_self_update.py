@@ -140,6 +140,18 @@ class DownloadTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), PAYLOAD)
             self.assertEqual(list(target.parent.glob("*.part")), [], "下载的临时文件不该留下")
 
+    @unittest.skipIf(os.name == "nt", "the executable bit is a POSIX concept")
+    def test_the_downloaded_build_is_executable_before_it_is_launched(self) -> None:
+        """换壳子进程执行的就是这份下载结果：Linux 上没有可执行位它起不来。"""
+        http = FakeHttp()
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / self_update.manager_asset_name()
+            update = self_update.update_from_release(release(assets=(executable_asset(),)), "0.5.1")
+
+            self_update.download_update(http, update, target)
+
+            self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+
     def test_a_mismatched_digest_raises_and_leaves_nothing_behind(self) -> None:
         http = FakeHttp(b"tampered")
         with tempfile.TemporaryDirectory() as directory:
