@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -608,6 +609,10 @@ class EnvironmentApiTests(unittest.TestCase):
                     patch(
                         "sprocket_mod_manager.utilities.processes.running_executables",
                         return_value=running,
+                    ),
+                    patch(
+                        "sprocket_mod_manager.utilities.processes.os",
+                        SimpleNamespace(name="nt", path=os.path),
                     ),
                     patch(
                         "sprocket_mod_manager.utilities.processes.subprocess.run",
