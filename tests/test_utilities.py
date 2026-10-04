@@ -5,6 +5,7 @@ import signal
 import subprocess
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from sprocket_mod_manager.utilities.package_paths import (
     validate_target,
 )
 from sprocket_mod_manager.utilities.processes import (
+    _linux_executables,
     _terminate_wine,
     _wine_image,
     _wine_path,
@@ -195,6 +197,22 @@ class ProcessTests(unittest.TestCase):
             Path("/home/player/Sprocket/Sprocket.exe"),
         )
         self.assertIsNone(_wine_image(b"wine64-preloader\0--version\0", None, "sprocket.exe"))
+
+    def test_proc_entries_are_matched_by_their_command_line(self) -> None:
+        with TemporaryDirectory() as directory:
+            proc = Path(directory)
+            (proc / "4242").mkdir()
+            (proc / "4242" / "cmdline").write_bytes(
+                b"/usr/bin/wine64-preloader\0Z:\\home\\player\\Sprocket\\Sprocket.exe\0"
+            )
+            (proc / "4243").mkdir()
+            (proc / "4243" / "cmdline").write_bytes(b"wine64-preloader\0--version\0")
+            (proc / "not-a-pid").mkdir()
+
+            with patch(f"{PROCESSES}._PROC", proc):
+                found = _linux_executables("Sprocket.exe")
+
+        self.assertEqual(found, {4242: Path("/home/player/Sprocket/Sprocket.exe")})
 
 
 if __name__ == "__main__":
