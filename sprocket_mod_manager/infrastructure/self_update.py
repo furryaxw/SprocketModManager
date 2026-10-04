@@ -65,7 +65,17 @@ def frozen_executable() -> Path | None:
 
 
 def can_self_update() -> bool:
-    return frozen_executable() is not None
+    return updatable_executable() is not None
+
+
+def updatable_executable() -> Path | None:
+    """能原地替换自己的那个文件。
+
+    发布资产只有 Windows 单文件，所以别的平台上就算打包了也没有可换的壳。
+    """
+    if sys.platform != "win32":
+        return None
+    return frozen_executable()
 
 
 def staged_executable(current: Path) -> Path:
