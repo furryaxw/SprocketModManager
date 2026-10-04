@@ -38,21 +38,26 @@ def rotate_logs(app_dir: Path, *, history_limit: int = HISTORY_LIMIT) -> Path:
     history_dir = manager_history_dir(app_dir)
     history_dir.mkdir(parents=True, exist_ok=True)
     latest = manager_log_path(app_dir)
+    rotated: Path | None = None
     if latest.is_file() and latest.stat().st_size:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        rotated = history_dir / f"{stamp}.log"
         try:
-            latest.replace(history_dir / f"{stamp}.log")
+            latest.replace(rotated)
         except OSError as exc:
             LOGGER.warning("log rotation skipped (the log is in use): %s", exc)
             return latest
     else:
         latest.write_text("", encoding="utf-8")
 
-    histories = sorted(
-        history_dir.glob(f"*.log"),
+    # 刚轮转进来的那份是上一段会话，一定排在最前：时间戳粒度粗的文件系统会给这一批历史
+    # 同一个 mtime，只按 mtime 排就会把它当成最旧的一份删掉。
+    histories = [rotated] if rotated is not None else []
+    histories.extend(sorted(
+        (path for path in history_dir.glob(f"*.log") if path != rotated),
         key=lambda path: (path.stat().st_mtime_ns, path.name),
         reverse=True,
-    )
+    ))
     for expired in histories[max(0, history_limit):]:
         try:
             expired.unlink()
