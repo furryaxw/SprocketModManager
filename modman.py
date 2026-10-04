@@ -26,7 +26,7 @@ from sprocket_mod_manager.infrastructure.self_update import (
     self_update_mode,
 )
 
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.7.0"
 # 只影响客户端窗口的开关：带上它们仍然是 GUI 启动，不算走 CLI。
 GUI_FLAGS = ("--debug", "--disable-gpu", "--enable-gpu")
 LOGGER = logging.getLogger(__name__)
