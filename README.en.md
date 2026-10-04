@@ -2,7 +2,7 @@
 
 [中文](README.md) | **English**
 
-A Sprocket mod registry, GitHub Pages catalog, and Windows GUI client.
+A Sprocket mod registry, GitHub Pages catalog, and a Windows/Linux GUI client.
 
 Only package-level metadata is maintained by hand. Every hour, GitHub Actions reads
 each mod repository once and writes normalized versions, tags, and assets into the
@@ -114,8 +114,9 @@ is `https://sprocketmods.furryaxw.top/data`, holding `packages.json`, `environme
 
 ## Running on Linux
 
-There is no Linux build; run the client from source. On Linux, `requirements.txt` pulls in
-PyQt6 and Qt WebEngine, and pywebview uses them in place of WebView2:
+The Linux client runs from a checkout or from the single-file build `build_linux.sh` produces; both
+keep their data in `~/.sprocket-mod-manager`. `requirements.txt` adds PyQt6 and Qt WebEngine on
+Linux, and pywebview runs the client in Qt WebEngine instead of WebView2:
 
 ```sh
 python -m venv .venv
@@ -123,10 +124,16 @@ python -m venv .venv
 .venv/bin/python modman.py
 ```
 
-The client starts Qt WebEngine with `--disable-gpu`, because its GPU path crashes under some
-Mesa drivers; set `QTWEBENGINE_CHROMIUM_FLAGS` yourself to override this. `--debug` still records
-`DEBUG` logs but does not open DevTools, since Qt shows them as a separate window that blocks
-startup. Logs and configuration live in `~/.sprocket-mod-manager`.
+Qt also needs the X11 runtime libraries a desktop distribution ships (`libxcb-cursor0`,
+`libxkbcommon-x11-0` and friends on Debian/Ubuntu); a bare window manager or a container may need
+them installed.
+
+Qt WebEngine runs with hardware acceleration. A start that never gets the window up (some Mesa
+drivers crash its GPU path) is recorded in `~/.sprocket-mod-manager`, and later starts use software
+rendering; `--disable-gpu` forces software rendering for one run, `--enable-gpu` tries hardware
+acceleration again, and `QTWEBENGINE_CHROMIUM_FLAGS` still overrides the Chromium flags. Logs and
+configuration live in `~/.sprocket-mod-manager`. `--debug` records `DEBUG` and opens the Qt remote
+debugging port, but not the DevTools window, which would block startup.
 
 The game path is detected from Steam libraries under `~/.local/share/Steam`, `~/.steam/steam`, and
 the Flatpak Steam directory. Sprocket runs through Proton, which uses Wine's built-in proxy DLLs
@@ -141,20 +148,42 @@ WINEDLLOVERRIDES="version=n,b" %command%     # MelonLoader
 If no loader log (`BepInEx/LogOutput.log`, `MelonLoader/Latest.log`) appears after launching the
 game, the override is missing.
 
-Private server sessions and the GitHub login are kept in the Secret Service keyring (GNOME Keyring,
-KWallet, KeePassXC) through `secret-tool`, which most distributions ship in a `libsecret` package.
-Without it the public catalog still works, but those logins cannot be saved.
+The client reads the game directory's process out of `/proc`, so a running Sprocket blocks an
+install the same way it does on Windows. Opening a folder uses `xdg-open`, and revealing a file uses
+the desktop's `org.freedesktop.FileManager1` service, falling back to the containing directory.
+Credentials (the GitHub login and private-server sessions) are files under
+`~/.sprocket-mod-manager/credentials`, created `0600`; Windows encrypts the same files with the
+account's DPAPI key. Release assets are per platform, so the update check looks for
+`SprocketModManager-linux-x64` here.
+
+`build_linux.sh` produces that single-file build; it replaces itself in place like the Windows one:
+
+```sh
+sh build_linux.sh
+./dist/SprocketModManager-linux-x64
+```
+
+Keep it in a directory the user can write (`~/.local/bin`, a `~/Applications` folder): replacing a
+running build is exactly what self-update does, and a root-owned directory refuses it. Only a
+single-file build can replace itself — a source run reports updates and opens the release page.
+
+Test with the Linux interpreter; the UI render harness needs `node` on `PATH`:
+
+```sh
+.venv/bin/python -m unittest discover -s tests
+```
 
 ## Uninstalling
 
 Mods, loaders, and patch packages are removed from the client's Installed page; removal hands back
 the files listed in the install record, and files that are protected or changed by the user stay.
 
-The client itself writes no registry keys and creates no shortcuts, so deleting
-`SprocketModManager.exe` uninstalls it. It leaves two state directories that can be deleted
-separately: `%LOCALAPPDATA%\SprocketModManager` (configuration, logs, and WebView storage) and
-`<game>\SprocketModManager` (install records, the DLL metadata cache, and backups of replaced
-files).
+The client itself writes no registry keys and creates no shortcuts, so deleting the binary
+(`SprocketModManager.exe`, `SprocketModManager-linux-x64`) uninstalls it. It leaves two state
+directories that can be deleted separately: the manager directory
+(`%LOCALAPPDATA%\SprocketModManager`, `~/.sprocket-mod-manager`; configuration, logs, and WebView
+storage) and `<game>/SprocketModManager` (install records, the DLL metadata cache, and backups of
+replaced files).
 
 ## Validate
 
@@ -213,13 +242,14 @@ Edge installations.
   modified by the user. Ordinary preexisting files remain protected; files adopted by
   an exact Release hash become managed and may be deleted only while unchanged.
 
-Manager self-updates: on startup the client checks the GitHub Release tagged `v<version>` with the
-`SprocketModManager.exe` asset. When a newer release exists it offers two paths — **Update now**
-downloads the new EXE next to the running one, verifies the asset SHA-256 GitHub reports, and hands
-over to a swap child process that waits for the old process to exit and replaces it (Windows locks a
-running EXE against overwriting itself); **Later** keeps this session running and asks again on the
-next start. A source run, or a build that is not a single file, cannot replace itself and is sent to
-the release page instead.
+Manager self-updates: on startup the client checks the GitHub Release tagged `v<version>` for the
+asset of the running platform (`SprocketModManager.exe`, `SprocketModManager-linux-x64`). When a
+newer release exists it offers two paths — **Update now** downloads the new build next to the
+running one, verifies the asset SHA-256 GitHub reports, and hands over to a swap child process that
+replaces it and starts the new build; **Later** keeps this session running and asks again on the
+next start. That child waits for the old process to release the locked EXE on Windows only: on Linux
+the running file is replaced directly, and the old process keeps its own inode. A source run, or a
+build that is not a single file, cannot replace itself and is sent to the release page instead.
 
 That chain trusts GitHub's HTTPS plus the asset digest GitHub computes. Guarding against a stolen
 release account needs a fixed-public-key update manifest or verifiable Windows code signing.
