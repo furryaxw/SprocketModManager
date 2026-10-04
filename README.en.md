@@ -112,6 +112,39 @@ Global CLI options must appear before the subcommand. The default remote Registr
 is `https://sprocketmods.furryaxw.top/data`, holding `packages.json`, `environment.json`, and
 `diagnosis.json`.
 
+## Running on Linux
+
+There is no Linux build; run the client from source. On Linux, `requirements.txt` pulls in
+PyQt6 and Qt WebEngine, and pywebview uses them in place of WebView2:
+
+```sh
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python modman.py
+```
+
+The client starts Qt WebEngine with `--disable-gpu`, because its GPU path crashes under some
+Mesa drivers; set `QTWEBENGINE_CHROMIUM_FLAGS` yourself to override this. `--debug` still records
+`DEBUG` logs but does not open DevTools, since Qt shows them as a separate window that blocks
+startup. Logs and configuration live in `~/.sprocket-mod-manager`.
+
+The game path is detected from Steam libraries under `~/.local/share/Steam`, `~/.steam/steam`, and
+the Flatpak Steam directory. Sprocket runs through Proton, which uses Wine's built-in proxy DLLs
+and ignores the loader's copy in the game directory, so add the override for the installed loader
+to Sprocket's Steam launch options:
+
+```text
+WINEDLLOVERRIDES="winhttp=n,b" %command%     # BepInEx
+WINEDLLOVERRIDES="version=n,b" %command%     # MelonLoader
+```
+
+If no loader log (`BepInEx/LogOutput.log`, `MelonLoader/Latest.log`) appears after launching the
+game, the override is missing.
+
+Private server sessions and the GitHub login are kept in the Secret Service keyring (GNOME Keyring,
+KWallet, KeePassXC) through `secret-tool`, which most distributions ship in a `libsecret` package.
+Without it the public catalog still works, but those logins cannot be saved.
+
 ## Uninstalling
 
 Mods, loaders, and patch packages are removed from the client's Installed page; removal hands back

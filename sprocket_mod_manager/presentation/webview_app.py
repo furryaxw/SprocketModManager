@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from typing import TYPE_CHECKING
 
 from .api_support import app_icon_path, ui_directory
@@ -51,10 +53,16 @@ def run_gui(version: str, *, debug: bool = False, debug_override: bool = False) 
     def webview_started() -> None:
         LOGGER.debug("WebView2 start callback entered")
 
+    windows = sys.platform == "win32"
+    if not windows:
+        # Mesa segfaults in Qt WebEngine's GPU path; Probably doesn't need to be running on the GPU anyways
+        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
     webview.start(
         func=webview_started,
-        gui="edgechromium",
-        debug=debug,
+        gui="edgechromium" if windows else None,
+        # Qt opens DevTools as a separate window that breaks startup; lol :/
+        # Only open DevTools if running on windows (under WebView)
+        debug=debug and windows,
         http_server=True,
         private_mode=False,
         storage_path=str(api.config_store.app_dir / "webview"),

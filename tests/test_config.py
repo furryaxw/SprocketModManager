@@ -162,3 +162,23 @@ class ConfigTests(unittest.TestCase):
                 detected = detect_game_path()
 
         self.assertEqual(detected, str(game_path.resolve()))
+
+    def test_steam_roots_include_linux_install_locations(self):
+        from sprocket_mod_manager.infrastructure.steam_locator import _steam_install_roots
+
+        home = Path("/home/player")
+        with (
+            patch("sprocket_mod_manager.infrastructure.steam_locator.os.name", "posix"),
+            patch("sprocket_mod_manager.infrastructure.steam_locator.Path.home", return_value=home),
+            patch.dict("os.environ", {"PROGRAMFILES": "", "PROGRAMFILES(X86)": ""}),
+        ):
+            roots = _steam_install_roots()
+
+        self.assertEqual(
+            roots,
+            (
+                home / ".local" / "share" / "Steam",
+                home / ".steam" / "steam",
+                home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+            ),
+        )
