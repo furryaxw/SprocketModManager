@@ -1,14 +1,17 @@
-"""单文件自更新：下载新版 exe，交给一个换壳子进程把正在运行的这份替换掉。
+"""单文件自更新：下载新版，交给一个换壳子进程把正在运行的这份替换掉。
 
-Windows 下运行中的可执行文件不能覆盖自己（文件被锁），所以走两个进程：
+Windows 下运行中的可执行文件不能覆盖自己（文件被锁），所以换壳要等旧进程让出文件：
 
-1. A（现在这份）把新版本下载到同目录的 `SprocketModManager.new.exe`，校验 SHA-256；
+1. A（现在这份）把新版本下载到同目录，校验 SHA-256；
 2. A 启动 `B --self-update <A> <B>`；
 3. A 退出，释放对自身文件的占用；
-4. B 等 A 可写 → 删掉 A → 把自己复制成 A → 启动新的 A。
+4. B 等 A 可写 → 把自己复制成 A → 启动新的 A。
 
-打包成单文件时 `sys.frozen` 为真，B 就是那个新 exe 本身。源码运行（没有打包）时
-`frozen_executable()` 返回 None，整条自更新关掉，界面改为把人带到发布页。
+Linux 上替换运行中的可执行文件本来就合法（旧进程继续用自己的 inode），第 3、4 步不用等，
+但落地的新文件必须带可执行位。
+
+打包成单文件、且这个平台有对应发布资产时 `updatable_executable()` 有值；源码运行或没有资产的
+平台整条自更新关掉，界面改为把人带到发布页。
 """
 
 from __future__ import annotations
@@ -32,8 +35,12 @@ from ..utilities.checksums import SHA256_PATTERN, parse_checksum_text, sha256_fi
 
 LOGGER = logging.getLogger(__name__)
 
-MANAGER_EXE_NAME = "SprocketModManager.exe"
+MANAGER_ASSET_NAMES = {
+    "win32": "SprocketModManager.exe",
+    "linux": "SprocketModManager-linux-x64",
+}
 STAGED_EXE_SUFFIX = ".new.exe"
+STAGED_SUFFIX = ".new"
 CHECKSUM_SUFFIX = ".sha256"
 DOWNLOAD_PART_SUFFIX = ".part"
 SELF_UPDATE_FLAG = "--self-update"
@@ -56,6 +63,11 @@ class ManagerUpdate:
     checksum_url: str
 
 
+def manager_asset_name() -> str:
+    """这个平台的发布资产名；没有资产的平台返回空串，自更新整条关掉。"""
+    return MANAGER_ASSET_NAMES.get(sys.platform, "")
+
+
 def frozen_executable() -> Path | None:
     """打包成单文件时自己的路径；源码运行返回 None。"""
     if not getattr(sys, "frozen", False):
@@ -69,22 +81,21 @@ def can_self_update() -> bool:
 
 
 def updatable_executable() -> Path | None:
-    """能原地替换自己的那个文件。
-
-    发布资产只有 Windows 单文件，所以别的平台上就算打包了也没有可换的壳。
-    """
-    if sys.platform != "win32":
+    """能原地替换自己的那个文件：打包成单文件、且这个平台有发布资产时才有。"""
+    if not manager_asset_name():
         return None
     return frozen_executable()
 
 
 def staged_executable(current: Path) -> Path:
-    """新版本先落在这里：与当前 exe 同目录，换壳时才能原地替代它。"""
-    return current.with_name(f"{current.stem}{STAGED_EXE_SUFFIX}")
+    """新版本先落在这里：与当前这份同目录，换壳时才能原地替代它。"""
+    if os.name == "nt":
+        return current.with_name(f"{current.stem}{STAGED_EXE_SUFFIX}")
+    return current.with_name(f"{current.name}{STAGED_SUFFIX}")
 
 
 def staged_files(current: Path) -> tuple[Path, ...]:
-    """自更新可能在这个目录里留下的东西（`.new.exe` 与两类 `.part`）。"""
+    """自更新可能在这个目录里留下的东西（换壳落地文件与两类 `.part`）。"""
     staged = staged_executable(current)
     return (
         staged,
@@ -123,11 +134,11 @@ def update_from_release(release: object, current_version: str) -> ManagerUpdate 
     if release.version <= current:
         return None
     assets = tuple(getattr(release, "assets", ()) or ())
-    executable = _asset_named(assets, MANAGER_EXE_NAME)
+    executable = _asset_named(assets, manager_asset_name())
     if executable is None:
-        LOGGER.info("latest release %s has no %s asset", release.tag, MANAGER_EXE_NAME)
+        LOGGER.info("latest release %s has no %s asset", release.tag, manager_asset_name())
         return None
-    checksum = _asset_named(assets, f"{MANAGER_EXE_NAME}{CHECKSUM_SUFFIX}")
+    checksum = _asset_named(assets, f"{manager_asset_name()}{CHECKSUM_SUFFIX}")
     return ManagerUpdate(
         version=str(release.version),
         tag=release.tag,
@@ -157,7 +168,7 @@ def published_digest(http: object, update: ManagerUpdate) -> str:
     except (DownloadError, UnicodeDecodeError) as exc:
         LOGGER.warning("could not read the published checksum: %s", exc)
         return ""
-    return parse_checksum_text(content, MANAGER_EXE_NAME, allow_bare=True) or ""
+    return parse_checksum_text(content, manager_asset_name(), allow_bare=True) or ""
 
 
 def download_update(
@@ -168,15 +179,15 @@ def download_update(
         progress: Callable[[int, int], None] | None = None,
         digest: str = "",
 ) -> Path:
-    """把新 exe 下载到 destination，摘要不符就删掉并报错（不留半个文件）。
+    """把新版下载到 destination，摘要不符就删掉并报错（不留半个文件）。
 
-    `destination` 是 `.new.exe` 这个名字：下载先落到 `.new.exe.part`，校验通过才改名，
+    `destination` 是换壳落地文件的名字：下载先落到 `<destination>.part`，校验通过才改名，
     所以「下载到一半」永远不会被当成可执行的新版本。
     """
     partial = destination.with_name(destination.name + DOWNLOAD_PART_SUFFIX)
     asset = ReleaseAsset(
         id=0,
-        name=MANAGER_EXE_NAME,
+        name=manager_asset_name(),
         size=max(0, int(update.size or 0)),
         download_url=update.download_url,
         digest=f"sha256:{digest}" if digest else None,
@@ -188,7 +199,7 @@ def download_update(
         actual = sha256_file(partial)
         if expected and actual != expected:
             raise DownloadError(
-                f"downloaded {MANAGER_EXE_NAME} does not match the published SHA-256"
+                f"downloaded {manager_asset_name()} does not match the published SHA-256"
             )
         destination.parent.mkdir(parents=True, exist_ok=True)
         os.replace(partial, destination)
@@ -235,7 +246,13 @@ def wait_for_unlock(
         *,
         sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
-    """等这个文件可以被写：运行中的 exe 在 Windows 上会被锁住。"""
+    """等这个文件可以被写：运行中的 exe 在 Windows 上会被锁住。
+
+    别的平台上替换运行中的可执行文件本来就合法（改名换的是目录项，旧进程继续用自己的
+    inode），不用等 —— 而且对运行中的 ELF 开 `r+b` 只会拿到 ETXTBSY。
+    """
+    if os.name != "nt":
+        return True
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -253,7 +270,7 @@ def self_update_mode(
         launch: Callable[[list[str]], None] | None = None,
         wait: Callable[[Path, float], bool] | None = None,
 ) -> int:
-    """换壳子进程入口：等旧进程退出 → 用自己替换它 → 启动新的它。"""
+    """换壳子进程入口：等旧进程让出文件 → 用自己替换它 → 启动新的它。"""
     if len(argv) < 3:
         LOGGER.error("%s needs <target> <staged>", SELF_UPDATE_FLAG)
         return 2
@@ -286,6 +303,9 @@ def _replace(target: Path, staged: Path) -> None:
     temporary = target.with_name(target.name + DOWNLOAD_PART_SUFFIX)
     _remove(temporary)
     shutil.copyfile(staged, temporary)
+    if os.name != "nt":
+        # 复制不带权限位；Linux 上丢了可执行位，新的这份就起不来了。
+        os.chmod(temporary, 0o755)
     os.replace(temporary, target)
 
 

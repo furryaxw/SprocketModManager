@@ -6,10 +6,14 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -40,8 +44,8 @@ def release(version: str = "0.6.0", *, assets: tuple[ReleaseAsset, ...] = (), no
 
 def executable_asset(*, digest: str = f"sha256:{PAYLOAD_SHA}") -> ReleaseAsset:
     return asset(
-        self_update.MANAGER_EXE_NAME,
-        url=f"https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/{self_update.MANAGER_EXE_NAME}",
+        self_update.manager_asset_name(),
+        url=f"https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/{self_update.manager_asset_name()}",
         size=len(PAYLOAD),
         digest=digest,
     )
@@ -81,7 +85,7 @@ class UpdateSelectionTests(unittest.TestCase):
         self.assertEqual(update.tag, "v0.6.0")
         self.assertEqual(update.notes, "修了几个 bug")
         self.assertEqual(update.size, len(PAYLOAD))
-        self.assertIn(self_update.MANAGER_EXE_NAME, update.download_url)
+        self.assertIn(self_update.manager_asset_name(), update.download_url)
 
     def test_the_running_version_is_not_an_update(self) -> None:
         self.assertIsNone(self_update.update_from_release(release("0.5.1", assets=(executable_asset(),)), "0.5.1"))
@@ -89,7 +93,7 @@ class UpdateSelectionTests(unittest.TestCase):
 
     def test_a_release_without_the_executable_is_not_an_update(self) -> None:
         """发布里没有那个 exe（例如只有源码包）就没法自更新，别把用户带去一个装不上的流程。"""
-        only_checksum = asset(f"{self_update.MANAGER_EXE_NAME}.sha256", url="https://github.com/x/y")
+        only_checksum = asset(f"{self_update.manager_asset_name()}.sha256", url="https://github.com/x/y")
 
         self.assertIsNone(self_update.update_from_release(release("0.6.0", assets=(only_checksum,)), "0.5.1"))
 
@@ -114,7 +118,7 @@ class UpdateSelectionTests(unittest.TestCase):
     def test_the_checksum_asset_is_remembered_for_verification(self) -> None:
         update = self_update.update_from_release(
             release("0.6.0", assets=(executable_asset(), asset(
-                f"{self_update.MANAGER_EXE_NAME}.sha256",
+                f"{self_update.manager_asset_name()}.sha256",
                 url="https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/x.sha256",
             ))),
             "0.5.1",
@@ -127,7 +131,7 @@ class DownloadTests(unittest.TestCase):
     def test_a_matching_digest_is_accepted(self) -> None:
         http = FakeHttp()
         with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / self_update.MANAGER_EXE_NAME
+            target = Path(directory) / self_update.manager_asset_name()
             staged = self_update.download_update(
                 http, self_update.update_from_release(release(assets=(executable_asset(),)), "0.5.1"), target
             )
@@ -139,7 +143,7 @@ class DownloadTests(unittest.TestCase):
     def test_a_mismatched_digest_raises_and_leaves_nothing_behind(self) -> None:
         http = FakeHttp(b"tampered")
         with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / self_update.MANAGER_EXE_NAME
+            target = Path(directory) / self_update.manager_asset_name()
             update = self_update.update_from_release(release(assets=(executable_asset(),)), "0.5.1")
 
             with self.assertRaisesRegex(DownloadError, "SHA-256"):
@@ -149,13 +153,13 @@ class DownloadTests(unittest.TestCase):
             self.assertEqual(list(target.parent.iterdir()), [])
 
     def test_the_checksum_asset_is_used_when_the_asset_carries_no_digest(self) -> None:
-        http = FakeHttp(checksum=f"{PAYLOAD_SHA}  {self_update.MANAGER_EXE_NAME}\n")
+        http = FakeHttp(checksum=f"{PAYLOAD_SHA}  {self_update.manager_asset_name()}\n")
         with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / self_update.MANAGER_EXE_NAME
+            target = Path(directory) / self_update.manager_asset_name()
             update = self_update.update_from_release(
                 release(assets=(
                     executable_asset(digest=""),
-                    asset(f"{self_update.MANAGER_EXE_NAME}.sha256", url="https://github.com/a/b/x.sha256"),
+                    asset(f"{self_update.manager_asset_name()}.sha256", url="https://github.com/a/b/x.sha256"),
                 )),
                 "0.5.1",
             )
@@ -166,13 +170,13 @@ class DownloadTests(unittest.TestCase):
             self.assertTrue(target.is_file())
 
     def test_a_checksum_asset_that_does_not_match_still_fails(self) -> None:
-        http = FakeHttp(checksum="0" * 64 + f"  {self_update.MANAGER_EXE_NAME}\n")
+        http = FakeHttp(checksum="0" * 64 + f"  {self_update.manager_asset_name()}\n")
         with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / self_update.MANAGER_EXE_NAME
+            target = Path(directory) / self_update.manager_asset_name()
             update = self_update.update_from_release(
                 release(assets=(
                     executable_asset(digest=""),
-                    asset(f"{self_update.MANAGER_EXE_NAME}.sha256", url="https://github.com/a/b/x.sha256"),
+                    asset(f"{self_update.manager_asset_name()}.sha256", url="https://github.com/a/b/x.sha256"),
                 )),
                 "0.5.1",
             )
@@ -259,14 +263,60 @@ class SelfUpdateModeTests(unittest.TestCase):
                 self_update.launch_self_update(current, current)
 
 
+class ReplacementTests(unittest.TestCase):
+    def test_linux_needs_no_unlock_wait(self) -> None:
+        """Linux 上替换运行中的可执行文件本来就合法，别去开那个写句柄（那会是 ETXTBSY）。"""
+        with patch.object(self_update, "os", SimpleNamespace(name="posix")):
+            self.assertTrue(self_update.wait_for_unlock(Path("/nonexistent/target"), 20))
+
+    @unittest.skipIf(os.name == "nt", "the executable bit is a POSIX concept")
+    def test_the_replacement_keeps_the_executable_bit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "SprocketModManager-linux-x64"
+            staged = Path(directory) / "SprocketModManager-linux-x64.new"
+            target.write_bytes(b"old")
+            staged.write_bytes(b"new")
+
+            self_update._replace(target, staged)
+
+            self.assertEqual(target.read_bytes(), b"new")
+            self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+
+    @unittest.skipIf(os.name == "nt" or not Path("/bin/sleep").is_file(), "needs a real ELF to run")
+    def test_a_running_binary_can_be_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "SprocketModManager-linux-x64"
+            staged = Path(directory) / "SprocketModManager-linux-x64.new"
+            shutil.copyfile("/bin/sleep", target)
+            os.chmod(target, 0o755)
+            staged.write_bytes(b"#!/bin/sh\nexit 0\n")
+
+            process = subprocess.Popen([str(target), "30"])
+            try:
+                self.assertIsNone(process.poll(), "旧的那份还在跑")
+                code = self_update.self_update_mode(
+                    [self_update.SELF_UPDATE_FLAG, str(target), str(staged)],
+                    launch=lambda _argv: None,
+                )
+
+                self.assertEqual(code, 0)
+                self.assertIsNone(process.poll(), "旧进程继续用自己的 inode")
+                self.assertEqual(target.read_bytes(), staged.read_bytes())
+                self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+            finally:
+                process.kill()
+                process.wait()
+
+
 class StagedFileTests(unittest.TestCase):
     def test_the_staged_name_sits_next_to_the_running_executable(self) -> None:
-        current = Path("C:/games/tools/SprocketModManager.exe")
+        current = Path("/games/tools") / self_update.manager_asset_name()
 
-        self.assertEqual(
-            self_update.staged_executable(current).name, "SprocketModManager.new.exe"
-        )
-        self.assertEqual(self_update.staged_executable(current).parent, current.parent)
+        staged = self_update.staged_executable(current)
+
+        self.assertEqual(staged.parent, current.parent)
+        expected = "SprocketModManager.new.exe" if os.name == "nt" else "SprocketModManager-linux-x64.new"
+        self.assertEqual(staged.name, expected)
 
     def test_cleanup_removes_the_previous_round(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -313,12 +363,25 @@ class FrozenModeTests(unittest.TestCase):
             )
             self.assertTrue(self_update.can_self_update())
 
-    def test_a_packaged_build_without_a_windows_release_cannot_self_update(self) -> None:
+    def test_a_packaged_linux_build_points_at_its_own_executable(self) -> None:
         with (
             patch.object(sys, "frozen", True, create=True),
             patch.object(sys, "platform", "linux"),
-            patch.object(sys, "executable", "/opt/sprocket/SprocketModManager"),
+            patch.object(sys, "executable", "/opt/sprocket/SprocketModManager-linux-x64"),
         ):
+            self.assertEqual(
+                self_update.updatable_executable(),
+                Path("/opt/sprocket/SprocketModManager-linux-x64"),
+            )
+            self.assertTrue(self_update.can_self_update())
+
+    def test_a_platform_without_a_release_asset_cannot_self_update(self) -> None:
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "platform", "darwin"),
+            patch.object(sys, "executable", "/Applications/SprocketModManager"),
+        ):
+            self.assertEqual(self_update.manager_asset_name(), "")
             self.assertIsNone(self_update.updatable_executable())
             self.assertFalse(self_update.can_self_update())
 

@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sprocket_mod_manager.domain.models import ReleaseAsset  # noqa: E402
 from sprocket_mod_manager.domain.semver import Version  # noqa: E402
+from sprocket_mod_manager.infrastructure import self_update  # noqa: E402
 from sprocket_mod_manager.infrastructure.github import RepositoryRelease  # noqa: E402
 from sprocket_mod_manager.presentation.web_gui import ClientApi  # noqa: E402
 
@@ -31,7 +32,8 @@ NODE = shutil.which("node")
 
 PAGE_URL = "https://github.com/furryaxw/SprocketModManager/releases/tag/v0.6.0"
 EXE_URL = (
-    "https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/SprocketModManager.exe"
+    "https://github.com/furryaxw/SprocketModManager/releases/download/v0.6.0/"
+    f"{self_update.manager_asset_name()}"
 )
 
 
@@ -52,9 +54,9 @@ def manager_release(*, version: str = "0.6.0", notes: str = "修了几个崩溃"
         page_url=f"https://github.com/furryaxw/SprocketModManager/releases/tag/v{version}",
         notes=notes,
         assets=(
-            ReleaseAsset(id=1, name="SprocketModManager.exe", size=4096, download_url=EXE_URL,
+            ReleaseAsset(id=1, name=self_update.manager_asset_name(), size=4096, download_url=EXE_URL,
                          digest="sha256:" + "a" * 64),
-            ReleaseAsset(id=2, name="SprocketModManager.exe.sha256", size=89,
+            ReleaseAsset(id=2, name=f"{self_update.manager_asset_name()}.sha256", size=89,
                          download_url=EXE_URL + ".sha256"),
         ),
     )
