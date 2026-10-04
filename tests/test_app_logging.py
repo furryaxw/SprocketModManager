@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -43,6 +44,28 @@ class AppLoggingTests(unittest.TestCase):
             self.assertTrue(any(path.read_text(encoding="utf-8") == "previous session" for path in histories),
                             "上一段日志要真的被搬进历史（不是被丢掉）")
             self.assertEqual(list(app_dir.glob("History-*.log")), [])
+
+    def test_rotation_keeps_the_session_that_ties_on_mtime(self) -> None:
+        """时间戳粒度粗的盘上所有历史会拿到同一个 mtime，被丢的必须是更旧的那份。"""
+        with TemporaryDirectory() as directory:
+            app_dir = Path(directory)
+            history_dir = manager_history_dir(app_dir)
+            history_dir.mkdir(parents=True, exist_ok=True)
+            same_stamp = 1_700_000_000_000_000_000
+            for index in range(5):
+                history = history_dir / f"History-20260101-00000{index}-000000.log"
+                history.write_text(str(index), encoding="utf-8")
+                os.utime(history, ns=(same_stamp, same_stamp))
+            latest = manager_log_path(app_dir)
+            latest.write_text("previous session", encoding="utf-8")
+            os.utime(latest, ns=(same_stamp, same_stamp))
+
+            rotate_logs(app_dir, history_limit=5)
+
+            histories = sorted(history_dir.glob("*.log"))
+            self.assertEqual(len(histories), 5)
+            self.assertTrue(any(path.read_text(encoding="utf-8") == "previous session" for path in histories),
+                            "同一 mtime 时也不能把刚轮转的那份删掉")
 
     def test_rotation_survives_a_locked_latest_log(self) -> None:
         """GUI 正开着 Latest.log 时命令行也要能跑：不轮转、不清空、更不能崩。"""
