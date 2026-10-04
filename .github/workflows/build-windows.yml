@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-windows-${{ github.ref }}
+  # 两个发布工作流共用一组：它们都会往同一个 tag 的草稿 Release 里传资产。
+  group: build-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
