@@ -17,6 +17,8 @@ BASE = "http://127.0.0.1:8787"
 PACKAGE = "team1.example-mod"
 VERSION = "1.0.0"
 DOWNLOAD_URL = f"{BASE}/v1/packages/{PACKAGE}/download?version={VERSION}"
+# 条目里的 `download_url`：协议端点，不带版本（两侧的跨实现 fixture 都是这个形状）。
+ENTRY_URL = f"{BASE}/v1/packages/{PACKAGE}/download"
 
 
 class _Response:
@@ -138,6 +140,56 @@ class PrivateDownloadTests(unittest.TestCase):
                     client().download(PACKAGE, VERSION, target, expected_size=999)
 
             self.assertFalse(target.exists(), "半截文件不许留下")
+
+    def test_an_entry_url_without_a_version_gets_the_resolved_one(self) -> None:
+        """条目说的是端点，版本由客户端按解析出来的那版给：不补这一下服务器会回 400。"""
+        payload = b"PK\x03\x04archive-bytes"
+        opener = _FakeOpener({DOWNLOAD_URL: _Response(payload)})
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "mod.zip"
+            with patch(
+                "sprocket_mod_manager.infrastructure.private_servers"
+                ".developer_server_client.build_opener",
+                return_value=opener,
+            ):
+                written = client().download(PACKAGE, VERSION, target, url=ENTRY_URL)
+
+            self.assertEqual(written, len(payload))
+            self.assertEqual(opener.requested, [DOWNLOAD_URL])
+
+    def test_an_entry_url_that_names_a_version_is_used_as_it_is(self) -> None:
+        older = f"{ENTRY_URL}?version=0.9.0"
+        opener = _FakeOpener({older: _Response(b"older")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "mod.zip"
+            with patch(
+                "sprocket_mod_manager.infrastructure.private_servers"
+                ".developer_server_client.build_opener",
+                return_value=opener,
+            ):
+                client().download(PACKAGE, VERSION, target, url=older)
+
+            self.assertEqual(opener.requested, [older], "服务器点名的版本不改写")
+
+    def test_a_signed_url_is_used_as_it_is(self) -> None:
+        """对象存储/签名直链：加一个查询参数会把签名弄坏。"""
+        signed = "https://cdn.example.invalid/objects/mod.zip?X-Signature=abc"
+        opener = _FakeOpener({signed: _Response(b"signed")})
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "mod.zip"
+            with patch(
+                "sprocket_mod_manager.infrastructure.private_servers"
+                ".developer_server_client.build_opener",
+                return_value=opener,
+            ):
+                client(origins=("cdn.example.invalid",)).download(
+                    PACKAGE, VERSION, target, url=signed
+                )
+
+            self.assertEqual(opener.requested, [signed])
 
     def test_a_download_without_a_session_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

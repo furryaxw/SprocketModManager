@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from cryptography.hazmat.primitives import serialization
@@ -30,6 +31,8 @@ from ...utilities.trust_negotiation import (
 
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
+# 协议里的包端点：条目里的 `download_url` 指的就是它，版本由客户端补。
+_DOWNLOAD_ENDPOINT_PATTERN = re.compile(r"^/v1/packages/[^/]+/download/?$")
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -336,8 +339,9 @@ class DeveloperServerClient:
     ) -> int:
         """把一个包的某个版本流式落盘，返回写入的字节数。
 
-        `url` 给定时用它（条目里的 `download_url` 是服务端按请求 origin 拼的绝对地址），
-        否则按服务器自己的 origin 拼。两种来源都要过 origin 判定。
+        `url` 给定时用它（条目里的 `download_url` 指向服务端自己的包端点），否则按服务器自己的
+        origin 拼。两种来源都要过 origin 判定。端点地址上还缺 `version` 时补上解析出来的那一版：
+        服务器按版本取包，条目里的地址只说到哪个端点为谁取。
 
         归档上限 1 GiB，所以按块写盘而不是读进内存；失败时半截文件不留。
         `server-info` 的 `download_origins` 声明了允许把下载指向哪些源，服务器自身 origin 天然在内。
@@ -348,9 +352,12 @@ class DeveloperServerClient:
             raise ValueError("package id and version are required")
         if not self.session_token:
             raise ValueError("developer server session is required to download")
-        target_url = str(url).strip() or (
-            f"{self.base_url}/v1/packages/{quote(identifier, safe='')}/download"
-            f"?version={quote(release, safe='')}"
+        target_url = self._with_version(
+            str(url).strip() or (
+                f"{self.base_url}/v1/packages/{quote(identifier, safe='')}/download"
+                f"?version={quote(release, safe='')}"
+            ),
+            release,
         )
         target = Path(destination)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -424,6 +431,24 @@ class DeveloperServerClient:
             elif scheme == "https" and candidate == host:
                 return True
         return False
+
+    @staticmethod
+    def _with_version(url: str, release: str) -> str:
+        """包端点上缺 `version` 就补上；别的地址一个字都不改。
+
+        服务器下发的 `download_url` 写的是它自己的包端点（`/v1/packages/{id}/download`），
+        取哪一版由客户端按解析出来的那版说 —— 两侧的跨实现 fixture 都是这个形状。
+        已经带 `version` 的地址（服务器点名了某一版）与别的路径（对象存储、CDN 的直链或
+        签名地址）原样用：往签名查询串上加参数会把签名弄坏。
+        """
+        parsed = urlparse(url)
+        if not _DOWNLOAD_ENDPOINT_PATTERN.match(parsed.path):
+            return url
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        if any(key == "version" for key, _value in query):
+            return url
+        query.append(("version", release))
+        return urlunparse(parsed._replace(query=urlencode(query)))
 
     @staticmethod
     def _write_download(response: Any, target: Path) -> int:
