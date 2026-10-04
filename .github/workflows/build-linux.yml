@@ -1,0 +1,88 @@
+name: Build Linux executable
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Verify tag matches application version
+        run: |
+          appVersion=$(python -c "from modman import APP_VERSION; print(APP_VERSION)")
+          if [ "$GITHUB_REF_NAME" != "v$appVersion" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match APP_VERSION $appVersion" >&2
+            exit 1
+          fi
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build executable
+        run: sh build_linux.sh
+
+      - name: Write SHA-256 checksum
+        run: |
+          cd dist
+          sha256sum SprocketModManager-linux-x64 > SprocketModManager-linux-x64.sha256
+          cat SprocketModManager-linux-x64.sha256
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v7
+        with:
+          name: SprocketModManager-${{ github.ref_name }}-linux-x64
+          path: |
+            dist/SprocketModManager-linux-x64
+            dist/SprocketModManager-linux-x64.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          overwrite: true
+
+      - name: Upload build to draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" --json isDraft >/dev/null 2>&1; then
+            if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "Release $tag is already published; refusing to replace its assets" >&2
+              exit 1
+            fi
+          else
+            gh release create "$tag" \
+              --verify-tag \
+              --draft \
+              --title "SprocketModManager $tag" \
+              --notes "Write release notes before publishing."
+          fi
+
+          gh release upload "$tag" \
+            dist/SprocketModManager-linux-x64 \
+            dist/SprocketModManager-linux-x64.sha256 \
+            --clobber
