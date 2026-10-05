@@ -15,7 +15,7 @@
     "zh": "在板件结构编辑器里加入装甲材料下拉菜单，读取 StreamingAssets/Technology 下的自定义材料 JSON。运行时成本下限按每毫米与每千克防护计算，低于下限的取值会被抬到下限。"
   },
   "release": {
-    "include_prerelease": false,
+    "include_prerelease": true,
     "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
     "assets": {
       "include": ["SprocketMaterialSelector.dll"],

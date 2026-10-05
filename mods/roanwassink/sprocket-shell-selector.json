@@ -15,7 +15,7 @@
     "zh": "为火炮加入 APFSDS 长/短杆、APHE、HE、HEAT、HESH 以及瞄准制导或键盘制导的 ATGM 弹种方案，穿深、破片与间隙装甲衰减都随口径缩放。弹种方案写在 JSON 里，另有装甲模拟器可在不开火的情况下试算。"
   },
   "release": {
-    "include_prerelease": false,
+    "include_prerelease": true,
     "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
     "assets": {
       "include": ["SprocketShellSelector.dll"],

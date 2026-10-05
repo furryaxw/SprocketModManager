@@ -15,7 +15,7 @@
     "zh": "把炮塔吊篮变成转盘自动装弹机：可选 T-72 式水平弹匣或 T-64/80 式立式药筒布局，指定一门火炮，弹药容量由炮塔座圈与吊篮分段尺寸决定。转盘自带有限的弹药架，不需要装填手。"
   },
   "release": {
-    "include_prerelease": false,
+    "include_prerelease": true,
     "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
     "assets": {
       "include": ["SprocketCarouselAutoloader.dll"],
