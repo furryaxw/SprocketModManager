@@ -2,7 +2,7 @@ name: Deploy Pages
 
 on:
   push:
-    branches: [main]
+    branches: [registry]
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:

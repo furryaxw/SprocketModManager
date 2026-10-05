@@ -9,7 +9,7 @@ on:
       - "validate_registry.py"
       - "sprocket_mod_manager/semver.py"
   push:
-    branches: [main]
+    branches: [registry]
 
 permissions:
   contents: read
