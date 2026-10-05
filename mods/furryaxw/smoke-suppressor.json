@@ -1,0 +1,46 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "furryaxw.smoke-suppressor",
+  "name": "SmokeSuppressor",
+  "authors": ["furryAxw"],
+  "repository": "furryaxw/SmokeSuppressor",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "Smoke Suppressor",
+    "zh": "烟雾抑制器"
+  },
+  "description": {
+    "en": "Hides the smoke layers that keep accumulating: engine, muzzle and both shell impacts.",
+    "zh": "隐藏会持续堆积的烟雾层：引擎、炮口与两种弹着。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SmokeSuppressor.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "furryaxw.sprocket-mod-api",
+      "version": ">=1.0.0 <2.0.0",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "bepinex:*"
+      }
+    ],
+    "scan_dlls": true,
+    "exclude": []
+  },
+  "category": "visual",
+  "tags": ["effects", "smoke", "performance"]
+}
