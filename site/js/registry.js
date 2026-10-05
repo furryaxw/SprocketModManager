@@ -2,7 +2,6 @@
 
 async function loadRegistry(forceRefresh) {
     setRegistryStatus("loadingRegistry");
-    setSystemState("refreshingRegistry");
     elements.refresh.disabled = true;
     elements.refresh.querySelector("svg")?.classList.add("spin");
     try {
@@ -19,11 +18,9 @@ async function loadRegistry(forceRefresh) {
         elements.packageCount.textContent = String(state.packages.length);
         elements.releaseCount.textContent = String([...state.releases.values()].filter(Boolean).length);
         setRegistryStatus("registryUpdated", {time: formatTime(registry.generated_at)});
-        setSystemState("registryOnline");
         renderPackages();
     } catch (error) {
         setRegistryStatus("loadFailed", {message: error.message});
-        setSystemState("registryError", true);
         state.packages = [];
         updateCategoryCounts();
         renderPackages();
@@ -127,7 +124,6 @@ function renderCard(pkg) {
     </div>
     <div class="release-column">
       <span class="release-badge${pending}">${escapeHtml(releaseText)}</span>
-      <span class="verified-label"><i data-lucide="shield-check"></i>${escapeHtml(tr("verified"))}</span>
       <span class="card-arrow"><i data-lucide="chevron-right"></i></span>
     </div>`;
     return article;

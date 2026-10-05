@@ -16,7 +16,6 @@ const elements = {};
 document.addEventListener("DOMContentLoaded", () => {
     Object.assign(elements, {
         status: document.querySelector("#registry-status"),
-        topStatus: document.querySelector("#top-status"),
         packageCount: document.querySelector("#package-count"),
         releaseCount: document.querySelector("#release-count"),
         resultCount: document.querySelector("#result-count"),
@@ -127,9 +126,4 @@ function refreshIcons() {
 function setRegistryStatus(key, values = {}) {
     state.registryStatus = {key, values};
     elements.status.textContent = tr(key, values);
-}
-
-function setSystemState(key, isError = false) {
-    elements.topStatus.textContent = tr(key);
-    elements.topStatus.closest(".system-state").classList.toggle("error", isError);
 }
