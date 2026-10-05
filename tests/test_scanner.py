@@ -5,9 +5,16 @@ from pathlib import Path, PurePosixPath
 
 from sprocket_mod_manager.domain.errors import ScanError
 from sprocket_mod_manager.domain.models import RegistryPackage
-from sprocket_mod_manager.infrastructure.scanner import PackageScanner
+from sprocket_mod_manager.infrastructure.scanner import (
+    BEPINEX_PLUGIN_TYPE,
+    PackageScanner,
+    classify_dll_type,
+)
 
 TRANSLATION_RULE = {"match": "**", "type": "xunity:translation", "layout": "tree"}
+FIXTURE_BEPINEX_PLUGIN = (
+    Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "dll" / "BepInExFixture.dll"
+)
 
 
 def package(*, translation=False):
@@ -41,6 +48,44 @@ def package(*, translation=False):
 
 def translation_scanner() -> PackageScanner:
     return PackageScanner({"xunity:translation": PurePosixPath("AutoTranslator")})
+
+
+def bepinex_package() -> RegistryPackage:
+    """v2 条目：`bepinex:*` 的类别由 DLL 的 PE 元数据定。"""
+    rule = {"match": "*.dll", "type": "bepinex:*"}
+    return RegistryPackage(
+        id="test.bepinex-mod",
+        name="TestBepInExMod",
+        authors=("test",),
+        repository="test/repo",
+        license="MIT",
+        display_name={"en": "Test BepInEx Mod"},
+        description={"en": "Test"},
+        release={},
+        dependencies=(),
+        install={"scan_dlls": True, "exclude": [], "files": [dict(rule)]},
+        category="utility",
+        tags=(),
+        file_rules=(dict(rule),),
+        schema_version=2,
+    )
+
+
+class DllClassificationTests(unittest.TestCase):
+    """分类用真实夹具钉住：BepInEx 插件继承 `BasePlugin` 并声明 `[BepInPlugin]`。"""
+
+    def test_a_bepinex_plugin_is_classified_for_bepinex(self) -> None:
+        self.assertEqual(classify_dll_type(FIXTURE_BEPINEX_PLUGIN), BEPINEX_PLUGIN_TYPE)
+
+    def test_a_wildcard_bepinex_rule_lands_in_the_supplied_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            scanner = PackageScanner({BEPINEX_PLUGIN_TYPE: PurePosixPath("BepInEx/plugins")})
+
+            files, ignored = scanner.scan(bepinex_package(), FIXTURE_BEPINEX_PLUGIN, root / "out")
+
+        self.assertEqual([item.target for item in files], ["BepInEx/plugins/BepInExFixture.dll"])
+        self.assertEqual(ignored, [])
 
 
 class ScannerTests(unittest.TestCase):
