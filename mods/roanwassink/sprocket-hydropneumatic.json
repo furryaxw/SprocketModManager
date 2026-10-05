@@ -18,8 +18,8 @@
     "include_prerelease": true,
     "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
     "assets": {
-      "include": ["SprocketHydropneumatic-v*-manual.zip"],
-      "exclude": []
+      "include": ["SprocketHydropneumatic-v*.zip"],
+      "exclude": ["*-manual.zip"]
     }
   },
   "dependencies": [
@@ -30,6 +30,11 @@
     },
     {
       "id": "hans21223.sprocket-mod-loader",
+      "version": "*",
+      "when": "*"
+    },
+    {
+      "id": "roanwassink.sprocket-keybinds",
       "version": "*",
       "when": "*"
     }
