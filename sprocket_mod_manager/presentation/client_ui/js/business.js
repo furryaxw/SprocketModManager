@@ -30,6 +30,8 @@ function watchEnvironmentData() {
         const axes = environmentKey(result);
         renderStatusbar();
         renderEnvironment();
+        // 行上的兼容性 tooltip 就是按这份环境拼的（`environmentAxesText()`）。
+        renderInstalled();
         if (axes !== state.environmentAxesKey) {
             state.environmentAxesKey = axes;
             void loadCatalog(false);
@@ -52,6 +54,9 @@ function watchQueueData() {
         renderQueue();
         renderModloaders();
         updatePageHeader();
+        // 「已安装」页上的按钮看队列忙不忙（`queueActive()`）：队列一变就得按新状态重画，
+        // 否则上一条任务结束时画下的那把"禁用"会一直留着，直到别的读数才把它翻过来。
+        renderInstalled();
         // 队列跑没跑完也是状态栏要看的活状态。
         renderStatusbar();
         // 队列里失败的那一条也算「出过事」：状态栏红着，直到下一次操作成功；同一个任务只报一次。
@@ -73,6 +78,8 @@ function watchLoadersData() {
         renderModloaders();
         renderEnvironment();
         updatePageHeader();
+        // 加载器的在用版本同样进环境轴的文案，行上的 tooltip 跟着这份读数走。
+        renderInstalled();
     });
 }
 
@@ -98,6 +105,9 @@ function watchServersData() {
         }
         renderDeveloperServers();
         renderCatalog();
+        // 私有包也是「重装」的来源之一（`state.packages` = catalog + servers），
+        // 这份读数一变，「已安装」页的行就得重画才对得上。
+        renderInstalled();
     });
 }
 

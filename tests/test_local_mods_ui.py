@@ -106,5 +106,31 @@ class LocalModsClientUiTests(unittest.TestCase):
             )
 
 
+class InstalledRenderReactionTests(unittest.TestCase):
+    """「哪份读数变了就重画哪一块」写在 `business.js`：页面读到的 key 变了就必须重画那一页。"""
+
+    def setUp(self) -> None:
+        self.business = (
+            Path(__file__).resolve().parent.parent
+            / "sprocket_mod_manager" / "presentation" / "client_ui" / "js" / "business.js"
+        ).read_text(encoding="utf-8")
+
+    def watcher(self, name: str) -> str:
+        return self.business.split(f"function {name}(")[1].split("\n}")[0]
+
+    def test_every_reading_the_installed_page_renders_from_re_renders_it(self) -> None:
+        """行上的按钮与 tooltip 依赖这些读数：队列（忙不忙）、目录与私有服务器（重装来源）、
+        环境与加载器（兼容性那一句话）。少订阅哪一个，界面就会停在旧画面上等一次刷新。"""
+        for name in (
+            "watchInstalledData",
+            "watchQueueData",
+            "watchServersData",
+            "watchEnvironmentData",
+            "watchLoadersData",
+        ):
+            with self.subTest(watcher=name):
+                self.assertIn("renderInstalled();", self.watcher(name))
+
+
 if __name__ == "__main__":
     unittest.main()
