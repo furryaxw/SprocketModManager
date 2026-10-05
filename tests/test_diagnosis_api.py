@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -35,8 +34,55 @@ from sprocket_mod_manager.infrastructure.app_logging import manager_log_path  # 
 from sprocket_mod_manager.infrastructure.config import ConfigStore  # noqa: E402
 from sprocket_mod_manager.presentation.web_gui import ClientApi  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
-SHIPPED_PACK = json.loads((ROOT / "diagnosis.json").read_text(encoding="utf-8"))
+# 用例自带规则包：诊断只跑这里的三条规则，用例不读注册表那侧的 diagnosis.json。
+RULE_PACK = {
+    "schema_version": 1,
+    "pack_version": 1,
+    "entries": [
+        {
+            "id": "no-loader-installed",
+            "check": "loader_missing",
+            "bucket": "optional",
+            "level": 2,
+            "title": {"zh": "还没有装加载器", "en": "No loader is installed"},
+        },
+        {
+            "id": "mod-hook-signature-missing",
+            "match": {
+                "sources": ["loader_log"],
+                "pattern": "Could not find any iCall with the signature '([^']+)'",
+                "min_count": 1,
+            },
+            "bucket": "optional",
+            "level": 3,
+            "title": {
+                "zh": "某个模组的运行时挂钩没接上",
+                "en": "A mod hook could not be attached",
+            },
+            "tutorial": {
+                "en": [
+                    "Open the Installed page and find the mod that reported this",
+                    "Choose Reinstall to move to the latest release",
+                ]
+            },
+            "go_to": {"page": "installed"},
+        },
+        {
+            "id": "unity-online-services-unreachable",
+            "match": {
+                "sources": ["unity_log", "loader_log"],
+                "pattern": "Could not resolve host: [^ ]*unity3d\\.com",
+                "min_count": 1,
+            },
+            "bucket": "optional",
+            "level": 5,
+            "title": {
+                "zh": "Unity 的在线服务连不上",
+                "en": "Unity online services are unreachable",
+            },
+        },
+    ],
+}
 
 ICALL_LINE = (
     "[07:55:36.342] [WARNING] [UnityExplorer] [UniverseLib] "
@@ -90,7 +136,7 @@ class DiagnosisApiTests(unittest.TestCase):
         api.service.registry = Registry(
             [loader_package()],
             _loader_table(),
-            diagnosis=SHIPPED_PACK if pack is None else pack,
+            diagnosis=RULE_PACK if pack is None else pack,
         )
         self.addCleanup(api.install_queue.close)
         self.addCleanup(api._environment_monitor.stop)
@@ -226,8 +272,8 @@ class DiagnosisApiTests(unittest.TestCase):
         report = api.run_diagnosis()["report"]
 
         self.assertEqual(report["pack_source"], "registry")
-        self.assertEqual(report["pack_version"], SHIPPED_PACK["pack_version"])
-        self.assertEqual(report["rules_total"], len(SHIPPED_PACK["entries"]))
+        self.assertEqual(report["pack_version"], RULE_PACK["pack_version"])
+        self.assertEqual(report["rules_total"], len(RULE_PACK["entries"]))
         self.assertGreater(report["lines_read"], 0, "管理器自己那份日志总是读得到")
 
     def test_a_finding_carries_both_languages_and_an_in_app_target(self) -> None:
@@ -419,7 +465,7 @@ class StreamingDeliveryTests(unittest.TestCase):
                     registry=None,
                     installed={},
                     environment=None,
-                    pack=SHIPPED_PACK,
+                    pack=RULE_PACK,
                     pack_source="registry",
                     specs=(LogSpec(role="loader_log", label="Latest.log", path=path),),
                     on_progress=on_progress,

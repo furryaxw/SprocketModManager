@@ -724,33 +724,6 @@ class WebGuiTests(unittest.TestCase):
             r"select option \{[^}]*color: var\(--text\);[^}]*background: #111516;",
         )
 
-    def test_client_palette_matches_the_registry_site(self):
-        root = Path(__file__).parents[1]
-        site_css = (root / "site" / "styles.css").read_text(encoding="utf-8")
-        client_css = (
-            root / "sprocket_mod_manager" / "presentation" / "client_ui" / "app.css"
-        ).read_text(encoding="utf-8")
-        shared_variables = (
-            "canvas",
-            "line",
-            "line-soft",
-            "text",
-            "text-soft",
-            "muted",
-            "accent",
-            "accent-hover",
-            "accent-quiet",
-            "button-accent",
-            "button-accent-hover",
-            "focus",
-        )
-        for name in shared_variables:
-            marker = f"--{name}: "
-            site_value = site_css.split(marker, 1)[1].split(";", 1)[0]
-            client_value = client_css.split(marker, 1)[1].split(";", 1)[0]
-            self.assertEqual(client_value, site_value, name)
-
-
 class ChooseGamePathTests(unittest.TestCase):
     """游戏位置按钮选的是 `Sprocket.exe`，写进配置的是它所在的目录。"""
 

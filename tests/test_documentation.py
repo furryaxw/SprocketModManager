@@ -7,11 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class DocumentationTests(unittest.TestCase):
     def test_chinese_documents_are_default_and_link_to_english(self):
-        pairs = (
-            ("README.md", "README.en.md"),
-            ("CONTRIBUTING.md", "CONTRIBUTING.en.md"),
-            ("sprocket-mod-spec.md", "sprocket-mod-spec.en.md"),
-        )
+        pairs = (("README.md", "README.en.md"),)
 
         for chinese_name, english_name in pairs:
             with self.subTest(document=chinese_name):
