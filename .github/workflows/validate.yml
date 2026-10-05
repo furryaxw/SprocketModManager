@@ -5,9 +5,12 @@ on:
     paths:
       - "mods/**"
       - "schemas/**"
+      - "registry_core/**"
       - "gen-index.py"
       - "validate_registry.py"
-      - "sprocket_mod_manager/semver.py"
+      - "providers.json"
+      - "diagnosis.json"
+      - "override.json"
   push:
     branches: [registry]
 
