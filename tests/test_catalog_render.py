@@ -760,6 +760,25 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertIn("error", info["sprocket"]["className"])
         self.assertIn("Sprocket 0.127 detected", " ".join(self._texts(info["note"])))
 
+    def test_clicking_a_row_keeps_the_list_and_its_scroll_untouched(self) -> None:
+        """单击一行只换「选中」那一行的样式与右侧详情：列表不重画，滚动位置留在原处。"""
+        result = self._render(
+            packages=[
+                package("test.first", [("1.0.0", "compatible")]),
+                package("test.second", [("1.0.0", "compatible")]),
+            ],
+            click_row=1,
+            scroll_top=480,
+        )
+
+        click = result["rowClick"]
+        self.assertEqual(click["selected"], "test.second")
+        self.assertEqual(click["selectedRows"], ["test.second"], "选中挪到点的那一行上")
+        self.assertEqual(click["detailId"], "test.second", "右侧详情跟着选中的包走")
+        self.assertEqual(click["rebuilds"], 0, "选中不改列表内容，不该重画整份列表")
+        self.assertTrue(click["sameNodes"], "列表行还是原来那些节点")
+        self.assertEqual(click["scrollAfter"], 480, "点一行不能把列表滚走")
+
 
 if __name__ == "__main__":
     unittest.main()

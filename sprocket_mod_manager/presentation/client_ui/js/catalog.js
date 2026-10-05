@@ -204,6 +204,7 @@ function renderCatalog() {
         const row = document.createElement("article");
         row.className = "package-row";
         row.tabIndex = 0;
+        row.dataset.packageId = pkg.id;
         row.classList.toggle("selected", state.selectedId === pkg.id);
         row.addEventListener("click", () => selectPackage(pkg.id));
         row.addEventListener("keydown", (event) => {
@@ -271,11 +272,29 @@ function renderCatalog() {
     renderDetail();
 }
 
+/**
+ * 点一行只改两处：哪一行是选中的，以及右侧详情。
+ *
+ * 整份列表重画等于把滚动容器交给浏览器重新排版，位置就不再由这里说了算；选中本来也不改
+ * 列表的内容（可见的包、筛选、计数都没变），所以只把 `selected` 挪到当前这一行上。
+ */
 function selectPackage(packageId) {
     state.selectedId = packageId;
-    renderCatalog();
+    paintSelectedRow();
+    renderDetail();
     const pkg = state.packages.find((item) => item.id === packageId);
     if (!pkg?.private) void loadPackageReadme(packageId);
+}
+
+/** 把 `selected` 挪到当前选中的那一行：列表其余节点连身份一起留着。 */
+function paintSelectedRow() {
+    const {container} = packageBrowserView();
+    if (!container) return;
+    for (const row of container.children || []) {
+        // 只有包行带 `data-package-id`（分组标题那些不带）。
+        if (!row.dataset?.packageId) continue;
+        row.classList.toggle("selected", row.dataset.packageId === state.selectedId);
+    }
 }
 
 /**

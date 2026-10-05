@@ -32,6 +32,8 @@ class FakeElement {
         this.checked = false;
         this.listeners = {};
         this.attributes = {};
+        this.dataset = {};
+        this.scrollTop = 0;
         this._text = "";
     }
 
@@ -369,6 +371,36 @@ const readmeOpened = readmeDetails ? {
     text: readmeText(),
 } : null;
 
+// 单击一行：只该挪「选中」那行的样式与右侧详情 —— 列表不重画，滚动位置因此留在原处。
+let rowClick = null;
+if (Number.isInteger(payload.click_row)) {
+    const list = elements[listSelector];
+    const originalReplace = list.replaceChildren;
+    let rebuilds = 0;
+    list.replaceChildren = function (...nodes) {
+        rebuilds += 1;
+        return originalReplace.apply(this, nodes);
+    };
+    const before = packageRows();
+    list.scrollTop = Number(payload.scroll_top || 0);
+    const scrollBefore = list.scrollTop;
+    const target = before[payload.click_row];
+    for (const handler of target?.listeners?.click || []) handler({});
+    const after = packageRows();
+    rowClick = {
+        rebuilds,
+        scrollBefore,
+        scrollAfter: list.scrollTop,
+        sameNodes: before.length === after.length && before.every((row, index) => row === after[index]),
+        selected: sandbox.__state.selectedId,
+        selectedRows: after
+            .filter((row) => row.className.split(" ").includes("selected"))
+            .map((row) => row.dataset.packageId),
+        detailId: findIn(elements[detailSelector], ".detail-id")?.textContent || "",
+    };
+    list.replaceChildren = originalReplace;
+}
+
 const report = () => process.stdout.write(JSON.stringify({
         rows: firstRender.rows,
         emptyState: firstRender.emptyState,
@@ -393,6 +425,7 @@ const report = () => process.stdout.write(JSON.stringify({
         },
         detail: detailSnapshot,
         readme: {default: readme, opened: readmeOpened},
+        rowClick,
 }));
 if (catalogLoadPending) {
     catalogLoadPending
