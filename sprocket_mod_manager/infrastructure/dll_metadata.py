@@ -784,8 +784,9 @@ def _disk_cache_enabled() -> bool:
 def configure_metadata_backend(backend: object | None) -> None:
     """把缓存后端换成独立文件/LRU 之类；传 None 回到"独立缓存文件"模式。
 
-    后端只需实现 `load_sections() -> dict` 与 `store_sections(sections)`，
-    sections 形状为 `{"schema_version": 1, "files": {...}, "meta": {...}}`。
+    后端只需实现 `load_sections() -> dict` 与 `store_sections(sections)`，并原样保管
+    `schema_version` —— 它标的是**解析结果**的形状（见 `_CACHE_VERSION`），由本模块
+    判断还能不能用。
     """
     global _metadata_backend, _disk_cache_path, _sections, _sections_loaded, _sections_dirty
     _metadata_backend = backend
@@ -808,7 +809,10 @@ def _load_sections() -> None:
         except (OSError, ValueError):
             # 后端坏了不是错误：丢掉重新解析即可。
             return
-        payload = candidate if isinstance(candidate, dict) else None
+        # 解析结果的形状由 `_CACHE_VERSION` 说了算，后端只负责存取：旧格式的解析结果
+        # 缺新字段，拿来用比重新解析更错。
+        if isinstance(candidate, dict) and candidate.get("schema_version") == _CACHE_VERSION:
+            payload = candidate
     elif _disk_cache_path is not None and _disk_cache_path.is_file():
         try:
             candidate = json.loads(_disk_cache_path.read_text(encoding="utf-8"))

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from unittest.mock import patch
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "dll"
 FIXTURE_MOD = FIXTURE_DIR / "FixtureMod.dll"
 FIXTURE_PLUGIN = FIXTURE_DIR / "FixturePlugin.dll"
+FIXTURE_BEPINEX = FIXTURE_DIR / "BepInExFixture.dll"
 
 
 class DiskMetadataCacheTests(unittest.TestCase):
@@ -97,6 +99,41 @@ class DiskMetadataCacheTests(unittest.TestCase):
             finally:
                 module.configure_metadata_cache(None)
                 module.clear_metadata_cache(include_disk=True)
+
+    def test_a_cache_from_an_older_parse_format_is_re_parsed(self) -> None:
+        """解析结果换了形状（这里：多出 BepInEx 插件字段）时，旧缓存必须整份作废。"""
+        from sprocket_mod_manager.infrastructure import dll_metadata as module
+        from sprocket_mod_manager.infrastructure.file_metadata import FileMetadataStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "BepInExFixture.dll"
+            shutil.copyfile(FIXTURE_BEPINEX, target)
+            cache_path = root / "file-metadata.json"
+            digest = "d" * 64
+            cache_path.write_text(
+                json.dumps({
+                    "schema_version": module._CACHE_VERSION - 1,  # noqa: SLF001
+                    "files": {
+                        str(target): {
+                            "size": target.stat().st_size,
+                            "mtime": target.stat().st_mtime_ns,
+                            "hash": digest,
+                        }
+                    },
+                    # 旧格式的解析结果：没有 plugin_guid，拿来用就等于「这个 BepInEx 插件不认识」。
+                    "meta": {digest: {"is_managed": True, "melon_kind": None}},
+                }),
+                encoding="utf-8",
+            )
+            module.configure_metadata_backend(FileMetadataStore(cache_path))
+            try:
+                metadata = module.read_cached_metadata(target)
+            finally:
+                module.configure_metadata_backend(None)
+                module.clear_metadata_cache(include_disk=True)
+
+        self.assertEqual(metadata.plugin_guid, "fixture.bepinex-plugin")
 
     def test_missing_or_corrupt_cache_is_not_fatal(self) -> None:
         from sprocket_mod_manager.infrastructure import dll_metadata as module

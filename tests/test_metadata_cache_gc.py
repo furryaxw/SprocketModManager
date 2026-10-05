@@ -39,6 +39,8 @@ class MetadataCacheGcTests(unittest.TestCase):
         self._directory.cleanup()
 
     def _seed(self, payload: dict) -> None:
+        # 种子必须是**当前**解析格式：版本对不上时缓存整份作废（见 `_CACHE_VERSION`）。
+        payload.setdefault("schema_version", dll_metadata._CACHE_VERSION)  # noqa: SLF001
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         dll_metadata.clear_metadata_cache(include_disk=True)
@@ -50,7 +52,7 @@ class MetadataCacheGcTests(unittest.TestCase):
     def test_drops_vanished_paths_and_unreferenced_hashes(self) -> None:
         gone = self.game / "Mods" / "Gone.dll"
         self._seed({
-            "schema_version": 1,
+            "schema_version": dll_metadata._CACHE_VERSION,  # noqa: SLF001
             "files": {
                 str(self.existing): {"size": 7, "mtime": 1, "hash": "a" * 64},
                 str(gone): {"size": 7, "mtime": 1, "hash": "b" * 64},
@@ -72,7 +74,7 @@ class MetadataCacheGcTests(unittest.TestCase):
         second = self.game / "Mods" / "Second.dll"
         second.write_bytes(b"second")
         self._seed({
-            "schema_version": 1,
+            "schema_version": dll_metadata._CACHE_VERSION,  # noqa: SLF001
             "files": {
                 str(self.existing): {"size": 7, "mtime": 1, "hash": "a" * 64},
                 str(second): {"size": 6, "mtime": 2, "hash": "b" * 64},
@@ -91,7 +93,7 @@ class MetadataCacheGcTests(unittest.TestCase):
     def test_prune_returns_what_it_dropped(self) -> None:
         gone = self.game / "Mods" / "Gone.dll"
         self._seed({
-            "schema_version": 1,
+            "schema_version": dll_metadata._CACHE_VERSION,  # noqa: SLF001
             "files": {
                 str(self.existing): {"size": 7, "mtime": 1, "hash": "a" * 64},
                 str(gone): {"size": 7, "mtime": 1, "hash": "b" * 64},

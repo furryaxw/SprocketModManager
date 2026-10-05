@@ -5,8 +5,9 @@
 对外只暴露 `load_sections()` / `store_sections(sections)`，与 `dll_metadata.configure_metadata_backend`
 要求的后端接口一致，所以 `dll_metadata` 不需要知道它落在哪个文件里。
 
-结构（v1，**按内容 hash 键**）：
-`{"schema_version": 1, "files": {"<绝对路径>": {"size":…, "mtime":…, "hash":"…"}}, "meta": {"<hash>": {…}}}`
+结构（**按内容 hash 键**）：
+`{"schema_version": n, "files": {"<绝对路径>": {"size":…, "mtime":…, "hash":"…"}}, "meta": {"<hash>": {…}}}`。
+`schema_version` 是解析结果的形状，由 `dll_metadata` 判断能不能用；这里只负责原样存取。
 """
 
 from __future__ import annotations
@@ -17,8 +18,6 @@ import os
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
-
-SCHEMA_VERSION = 1
 
 
 class FileMetadataStore:
@@ -34,14 +33,12 @@ class FileMetadataStore:
             # 缓存坏了不是错误：丢掉重新解析即可。
             LOGGER.warning("metadata cache file is unreadable, starting empty: %s", exc)
             return {}
-        if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
-            return {}
-        return payload
+        return payload if isinstance(payload, dict) else {}
 
     def store_sections(self, sections: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": sections.get("schema_version"),
             "files": dict(sections.get("files") or {}),
             "meta": dict(sections.get("meta") or {}),
         }
