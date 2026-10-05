@@ -308,7 +308,12 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
         },
-        "layout": { "enum": ["file", "tree"] }
+        "layout": { "enum": ["file", "tree"] },
+        "when": {
+          "description": "Range over the package's own versions this rule applies to; omitted means every version.",
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "payloadRule": {
@@ -321,7 +326,12 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
         },
-        "layout": { "enum": ["file", "tree"] }
+        "layout": { "enum": ["file", "tree"] },
+        "when": {
+          "description": "Range over the package's own versions this rule applies to; omitted means every version.",
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

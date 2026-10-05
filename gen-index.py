@@ -873,6 +873,23 @@ def release_source_type(package: dict[str, Any]) -> str:
     return "github"
 
 
+def validate_rule_version(rule: dict, kind: str) -> None:
+    """安装规则的可选 `when`：当前包自己的版本区间（与依赖那一项同一套写法）。
+
+    一个仓库两条发布线（例如 MelonLoader 与 BepInEx）时靠它分流：同一个文件名两条规则，
+    各管自己那一段版本，安装位置与隐含的加载器依赖都跟着版本走。
+    """
+    if "when" not in rule:
+        return
+    when = rule["when"]
+    if not isinstance(when, str) or not when.strip():
+        raise RegistryError(f"{kind} rule when must be a non-empty version range")
+    try:
+        validate_range(when)
+    except ValueError as exc:
+        raise RegistryError(f"invalid {kind} rule when: {when!r}") from exc
+
+
 def validate_file_rules(rules: object) -> None:
     if not isinstance(rules, list):
         raise RegistryError("install.files must be a list")
@@ -893,6 +910,7 @@ def validate_file_rules(rules: object) -> None:
             raise RegistryError(f"invalid install subpath: {rule['subpath']!r}")
         if "layout" in rule and rule["layout"] not in {"file", "tree"}:
             raise RegistryError(f"invalid install layout: {rule['layout']!r}")
+        validate_rule_version(rule, "install file")
 
 
 def validate_payload_rules(rules: object) -> None:
@@ -914,6 +932,7 @@ def validate_payload_rules(rules: object) -> None:
             raise RegistryError(f"invalid install subpath: {rule['subpath']!r}")
         if "layout" in rule and rule["layout"] not in {"file", "tree"}:
             raise RegistryError(f"invalid install layout: {rule['layout']!r}")
+        validate_rule_version(rule, "install payload")
 
 
 def validate_replace_types(install: dict[str, Any], mode: str) -> None:

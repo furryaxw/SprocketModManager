@@ -326,7 +326,13 @@ packages and asks the user to install one of them from the modloader page. A typ
 single supplier is still pulled in automatically as an implicit dependency.
 
 The first matching rule in `install.files` decides a file's type, and the type's
-supplier then decides the directory:
+supplier then decides the directory. Every install rule may carry an optional `when`
+(a version range over the package's own versions, written like the dependency field of
+the same name): only versions inside it use that rule. A repository that publishes a
+MelonLoader line and a BepInEx line puts one rule per line, the boundary version in each
+`when`, and one entry then installs into the right directory per version — the implicit
+loader dependency follows that version too. No `when` means every version; when the
+version cannot be read, only rules without a `when` match.
 
 ```json
 "install": {
