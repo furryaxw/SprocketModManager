@@ -24,7 +24,7 @@
   },
   "dependencies": [],
   "recommendations": [],
-  "featured": true,
+  "featured": false,
   "install": {
     "files": [
       {
