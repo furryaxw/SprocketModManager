@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
-from sprocket_mod_manager.domain.diagnosis import (
+from registry_core.diagnosis import (
     BUCKETS,
     CHECKS,
     GO_TO_PAGES,
@@ -26,7 +26,7 @@ from sprocket_mod_manager.domain.diagnosis import (
     MIN_LEVEL,
     diagnosis_pack,
 )
-from sprocket_mod_manager.domain.semver import Version, satisfies, validate_range
+from registry_core.semver import Version, satisfies, validate_range
 
 REQUIRED_FIELDS = {
     "schema_version",

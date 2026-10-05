@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from sprocket_mod_manager.domain.registry import Registry
+from registry_core.registry import Registry
 
 ROOT = Path(__file__).resolve().parents[1]
 REAL_META = ROOT / "mods" / "furryaxw" / "sprocket-depth.json"
@@ -253,7 +253,13 @@ class BaselineTests(unittest.TestCase):
     def test_the_loader_gets_the_baseline_and_a_failed_fetch_keeps_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
-            copy_package(mods_dir, "furryaxw.sprocket-depth", "lavagang.melonloader")
+            copy_package(
+                mods_dir,
+                "furryaxw.sprocket-depth",
+                "lavagang.melonloader",
+                "bepinex.bepinex-be",
+                "hans21223.sprocket-mod-loader",
+            )
             meta = json.loads(REAL_META.read_text(encoding="utf-8"))
             known = normalize(
                 meta,
@@ -1007,7 +1013,13 @@ class ProvidersTableTests(unittest.TestCase):
     def test_the_generated_index_carries_the_table(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
-            copy_package(mods_dir, "furryaxw.sprocket-depth", "lavagang.melonloader")
+            copy_package(
+                mods_dir,
+                "furryaxw.sprocket-depth",
+                "lavagang.melonloader",
+                "bepinex.bepinex-be",
+                "hans21223.sprocket-mod-loader",
+            )
             providers_file = self.write_table(
                 directory,
                 {"entries": [{"loader": LOADER_ID, "version": ">=0.7.0 <0.8.0", "sprocket": "<0.2.54"}]},
@@ -1154,7 +1166,13 @@ class DiagnosisPackTests(unittest.TestCase):
     def test_the_generated_index_carries_the_pack(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
-            copy_package(mods_dir, "furryaxw.sprocket-depth", "lavagang.melonloader")
+            copy_package(
+                mods_dir,
+                "furryaxw.sprocket-depth",
+                "lavagang.melonloader",
+                "bepinex.bepinex-be",
+                "hans21223.sprocket-mod-loader",
+            )
             diagnosis_file = self.write_pack(directory, {"pack_version": 2, "entries": [rule()]})
 
             index = GEN_INDEX.generate_index(
