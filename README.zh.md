@@ -245,8 +245,8 @@ Free code signing provided by SignPath.io, certificate by SignPath Foundation
 
 ## Registry
 
-元数据规范见 [sprocket-mod-spec.zh.md](sprocket-mod-spec.zh.md)，作者提交流程见
-[CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。`site/` 是无需构建框架的 GitHub Pages 页面；
+元数据规范见 [sprocket-mod-spec.zh.md](https://github.com/furryaxw/SprocketModManager/blob/registry/sprocket-mod-spec.zh.md)，作者提交流程见
+[CONTRIBUTING.zh.md](https://github.com/furryaxw/SprocketModManager/blob/registry/CONTRIBUTING.zh.md)。`site/` 是无需构建框架的 GitHub Pages 页面；
 `.github/workflows/pages.yml` 会在提交后及每小时生成带 Release 快照的索引并部署它。
 
 ## License

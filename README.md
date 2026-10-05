@@ -284,8 +284,8 @@ network under the
 
 ## Registry
 
-See [sprocket-mod-spec.en.md](sprocket-mod-spec.en.md) for the metadata specification
-and [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the author submission workflow.
+See [sprocket-mod-spec.en.md](https://github.com/furryaxw/SprocketModManager/blob/registry/sprocket-mod-spec.en.md) for the metadata specification
+and [CONTRIBUTING.en.md](https://github.com/furryaxw/SprocketModManager/blob/registry/CONTRIBUTING.en.md) for the author submission workflow.
 `site/` is a framework-free GitHub Pages site; `.github/workflows/pages.yml`
 generates and deploys the Release snapshot after pushes and once per hour.
 
