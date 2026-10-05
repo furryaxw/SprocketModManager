@@ -1,34 +1,6 @@
-class ModManagerError(RuntimeError):
-    """Base error shown to CLI and GUI users."""
+"""门面：实现放在 `registry_core`，注册表工具与客户端共用同一份领域规则。
 
+客户端各处按这个路径 import，所以这里只做再导出；新代码直接 import `registry_core`。
+"""
 
-class RegistryError(ModManagerError):
-    pass
-
-
-class DownloadError(ModManagerError):
-    pass
-
-
-class ResolutionError(ModManagerError):
-    pass
-
-
-class ScanError(ModManagerError):
-    pass
-
-
-class InstallError(ModManagerError):
-    pass
-
-
-class InstallConflictError(InstallError):
-    code = "file_conflict"
-
-
-class ModToggleError(ModManagerError):
-    pass
-
-
-class CatalogBusyError(ModManagerError):
-    code = "catalog_busy"
+from registry_core.errors import *  # noqa: F401,F403

@@ -3,6 +3,11 @@
 `sprocket_mod_manager` is organized by responsibility. Its root contains only
 `__init__.py`; implementation modules belong to one of five explicit packages.
 
+The registry tooling and the client share `registry_core/` — versions, the package model,
+compatibility rules, diagnosis rules, and safe package paths. The client's
+`sprocket_mod_manager/domain/` and `.../utilities/package_paths.py` are re-export facades over
+it, so registry builds (`gen-index.py`, `validate_registry.py`) need no client code.
+
 ```text
 sprocket_mod_manager/
 |-- domain/          # Business data and rules
