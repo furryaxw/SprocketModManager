@@ -185,6 +185,20 @@ def validate_providers(index_module, loader_ids) -> list[str]:
     return errors
 
 
+def validate_overrides(index_module, packages) -> list[str]:
+    """The compatibility override table: a broken range or a stale package id would leave some
+    release without a declaration, so it fails here. Having no entry is a normal state."""
+    path = index_module.OVERRIDE_FILE
+    if not path.is_file():
+        return [f"{path.name} is missing"]
+    _, warnings = index_module.load_compat_overrides(
+        path,
+        {package["id"] for package in packages},
+        index_module.compat_capabilities({package["id"]: package for package in packages}),
+    )
+    return list(warnings)
+
+
 def validate_diagnosis(index_module, package_ids) -> list[str]:
     """The diagnosis rule pack ships to clients through the index, so an entry the loader drops
     has to fail here: a rule that never fires is worse than a rule that was never written."""
@@ -223,6 +237,9 @@ def main() -> int:
     failures.extend(
         f"diagnosis: {error}"
         for error in validate_diagnosis(index_module, {package["id"] for package in packages})
+    )
+    failures.extend(
+        f"override: {error}" for error in validate_overrides(index_module, packages)
     )
     if args.offline:
         if failures:

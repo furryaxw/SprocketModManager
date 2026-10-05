@@ -26,7 +26,7 @@ from sprocket_mod_manager.domain.diagnosis import (
     MIN_LEVEL,
     diagnosis_pack,
 )
-from sprocket_mod_manager.domain.semver import Version, validate_range
+from sprocket_mod_manager.domain.semver import Version, satisfies, validate_range
 
 REQUIRED_FIELDS = {
     "schema_version",
@@ -86,6 +86,9 @@ PROVIDERS_FILE = Path(__file__).resolve().parent / PROVIDERS_FILE_NAME
 # 诊断规则包：日志签名与环境检查。改动靠发索引生效，所以坏条目在这里挡住，别留着让客户端猜。
 DIAGNOSIS_FILE_NAME = "diagnosis.json"
 DIAGNOSIS_FILE = Path(__file__).resolve().parent / DIAGNOSIS_FILE_NAME
+# 兼容声明覆盖表：上游模组的 release 正文里没有 `sp-compat` 块时，用它补上区间。
+OVERRIDE_FILE_NAME = "override.json"
+OVERRIDE_FILE = Path(__file__).resolve().parent / OVERRIDE_FILE_NAME
 # 索引目录里的三份文件：包列表、游戏与加载器环境、诊断规则包。
 # 诊断那份与规则源文件同名，但落在输出目录里。
 PACKAGES_FILE_NAME = "packages.json"
@@ -371,23 +374,15 @@ def canonical_compat_range(items: list[str], parts: int) -> str:
     return " || ".join(clauses)
 
 
-def parse_compat_block(body: object, capabilities: dict[str, int]) -> tuple[dict[str, str], list[str]]:
-    """发布说明里的 `sp-compat` 块 -> {能力 id: 规范化区间}，外加（非致命的）写法告警。
+def compat_ranges(
+        payload: dict[str, Any],
+        capabilities: dict[str, int],
+) -> tuple[dict[str, str], list[str]]:
+    """`{能力 id: 区间字符串或它们的列表}` -> `{能力 id: 规范化区间}`，外加未知能力的告警。
 
-    没有块＝这条 release 没有声明（返回空，不报错）。块在但内容没法用 -> CompatibilityError，
-    调用方把该 release 记成「未声明」，其他 release 不受影响。
+    键先规范化：发布说明里可能用的是简称键名（`sprocket` / `melonloader`），否则一个还能用的
+    声明会被当成未知轴丢掉。
     """
-    match = COMPAT_BLOCK_RE.search(str(body or ""))
-    if match is None:
-        return {}, []
-    try:
-        payload = json.loads(match.group("body"))
-    except json.JSONDecodeError as exc:
-        raise CompatibilityError(f"sp-compat 块不是合法 JSON：{exc}") from exc
-    if not isinstance(payload, dict):
-        raise CompatibilityError("sp-compat 块必须是一个 JSON 对象")
-    # 发布说明里可能用的是简称键名（`sprocket` / `melonloader`）：先规范化，
-    # 否则一个还能用的声明会被当成未知轴丢掉。
     payload = {current_capability_name(key): value for key, value in payload.items()}
 
     warnings: list[str] = []
@@ -407,15 +402,47 @@ def parse_compat_block(body: object, capabilities: dict[str, int]) -> tuple[dict
     return declared, warnings
 
 
+def parse_compat_block(body: object, capabilities: dict[str, int]) -> tuple[dict[str, str], list[str]]:
+    """发布说明里的 `sp-compat` 块 -> {能力 id: 规范化区间}，外加（非致命的）写法告警。
+
+    没有块＝这条 release 没有声明（返回空，不报错）。块在但内容没法用 -> CompatibilityError，
+    调用方把该 release 记成「未声明」，其他 release 不受影响。
+    """
+    match = COMPAT_BLOCK_RE.search(str(body or ""))
+    if match is None:
+        return {}, []
+    try:
+        payload = json.loads(match.group("body"))
+    except json.JSONDecodeError as exc:
+        raise CompatibilityError(f"sp-compat 块不是合法 JSON：{exc}") from exc
+    if not isinstance(payload, dict):
+        raise CompatibilityError("sp-compat 块必须是一个 JSON 对象")
+    return compat_ranges(payload, capabilities)
+
+
+def _capability_dependencies(
+        declared: dict[str, str],
+        capabilities: dict[str, int],
+) -> list[dict[str, str]]:
+    return [
+        {"id": capability_id, "version": declared[capability_id]}
+        for capability_id in capabilities
+        if capability_id in declared
+    ]
+
+
 def apply_release_compatibility(
         releases: list[dict[str, Any]],
         capabilities: dict[str, int],
+        overrides: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """把兼容声明落成对能力的依赖，并处理继承。
 
     从旧到新走一遍：自己有可用声明就用自己那份；没有就沿用比它旧、最近一个有可用声明的
     release（`compatibility.from_tag` 始终指向**最初声明**的那个 tag，继承链不会越接越长）；
-    写坏的声明不继承，只留告警。
+    写坏的声明不继承，只留告警。正文没写（或写坏）`sp-compat` 的 release 先看 `overrides`
+    （这个包的覆盖条目，先命中的优先），命中的那条说的是哪个版本段就是哪个 —— 它比继承优先，
+    否则一个包里只有最早命中的那条生效。补上的那份和作者写的一样成为后面 release 的继承来源。
     """
     ordered = sorted(releases, key=lambda entry: _release_version(entry) or Version.parse("0.0.0"))
     carried_dependencies: list[dict[str, str]] | None = None
@@ -430,12 +457,22 @@ def apply_release_compatibility(
         migrate_release_dependencies([entry])
         compatibility: dict[str, Any] = {}
 
+        # 基线里自己声明过的条目（`source: declared`，正文或上一轮的覆盖表写的）以它为准；
+        # 只有继承来的那份才让位给覆盖表。
+        source = str((entry.get("compatibility") or {}).get("source"))
+        version = _release_version(entry)
+        if not declared and version is not None and source != "declared":
+            matched = match_compat_override(overrides or [], version)
+            if matched is not None:
+                # 上一遍落在条目上的告警（正文写坏）不能跟着被替换掉的区间一起丢。
+                stored = list((entry.get("compatibility") or {}).get("warnings") or [])
+                warnings = stored or warnings
+                entry.pop("dependencies", None)
+                entry.pop("compatibility", None)
+                declared = matched
+
         if declared:
-            dependencies = [
-                {"id": capability_id, "version": declared[capability_id]}
-                for capability_id in capabilities
-                if capability_id in declared
-            ]
+            dependencies = _capability_dependencies(declared, capabilities)
             entry["dependencies"] = dependencies
             compatibility = {"source": "declared"}
             carried_dependencies = dependencies
@@ -464,6 +501,100 @@ def _package_compatibility_warnings(releases: list[dict[str, Any]]) -> list[str]
         for message in (entry.get("compatibility") or {}).get("warnings", []) or []:
             collected.append(f"{tag}: {message}")
     return collected
+
+
+def match_compat_override(
+        entries: list[dict[str, Any]],
+        version: Version,
+) -> dict[str, str] | None:
+    """这条 release 版本命中的第一条覆盖声明；一个包里先写的条目优先。"""
+    for entry in entries:
+        if satisfies(version, entry["version"]):
+            return dict(entry["compat"])
+    return None
+
+
+def unmatched_compat_overrides(
+        entries: list[dict[str, Any]],
+        releases: list[dict[str, Any]],
+) -> list[str]:
+    """没有对上这个包任何 release 版本的覆盖条目：区间写错或者包换错了才会这样。"""
+    versions = [version for version in map(_release_version, releases) if version is not None]
+    return [
+        entry["version"]
+        for entry in entries
+        if not any(satisfies(version, entry["version"]) for version in versions)
+    ]
+
+
+def load_compat_overrides(
+        path: Path,
+        package_ids: set[str] | None = None,
+        capabilities: dict[str, int] | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    """读兼容声明覆盖表：`{包 id: [{version, compat}]}`，一个包里的条目按文件顺序分优先级。
+
+    返回 (表, 告警)。文件不存在、或者条目是空列表，都是没有这张表的意思；某一条写坏只跳过
+    那一条并留告警，不影响其他条目，也不影响索引生成。给定了 `package_ids` 时，`id` 必须是
+    注册表里某个包 —— 否则这条覆盖谁也认不出来；`capabilities` 给出能力轴与各自的段数，
+    不给就只有游戏轴。`version` 是包自己 release 版本的区间，省略表示这个包的全部 release。
+    """
+    warnings: list[str] = []
+    if not path.is_file():
+        return {}, warnings
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, [f"{path.name}: 无法读取（{exc}）"]
+
+    if not isinstance(raw, dict):
+        return {}, [f"{path.name}: 顶层必须是对象"]
+    unknown = sorted(set(raw) - {"schema_version", "entries"})
+    if unknown:
+        warnings.append(f"{path.name}: 忽略了未知键 {', '.join(unknown)}")
+    entries = raw.get("entries")
+    if not isinstance(entries, list):
+        warnings.append(f"{path.name}: entries 必须是列表")
+        return {}, warnings
+
+    parts = capabilities if capabilities is not None else {GAME_CAPABILITY_ID: GAME_VERSION_SEGMENTS}
+    table: dict[str, list[dict[str, Any]]] = {}
+    for position, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            warnings.append(f"{path.name} 第 {position} 条：必须是对象")
+            continue
+        missing = sorted({"id", "compat"} - set(entry))
+        if missing:
+            warnings.append(f"{path.name} 第 {position} 条：缺少 {', '.join(missing)}")
+            continue
+        package_id = str(entry["id"])
+        if package_ids is not None and package_id not in package_ids:
+            warnings.append(f"{path.name} 第 {position} 条：未知的包 {package_id}")
+            continue
+        version = entry.get("version", "*")
+        if not isinstance(version, str):
+            warnings.append(f"{path.name} 第 {position} 条：version 必须是区间字符串")
+            continue
+        try:
+            validate_range(version)
+        except ValueError as exc:
+            warnings.append(f"{path.name} 第 {position} 条：{exc}")
+            continue
+        compat = entry["compat"]
+        if not isinstance(compat, dict) or not compat:
+            warnings.append(f"{path.name} 第 {position} 条：compat 必须是非空对象")
+            continue
+        try:
+            ranges, compat_warnings = compat_ranges(compat, parts)
+        except CompatibilityError as exc:
+            warnings.append(f"{path.name} 第 {position} 条：{exc}")
+            continue
+        warnings.extend(f"{path.name} 第 {position} 条：{message}" for message in compat_warnings)
+        if not ranges:
+            warnings.append(f"{path.name} 第 {position} 条：compat 里没有可用的能力轴")
+            continue
+        table.setdefault(package_id, []).append({"version": version, "compat": ranges})
+    return table, warnings
 
 
 def normalize_release_records(
@@ -1524,11 +1655,19 @@ def generate_index(
     fallback_index_url: str = FALLBACK_INDEX_URL,
     providers_file: Path | None = None,
     diagnosis_file: Path | None = None,
+    override_file: Path | None = None,
     refresh: bool = False,
 ) -> dict:
     packages = scan_mods(mods_dir)
     by_id = {package["id"]: package for package in packages}
     capabilities = compat_capabilities(by_id)
+    overrides, override_warnings = load_compat_overrides(
+        override_file if override_file is not None else OVERRIDE_FILE,
+        set(by_id),
+        capabilities,
+    )
+    for warning in override_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
     baseline = {} if refresh else dict(baseline_releases or {})
     if release_loader:
         fallback_releases: dict[str, list[dict[str, Any]]] | None = None
@@ -1580,9 +1719,25 @@ def generate_index(
                     f"no release data available ({fallback_reason})",
                     file=sys.stderr,
                 )
+    for package in packages:
+        # 每个包都走一遍：增量基线里的条目同样要补上覆盖表那份声明，外部来源的条目也一样。
+        entries = overrides.get(package["id"])
+        releases = package.get("releases")
+        if not entries or not isinstance(releases, list) or not releases:
+            continue
+        package["releases"] = apply_release_compatibility(releases, capabilities, entries)
+
     if release_loader:
         for package in packages:
-            warnings = _package_compatibility_warnings(package.get("releases") or [])
+            releases = package.get("releases") or []
+            warnings = _package_compatibility_warnings(releases)
+            if releases:
+                warnings.extend(
+                    f"{OVERRIDE_FILE_NAME}: 没有对上任何 release 的区间：{version}"
+                    for version in unmatched_compat_overrides(
+                        overrides.get(package["id"]) or [], releases
+                    )
+                )
             if warnings:
                 package["compatibility_warnings"] = warnings
 
@@ -1655,6 +1810,14 @@ def main() -> int:
         help=f"diagnosis rule pack (default: {DIAGNOSIS_FILE_NAME} in the repository root)",
     )
     parser.add_argument(
+        "--override",
+        default="",
+        help=(
+            "compatibility declarations that cover releases whose body has no sp-compat block "
+            f"(default: {OVERRIDE_FILE_NAME} in the repository root)"
+        ),
+    )
+    parser.add_argument(
         "--fallback-index-url",
         default=FALLBACK_INDEX_URL,
         help="packages URL used when no previous packages file is available",
@@ -1682,6 +1845,7 @@ def main() -> int:
             fallback_index_url=args.fallback_index_url,
             providers_file=Path(args.providers) if args.providers else None,
             diagnosis_file=Path(args.diagnosis) if args.diagnosis else None,
+            override_file=Path(args.override) if args.override else None,
             refresh=args.refresh,
         )
     except RegistryError as exc:

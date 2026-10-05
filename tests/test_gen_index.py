@@ -89,6 +89,16 @@ def normalize(meta: dict, *releases: dict) -> list[dict]:
     return GEN_INDEX.normalize_release_records(meta, list(releases))
 
 
+def compat_release(tag: str, version: str, body: str = "", **extra) -> dict:
+    """一条已解析出正文声明的 release：`apply_release_compatibility` 的输入。"""
+    declared, warnings = GEN_INDEX.parse_compat_block(body, CAPABILITIES)
+    return {"id": int(version.replace(".", "")), "tag": tag, "version": version,
+            "prerelease": False, "published_at": "", "page_url": "", "assets": [],
+            "compat_declared": declared,
+            "compat_warnings": warnings,
+            "compat_invalid": False, **extra}
+
+
 class MergeReleaseTests(unittest.TestCase):
     def test_new_release_is_added_and_older_known_ones_survive(self) -> None:
         meta = package()
@@ -362,12 +372,7 @@ class CompatibilityBlockTests(unittest.TestCase):
 
 class ReleaseCompatibilityTests(unittest.TestCase):
     def release(self, tag: str, version: str, body: str = "", **extra) -> dict:
-        declared, warnings = GEN_INDEX.parse_compat_block(body, CAPABILITIES)
-        return {"id": int(version.replace(".", "")), "tag": tag, "version": version,
-                "prerelease": False, "published_at": "", "page_url": "", "assets": [],
-                "compat_declared": declared,
-                "compat_warnings": warnings,
-                "compat_invalid": False, **extra}
+        return compat_release(tag, version, body, **extra)
 
     def test_declared_releases_depend_on_their_capabilities(self) -> None:
         body = (
@@ -499,6 +504,314 @@ class ReleaseCompatibilityTests(unittest.TestCase):
             },
         ], CAPABILITIES)
         self.assertEqual(releases[0]["dependencies"], dependencies)
+
+
+class CompatOverrideTests(unittest.TestCase):
+    """`override.json`：模组的 release 正文没写（或写坏）`sp-compat` 时，用它补上区间。"""
+
+    def write_table(self, directory: str, payload) -> Path:
+        path = Path(directory) / GEN_INDEX.OVERRIDE_FILE_NAME
+        text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def entries(self, ranges: dict) -> list[dict]:
+        return [{"version": "*", "compat": ranges}]
+
+    def test_entries_are_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_table(
+                directory,
+                {
+                    "schema_version": 1,
+                    "entries": [
+                        {
+                            "id": "test.mod",
+                            "version": ">=1.0.0",
+                            "compat": {"sprocket": ["0.2.53.x"], "lavagang.melonloader": ">=0.7.0"},
+                        }
+                    ],
+                },
+            )
+            table, warnings = GEN_INDEX.load_compat_overrides(
+                path, MODLOADERS | {"test.mod"}, CAPABILITIES
+            )
+
+        self.assertEqual(warnings, [], "简称键名要认出来，不该报未知轴")
+        self.assertEqual(
+            table,
+            {
+                "test.mod": [
+                    {
+                        "version": ">=1.0.0",
+                        "compat": {
+                            GAME_CAPABILITY: ">=0.2.53.0 <0.2.54.0",
+                            LOADER_ID: ">=0.7.0",
+                        },
+                    }
+                ]
+            },
+        )
+
+    def test_a_missing_file_is_an_empty_table(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            table, warnings = GEN_INDEX.load_compat_overrides(
+                Path(directory) / "nope.json", MODLOADERS, CAPABILITIES
+            )
+
+        self.assertEqual(table, {})
+        self.assertEqual(warnings, [])
+
+    def test_an_empty_entry_list_is_an_empty_table(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_table(directory, {"schema_version": 1, "entries": []})
+            table, warnings = GEN_INDEX.load_compat_overrides(path, MODLOADERS, CAPABILITIES)
+
+        self.assertEqual(table, {})
+        self.assertEqual(warnings, [], "一条覆盖都没有是正常状态")
+
+    def test_a_broken_entry_is_reported_and_the_rest_survive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_table(
+                directory,
+                {
+                    "entries": [
+                        "nope",
+                        {"id": "test.mod"},
+                        {"id": "test.unknown", "compat": {GAME_CAPABILITY: "0.2.53.1"}},
+                        {"id": "test.mod", "version": "nope", "compat": {GAME_CAPABILITY: "0.2.53.1"}},
+                        {"id": "test.mod", "compat": {GAME_CAPABILITY: "0.2.53"}},
+                        {"id": "test.mod", "compat": {"unknown.axis": "0.2.53.1"}},
+                        {"id": "test.mod", "compat": {"sprocket": ">=0.2.55.5"}},
+                    ]
+                },
+            )
+            table, warnings = GEN_INDEX.load_compat_overrides(
+                path, MODLOADERS | {"test.mod"}, CAPABILITIES
+            )
+
+        self.assertEqual(len(warnings), 7, warnings)
+        self.assertIn("必须是对象", warnings[0])
+        self.assertIn("缺少 compat", warnings[1])
+        self.assertIn("未知的包", warnings[2])
+        self.assertIn("nope", warnings[3])
+        self.assertIn("少了段数", warnings[4])
+        self.assertIn("已忽略未知的能力", warnings[5])
+        self.assertIn("没有可用的能力轴", warnings[6])
+        self.assertEqual(
+            table,
+            {"test.mod": [{"version": "*", "compat": {GAME_CAPABILITY: ">=0.2.55.5"}}]},
+        )
+
+    def test_a_release_without_a_block_takes_the_override(self) -> None:
+        releases = GEN_INDEX.apply_release_compatibility(
+            [compat_release("v1.0.0", "1.0.0")],
+            CAPABILITIES,
+            self.entries({GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}),
+        )
+
+        self.assertEqual(
+            releases[0]["dependencies"],
+            [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}],
+        )
+        self.assertEqual(releases[0]["compatibility"], {"source": "declared"})
+
+    def test_an_author_declaration_wins(self) -> None:
+        body = f'<!-- sp-compat {{"{GAME_CAPABILITY}": ["0.2.53.1"]}} -->'
+        releases = GEN_INDEX.apply_release_compatibility(
+            [compat_release("v1.0.0", "1.0.0", body)],
+            CAPABILITIES,
+            self.entries({GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}),
+        )
+
+        self.assertEqual(
+            releases[0]["dependencies"],
+            [{"id": GAME_CAPABILITY, "version": ">=0.2.53.1 <=0.2.53.1"}],
+        )
+
+    def test_an_override_beats_inheriting_the_authors_older_range(self) -> None:
+        body = f'<!-- sp-compat {{"{GAME_CAPABILITY}": ["0.2.53.1"]}} -->'
+        releases = GEN_INDEX.apply_release_compatibility(
+            [compat_release("v1.0.0", "1.0.0", body), compat_release("v1.1.0", "1.1.0")],
+            CAPABILITIES,
+            self.entries({GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}),
+        )
+        by_tag = {entry["tag"]: entry for entry in releases}
+
+        self.assertEqual(by_tag["v1.0.0"]["dependencies"],
+                         [{"id": GAME_CAPABILITY, "version": ">=0.2.53.1 <=0.2.53.1"}])
+        self.assertEqual(by_tag["v1.1.0"]["dependencies"],
+                         [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}],
+                         "覆盖表按版本段说话，不问更老的那条声明")
+
+    def test_each_version_band_gets_its_own_range(self) -> None:
+        ranges = [
+            {"version": ">=2.0.0", "compat": {GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}},
+            {"version": "<2.0.0", "compat": {GAME_CAPABILITY: ">=0.2.53.0 <0.2.54.0"}},
+        ]
+        releases = GEN_INDEX.apply_release_compatibility(
+            [
+                compat_release("v1.0.0", "1.0.0"),
+                compat_release("v1.5.0", "1.5.0"),
+                compat_release("v2.0.0", "2.0.0"),
+            ],
+            CAPABILITIES,
+            ranges,
+        )
+        by_tag = {entry["tag"]: entry for entry in releases}
+
+        self.assertEqual(by_tag["v1.0.0"]["dependencies"],
+                         [{"id": GAME_CAPABILITY, "version": ">=0.2.53.0 <0.2.54.0"}])
+        self.assertEqual(by_tag["v1.5.0"]["dependencies"], by_tag["v1.0.0"]["dependencies"],
+                         "区间里的 release 各自命中同一条")
+        self.assertEqual(by_tag["v2.0.0"]["dependencies"],
+                         [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}])
+
+    def test_a_baseline_entry_only_gives_up_what_it_inherited(self) -> None:
+        declared = {
+            "id": 1, "tag": "v1.0.0", "version": "1.0.0", "prerelease": False,
+            "published_at": "", "page_url": "", "assets": [],
+            "dependencies": [{"id": GAME_CAPABILITY, "version": ">=0.2.53.1 <=0.2.53.1"}],
+            "compatibility": {"source": "declared"},
+        }
+        inherited = {
+            "id": 2, "tag": "v1.1.0", "version": "1.1.0", "prerelease": False,
+            "published_at": "", "page_url": "", "assets": [],
+            "dependencies": [{"id": GAME_CAPABILITY, "version": ">=0.2.53.1 <=0.2.53.1"}],
+            "compatibility": {"source": "inherited", "from_tag": "v1.0.0"},
+        }
+
+        releases = GEN_INDEX.apply_release_compatibility(
+            [declared, inherited],
+            CAPABILITIES,
+            self.entries({GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}),
+        )
+        by_tag = {entry["tag"]: entry for entry in releases}
+
+        self.assertEqual(by_tag["v1.0.0"]["dependencies"],
+                         [{"id": GAME_CAPABILITY, "version": ">=0.2.53.1 <=0.2.53.1"}],
+                         "基线里声明过的条目不动")
+        self.assertEqual(by_tag["v1.1.0"]["dependencies"],
+                         [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}])
+        self.assertEqual(by_tag["v1.1.0"]["compatibility"], {"source": "declared"})
+
+    def test_a_broken_block_without_a_chain_takes_the_override(self) -> None:
+        broken = compat_release("v1.0.0", "1.0.0")
+        broken["compat_invalid"] = True
+        broken["compat_warnings"] = ["sp-compat 块不是合法 JSON"]
+
+        releases = GEN_INDEX.apply_release_compatibility(
+            [broken], CAPABILITIES, self.entries({GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"})
+        )
+
+        self.assertEqual(
+            releases[0]["dependencies"],
+            [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}],
+        )
+        self.assertEqual(
+            releases[0]["compatibility"]["warnings"],
+            ["sp-compat 块不是合法 JSON"],
+            "补上区间不掩盖正文写坏这件事",
+        )
+
+    def test_a_broken_block_keeps_its_report_on_the_second_pass(self) -> None:
+        """真实管线分两遍：先由 release_loader 落声明，再由覆盖表补区间。"""
+        broken = compat_release("v1.0.0", "1.0.0")
+        broken["compat_invalid"] = True
+        broken["compat_warnings"] = ["sp-compat 块不是合法 JSON"]
+
+        first = GEN_INDEX.apply_release_compatibility([broken], CAPABILITIES)
+        second = GEN_INDEX.apply_release_compatibility(
+            first, CAPABILITIES, self.entries({GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"})
+        )
+
+        self.assertEqual(
+            second[0]["dependencies"],
+            [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}],
+        )
+        self.assertEqual(
+            second[0]["compatibility"]["warnings"],
+            ["sp-compat 块不是合法 JSON"],
+            "第二遍补区间时不能把第一遍记下的写法问题抹掉",
+        )
+
+    def test_an_override_feeds_the_inheritance_chain(self) -> None:
+        releases = GEN_INDEX.apply_release_compatibility(
+            [compat_release("v1.0.0", "1.0.0"), compat_release("v1.1.0", "1.1.0")],
+            CAPABILITIES,
+            [{"version": ">=1.0.0 <1.1.0", "compat": {GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}}],
+        )
+        by_tag = {entry["tag"]: entry for entry in releases}
+
+        self.assertEqual(
+            by_tag["v1.0.0"]["dependencies"],
+            [{"id": GAME_CAPABILITY, "version": ">=0.2.55.5 <=0.2.55.5"}],
+        )
+        self.assertEqual(
+            by_tag["v1.1.0"]["compatibility"], {"source": "inherited", "from_tag": "v1.0.0"},
+            "覆盖表补上的那份和作者写的一样能被后面的 release 继承",
+        )
+
+    def test_the_version_range_decides_which_releases_it_covers(self) -> None:
+        releases = GEN_INDEX.apply_release_compatibility(
+            [compat_release("v1.0.0", "1.0.0"), compat_release("v2.0.0", "2.0.0")],
+            CAPABILITIES,
+            [{"version": ">=2.0.0", "compat": {GAME_CAPABILITY: ">=0.2.55.5 <=0.2.55.5"}}],
+        )
+        by_tag = {entry["tag"]: entry for entry in releases}
+
+        self.assertNotIn("dependencies", by_tag["v1.0.0"], "区间外的 release 不动")
+        self.assertIn("dependencies", by_tag["v2.0.0"])
+
+    def test_the_generated_index_carries_the_override(self) -> None:
+        covered = "furryaxw.sprocket-depth"
+        with tempfile.TemporaryDirectory() as directory:
+            mods_dir = Path(directory) / "mods"
+            copy_package(
+                mods_dir,
+                covered,
+                "lavagang.melonloader",
+                "bepinex.bepinex-be",
+                "hans21223.sprocket-mod-loader",
+            )
+            override_file = self.write_table(
+                directory,
+                {
+                    "entries": [
+                        {"id": covered, "compat": {"sprocket": "0.2.53.x"}},
+                        {"id": covered, "version": ">=9.9.9", "compat": {"sprocket": "0.2.55.x"}},
+                    ]
+                },
+            )
+            recorded = {
+                "id": 1, "tag": "v0.1.2", "version": "0.1.2", "prerelease": False,
+                "published_at": "", "page_url": "", "assets": [],
+            }
+
+            index = GEN_INDEX.generate_index(
+                mods_dir,
+                Path(directory) / "registry",
+                release_loader=lambda _package, _known, _capabilities: [dict(recorded)],
+                override_file=override_file,
+            )
+
+        by_id = {package["id"]: package for package in index["packages"]}
+        self.assertEqual(
+            by_id[covered]["releases"][0]["dependencies"],
+            [{"id": GAME_CAPABILITY, "version": ">=0.2.53.0 <0.2.54.0"}],
+            "同一个包里先写的条目优先",
+        )
+        self.assertEqual(
+            by_id[covered]["compatibility_warnings"],
+            [f"{GEN_INDEX.OVERRIDE_FILE_NAME}: 没有对上任何 release 的区间：>=9.9.9"],
+        )
+        self.assertNotIn("dependencies", by_id[LOADER_ID]["releases"][0], "别的包不受影响")
+
+    def test_the_shipped_table_is_usable(self) -> None:
+        table, warnings = GEN_INDEX.load_compat_overrides(GEN_INDEX.OVERRIDE_FILE, None, CAPABILITIES)
+
+        self.assertEqual(warnings, [])
+        self.assertIsInstance(table, dict)
 
 
 class CompatibleIndexTests(unittest.TestCase):

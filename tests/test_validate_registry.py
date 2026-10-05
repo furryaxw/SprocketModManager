@@ -1,4 +1,4 @@
-"""供给表在工作树上写坏时，CI 的门禁要直接红，而不是安静地少过滤一条。"""
+"""供给表与兼容覆盖表在工作树上写坏时，CI 的门禁要直接红，而不是安静地少过滤一条。"""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ VALIDATE = load("sprocket_validate_registry", "validate_registry.py")
 
 LOADER_ID = "lavagang.melonloader"
 MODLOADERS = {LOADER_ID, "bepinex.bepinex-be", "1499501762.bepinex-melonloader-loader"}
+GAME_CAPABILITY = GEN_INDEX.GAME_CAPABILITY_ID
 
 
 def table_module(path: Path):
@@ -33,6 +34,17 @@ def table_module(path: Path):
     class Module:
         PROVIDERS_FILE = path
         load_providers_table = staticmethod(GEN_INDEX.load_providers_table)
+
+    return Module
+
+
+def override_module(path: Path):
+    """Stand-in for gen-index.py with OVERRIDE_FILE pointed at `path`."""
+
+    class Module:
+        OVERRIDE_FILE = path
+        load_compat_overrides = staticmethod(GEN_INDEX.load_compat_overrides)
+        compat_capabilities = staticmethod(GEN_INDEX.compat_capabilities)
 
     return Module
 
@@ -74,6 +86,49 @@ class ProvidersTableGateTests(unittest.TestCase):
             errors = VALIDATE.validate_providers(table_module(path), MODLOADERS)
 
         self.assertIn("providers.json has no usable entry", errors)
+
+
+class CompatOverrideGateTests(unittest.TestCase):
+    def write(self, directory: str, payload) -> Path:
+        path = Path(directory) / GEN_INDEX.OVERRIDE_FILE_NAME
+        path.write_text(
+            payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_the_shipped_table_passes(self) -> None:
+        packages = GEN_INDEX.scan_mods(ROOT / "mods")
+
+        self.assertEqual(VALIDATE.validate_overrides(GEN_INDEX, packages), [])
+
+    def test_a_missing_table_is_a_failure(self) -> None:
+        errors = VALIDATE.validate_overrides(
+            override_module(Path("nowhere") / "override.json"), [{"id": LOADER_ID}]
+        )
+
+        self.assertEqual(errors, ["override.json is missing"])
+
+    def test_a_broken_entry_fails_with_the_warning_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(
+                directory,
+                {"entries": [{"id": LOADER_ID, "compat": {GAME_CAPABILITY: "0.2.53"}}]},
+            )
+
+            errors = VALIDATE.validate_overrides(override_module(path), [{"id": LOADER_ID}])
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("第 1 条", errors[0])
+        self.assertIn("少了段数", errors[0])
+
+    def test_a_table_without_entries_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, {"entries": []})
+
+            errors = VALIDATE.validate_overrides(override_module(path), [{"id": LOADER_ID}])
+
+        self.assertEqual(errors, [], "一条覆盖都没有不该拦住提交")
 
 class LicensePlaceholderTests(unittest.TestCase):
     """`TODO-SPDX` 表示许可证还没定，两项全豁免；真实取值要求仓库带 LICENSE/COPYING 文件，GitHub 认不出该文件时以条目声明为准。"""

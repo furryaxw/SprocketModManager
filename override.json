@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "bbepis.xunity-auto-translator-melonmod-il2cpp",
+      "compat": {
+        "hamish.sprocket": "<0.2.54",
+        "lavagang.melonloader": ">=0.7.0"
+      }
+    },
+    {
+      "id": "yukieiji.unity-explorer",
+      "compat": {
+        "hamish.sprocket": "<0.2.54",
+        "lavagang.melonloader": ">=0.7.0"
+      }
+    }
+  ]
+}
