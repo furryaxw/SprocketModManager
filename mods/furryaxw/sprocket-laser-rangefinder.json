@@ -25,13 +25,23 @@
   "dependencies": [
     {
       "id": "furryaxw.sprocket-mod-api",
+      "version": ">=1.0.0 <2.0.0",
+      "when": ">=1.0.0"
+    },
+    {
+      "id": "furryaxw.sprocket-mod-api",
       "version": ">=0.3.0 <1.0.0",
-      "when": "*"
+      "when": "<1.0.0"
+    },
+    {
+      "id": "furryaxw.sprocket-depth",
+      "version": ">=1.0.0 <2.0.0",
+      "when": ">=1.0.0"
     },
     {
       "id": "furryaxw.sprocket-depth",
       "version": ">=0.1.2 <1.0.0",
-      "when": "*"
+      "when": "<1.0.0"
     }
   ],
   "recommendations": ["furryaxw.sprocket-jitter-fix"],
@@ -40,7 +50,13 @@
     "files": [
       {
         "match": "*.dll",
-        "type": "melonloader:*"
+        "type": "bepinex:*",
+        "when": ">=1.0.0"
+      },
+      {
+        "match": "*.dll",
+        "type": "melonloader:*",
+        "when": "<1.0.0"
       }
     ],
     "scan_dlls": true,

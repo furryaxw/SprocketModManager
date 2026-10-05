@@ -26,7 +26,13 @@
     "files": [
       {
         "match": "*.dll",
-        "type": "melonloader:*"
+        "type": "bepinex:*",
+        "when": ">=1.0.0"
+      },
+      {
+        "match": "*.dll",
+        "type": "melonloader:*",
+        "when": "<1.0.0"
       }
     ],
     "scan_dlls": true,
