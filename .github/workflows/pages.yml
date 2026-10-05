@@ -3,8 +3,6 @@ name: Deploy Pages
 on:
   push:
     branches: [registry]
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       refresh:
@@ -39,12 +37,12 @@ jobs:
           find site/js -name '*.js' -exec node --check {} \;
           node tests/site_release_api.test.js
       - name: Validate metadata and public sources
-        if: github.event_name != 'schedule'
+        if: github.event_name == 'push' || inputs.refresh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python validate_registry.py --mods-dir mods
-      - name: Validate metadata for scheduled refresh
-        if: github.event_name == 'schedule'
+      - name: Validate metadata without public sources
+        if: github.event_name == 'workflow_dispatch' && !inputs.refresh
         run: python validate_registry.py --mods-dir mods --offline
       - name: Build Pages registry
         env:
