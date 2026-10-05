@@ -1,6 +1,50 @@
 "use strict";
 
 /**
+ * 解析不了的包也要有自己的框：标题、原因与版本选择器都在框里，它才不会被换成一句报错。
+ *
+ * 树只剩根包那一行 —— 这一版没解出来，就没有依赖树可摆；摆上一版解出来的树是另一回事。
+ */
+function failedPlanBox(packageId, version) {
+    const pkg = (state.packages || []).find((item) => item.id === packageId);
+    const display = pkg?.display_name || {};
+    return {
+        id: packageId,
+        name: packageId,
+        display_name: display,
+        packages: [{
+            id: packageId,
+            name: packageId,
+            display_name: display,
+            version: String(version || ""),
+        }],
+    };
+}
+
+/**
+ * 对话框里的框：解析出来的计划，加上解析不了的包各自一个框，顺序按用户点的先后。
+ *
+ * `failed` 的条目不一定有对应的计划 —— 后端只失败了其中几个包时就是这样，那些包没有框就
+ * 只剩一句报错，等于悄悄消失。
+ */
+function planBoxes(plans, failed, versions, requested) {
+    const byId = new Map((plans || []).map((plan) => [plan.id, plan]));
+    const failedIds = new Set((failed || []).map((item) => item.id));
+    const boxes = [];
+    for (const id of [...new Set([...requested, ...byId.keys()])]) {
+        if (byId.has(id)) boxes.push(byId.get(id));
+        else if (failedIds.has(id)) boxes.push(failedPlanBox(id, versions[id]));
+    }
+    return boxes;
+}
+
+/** 框里真正能装的那些：失败的那个留着框只是为了让用户换一版，不该进队列。 */
+function installablePlans(planState) {
+    const failedIds = new Set((planState.failed || []).map((item) => item.id));
+    return (planState.plans || []).filter((plan) => !failedIds.has(plan.id));
+}
+
+/**
  * 解析并展示安装计划；用户在计划里改版本时重新解析那一个包。
  *
  * 版本选择器只给根包（用户点的那些）；依赖的版本由求解器按环境定，不给挑。
@@ -40,7 +84,7 @@ async function beginInstall(packageIds, presetVersions = null, includeInstalled 
     }
 
     const planState = {
-        plans: result.plans,
+        plans: planBoxes(result.plans, result.failed, versions, packageIds),
         recommendations: result.recommendations || [],
         failed: result.failed || [],
         versions,
@@ -62,8 +106,11 @@ async function beginInstall(packageIds, presetVersions = null, includeInstalled 
             );
             planState.failed = planState.failed.filter((item) => item.id !== packageId);
         } else {
-            // 这个版本装不了（例如依赖跟不上）：把它从计划里拿掉，并在「跳过」区写清原因。
-            planState.plans = planState.plans.filter((plan) => plan.id !== packageId);
+            // 这个版本装不了（例如依赖跟不上）：框留在原地标红并写上原因 —— 换回能装的那一版
+            // 只有框里那个选择器这一条路。树换成解不出来的这一版（只剩根包那一行）。
+            planState.plans = planState.plans.map((plan) =>
+                plan.id === packageId ? failedPlanBox(packageId, version) : plan,
+            );
             planState.failed = [
                 ...planState.failed.filter((item) => item.id !== packageId),
                 {id: packageId, message},
@@ -75,12 +122,14 @@ async function beginInstall(packageIds, presetVersions = null, includeInstalled 
 
     const confirmed = await showModal({
         kicker: tr("installPlan"),
-        title: planState.plans.length === 1 ? tr("confirmInstall") : tr("confirmBatchInstall"),
+        title: installablePlans(planState).length === 1
+            ? tr("confirmInstall")
+            : tr("confirmBatchInstall"),
         body: planBody,
         confirmText: tr("confirm"),
     });
     if (!confirmed) return;
-    if (!planState.plans.length) {
+    if (!installablePlans(planState).length) {
         toast(tr("nothingToInstall"));
         setStatus("", "ready");
         return;
@@ -88,7 +137,7 @@ async function beginInstall(packageIds, presetVersions = null, includeInstalled 
     const queued = await callApi(
         "enqueue_install",
         [
-            ...planState.plans.map((plan) => plan.id),
+            ...installablePlans(planState).map((plan) => plan.id),
             ...planState.recommendedSelection,
         ],
         force,

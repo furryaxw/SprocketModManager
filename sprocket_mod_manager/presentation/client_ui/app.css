@@ -1860,6 +1860,33 @@ select option {
     color: var(--text);
 }
 
+/* 解析不了的模组：框留着（换回能装的那一版只有框里那个选择器这一条路），标题标红，
+   标题后跟「跳过」，原因写在标题与依赖树之间 —— 原因可能很长，要能换行。 */
+.plan-group.skipped {
+    border-color: var(--danger);
+}
+
+/* 标题与「跳过」同一行：标题保持块级的话「跳过」会掉到下一行去，所以这一处改行内级。 */
+.plan-group.skipped strong {
+    display: inline-block;
+    margin-bottom: 0;
+    color: var(--danger);
+}
+
+.plan-skipped-mark {
+    display: inline;
+    margin-left: 8px;
+    color: var(--danger);
+    font: 700 0.6875rem/1rem "Cascadia Mono", Consolas, monospace;
+}
+
+.plan-reason {
+    margin: 7px 0;
+    color: var(--text-soft);
+    white-space: normal;
+    font: 0.6875rem/1rem "Cascadia Mono", Consolas, monospace;
+}
+
 .plan-line {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1999,25 +2026,6 @@ html.large-text .detail-sections {
 .recommendation-group {
     display: grid;
     gap: 8px;
-}
-
-/* 被跳过的模组：包 id 一行，失败原因一行（原因可能很长，要能换行）。 */
-.skipped-group {
-    display: grid;
-    gap: 8px;
-    border-color: var(--danger);
-}
-
-.skipped-line {
-    display: grid;
-    gap: 2px;
-    color: var(--muted);
-    font: 0.6875rem/1rem "Cascadia Mono", Consolas, monospace;
-}
-
-.skipped-line span:last-child {
-    color: var(--text-soft);
-    white-space: normal;
 }
 
 .recommendation-line {

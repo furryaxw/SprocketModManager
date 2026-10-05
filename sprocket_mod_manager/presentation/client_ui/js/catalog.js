@@ -671,11 +671,23 @@ function createPlanBody(planState, onVersionChange = async () => {}) {
         body.append(warning);
     }
     for (const plan of plans) {
+        const failure = failed.find((item) => item.id === plan.id) || null;
         const group = document.createElement("section");
-        group.className = "plan-group";
+        group.className = failure ? "plan-group skipped" : "plan-group";
         const heading = document.createElement("strong");
         heading.textContent = localized(plan.display_name, plan.name || plan.id);
         group.append(heading);
+        // 解析不了的模组也留着自己的框：标题标红、后跟「跳过」，原因写在标题与依赖树之间。
+        // 框里那行的版本选择器同样留着 —— 换回能装的那一版只有这一条路。
+        if (failure) {
+            const mark = document.createElement("span");
+            mark.className = "plan-skipped-mark";
+            mark.textContent = tr("skipped");
+            const reason = document.createElement("div");
+            reason.className = "plan-reason";
+            reason.textContent = `${tr("skippedReason")}: ${failure.message}`;
+            group.append(mark, reason);
+        }
         // 供给同一项能力的加载器只能有一个：装这个之前先交还那些（各自的树先进备份区）。
         for (const gone of plan.displaces || []) {
             const displaced = document.createElement("div");
@@ -706,25 +718,6 @@ function createPlanBody(planState, onVersionChange = async () => {}) {
             const version = document.createElement("span");
             version.textContent = item.version;
             line.append(version);
-            group.append(line);
-        }
-        body.append(group);
-    }
-    if (failed.length) {
-        // 解析不了的模组不进计划，但不能悄悄消失：装剩下的之前先把原因摆出来。
-        const group = document.createElement("section");
-        group.className = "plan-group skipped-group";
-        const heading = document.createElement("strong");
-        heading.textContent = tr("skippedMods", {count: failed.length});
-        group.append(heading);
-        for (const item of failed) {
-            const line = document.createElement("div");
-            line.className = "skipped-line";
-            const label = document.createElement("span");
-            label.textContent = item.id;
-            const reason = document.createElement("span");
-            reason.textContent = item.message;
-            line.append(label, reason);
             group.append(line);
         }
         body.append(group);

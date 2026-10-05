@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -76,6 +77,45 @@ def plan(version: str, dependencies: list[tuple[str, str]] = ()) -> dict:
         "replaces_autotranslator": False,
         "packages": packages,
     }
+
+
+def plan_for(package_id: str, version: str, display_name: str) -> dict:
+    """给指定包的一项计划：多包场景里每个包各要一份（`plan()` 固定写死 test.mod）。"""
+    return {
+        "id": package_id,
+        "display_name": {"en": display_name},
+        "name": package_id,
+        "replaces_autotranslator": False,
+        "packages": [
+            {
+                "id": package_id,
+                "display_name": {"en": display_name},
+                "name": package_id,
+                "version": version,
+                "tag": f"v{version}",
+                "assets": [f"{package_id}.dll"],
+            }
+        ],
+    }
+
+
+def package_for(package_id: str, display_name: str, versions: list[str]) -> dict:
+    """目录里另一个包：名字与版本列表按需要给，其余照 `PACKAGE` 的样式。"""
+    entry = json.loads(json.dumps(PACKAGE))
+    entry["id"] = package_id
+    entry["name"] = package_id
+    entry["display_name"] = {"en": display_name}
+    entry["releases"] = [
+        {
+            "tag": f"v{version}",
+            "version": version,
+            "verdict": "compatible",
+            "compatibility": {"source": "declared"},
+        }
+        for version in versions
+    ]
+    entry["release"] = json.loads(json.dumps(entry["releases"][0]))
+    return entry
 
 
 class PlanSelectorHarnessTests(unittest.TestCase):
@@ -186,6 +226,70 @@ class PlanSelectorHarnessTests(unittest.TestCase):
             result["enqueue"][2], {"test.mod": "2.0.0"}, "红版按点名的那一版入队"
         )
 
+    def test_a_failed_replan_keeps_the_box_with_the_reason_in_it(self) -> None:
+        """依赖解不出来时不能把整个框换成一句报错：框留着、标红、写上原因，选择器也留着。"""
+        reason = "test.lib >=9.9.9 has no release (test.lib has 1.0.0)"
+        result = self._run(
+            plan={"plans": [plan("2.0.0")]},
+            replan={"plans": [], "failed": [{"id": "test.mod", "message": reason}]},
+            change_to="1.0.0",
+        )
+
+        groups = result["after"]["groups"]
+        self.assertEqual(len(groups), 1, "框还在")
+        self.assertIn("skipped", groups[0]["className"].split(), "框整体按跳过标色")
+        self.assertEqual(groups[0]["heading"], "Test Mod", "标题仍是模组名")
+        self.assertEqual(groups[0]["mark"], "Skipped", "标题后跟「跳过」")
+        self.assertEqual(groups[0]["reason"], f"Reason: {reason}", "原因写在框里")
+        self.assertTrue(groups[0]["hasSelect"], "版本选择器留着 —— 换回能装的那一版只有这条路")
+        self.assertEqual(groups[0]["lines"], ["Test Mod 1.0.0"], "树只剩根包那一行：这一版没解出来")
+
+    def test_a_package_without_a_plan_still_gets_a_box(self) -> None:
+        """后端只失败了其中几个包时，失败的那个也一样有自己的框，不能只剩一句报错。"""
+        reason = "test.lib >=9.9.9 has no release"
+        result = self._run(
+            packages=[PACKAGE, package_for("test.other", "Other Mod", ["1.0.0"])],
+            install_ids=["test.other", "test.mod"],
+            versions={"test.other": "1.0.0", "test.mod": "2.0.0"},
+            plan={
+                "plans": [plan_for("test.other", "1.0.0", "Other Mod")],
+                "failed": [{"id": "test.mod", "message": reason}],
+            },
+        )
+
+        groups = result["first"]["groups"]
+        self.assertEqual(
+            [group["heading"] for group in groups], ["Other Mod", "Test Mod"], "框的顺序按用户点的先后"
+        )
+        self.assertNotIn("skipped", groups[0]["className"].split())
+        self.assertIn("skipped", groups[1]["className"].split())
+        self.assertEqual(groups[1]["mark"], "Skipped")
+        self.assertEqual(groups[1]["reason"], f"Reason: {reason}")
+        self.assertEqual(
+            groups[1]["lines"], ["Test Mod 2.0.0"],
+            "框里那一行写的是用户点名的那一版，不是别的东西",
+        )
+
+    def test_switching_back_to_an_installable_version_restores_the_box(self) -> None:
+        """先改到装不了的那一版、再改回能装的：框要照旧，报错与红标题都要消失。"""
+        reason = "test.lib >=9.9.9 has no release"
+        result = self._run(
+            plans_sequence=[[plan("2.0.0")], [], [plan("2.0.0", [("test.api", "2.0.0")])]],
+            failed_sequence=[[], [{"id": "test.mod", "message": reason}], []],
+            changes=["1.0.0", "2.0.0"],
+        )
+
+        broken = result["steps"][0]["groups"]
+        self.assertIn("skipped", broken[0]["className"].split())
+        self.assertEqual(broken[0]["reason"], f"Reason: {reason}")
+
+        restored = result["steps"][1]["groups"]
+        self.assertEqual(len(restored), 1, "框还在 —— 它没有被跳过那一步删掉")
+        self.assertNotIn("skipped", restored[0]["className"].split(), "换回能装的版本后报错要消失")
+        self.assertEqual(restored[0]["reason"], "")
+        self.assertEqual(restored[0]["mark"], "")
+        self.assertEqual(restored[0]["lines"], ["Test Mod 2.0.0", "test.api 2.0.0"])
+
     def test_the_confirmed_install_carries_the_chosen_version(self) -> None:
         result = self._run(change_to="1.0.0")
 
@@ -242,6 +346,32 @@ class PlanSelectorHarnessTests(unittest.TestCase):
         # 界面按 code 说人话，后端原文仍然带出来（排查用）。
         self.assertIn("No installable version set was found", result["toasts"][0])
         self.assertIn(message, result["toasts"][0])
+
+
+class SkippedPlanStyleTests(unittest.TestCase):
+    """解析不了的模组的样式契约：框标红、标题跟着红 —— 这是它在界面上唯一的可见信号。"""
+
+    def setUp(self) -> None:
+        self.css = (CLIENT_UI / "app.css").read_text(encoding="utf-8")
+
+    def _rule(self, selector: str) -> str:
+        match = re.compile(rf"^{re.escape(selector)} \{{", re.MULTILINE).search(self.css)
+        self.assertIsNotNone(match, f"CSS 里没有 {selector} 规则")
+        start = match.start()
+        return self.css[start:self.css.index("}", start)]
+
+    def test_the_skipped_box_and_its_heading_are_red(self) -> None:
+        self.assertIn("border-color: var(--danger)", self._rule(".plan-group.skipped"))
+        self.assertIn("color: var(--danger)", self._rule(".plan-group.skipped strong"))
+
+    def test_the_skipped_word_sits_on_the_heading_line(self) -> None:
+        """「跳过」跟着标题后面同一行：标题保持块级的话它就掉到下一行去了。"""
+        self.assertIn("display: inline-block", self._rule(".plan-group.skipped strong"))
+        self.assertIn("display: inline", self._rule(".plan-skipped-mark"))
+
+    def test_the_reason_wraps_instead_of_being_clipped(self) -> None:
+        """原因可能很长（求解器把缺失的区间与包实际有哪些版本都写进去），要能换行。"""
+        self.assertIn("white-space: normal", self._rule(".plan-reason"))
 
 
 if __name__ == "__main__":

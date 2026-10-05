@@ -155,26 +155,36 @@ class BatchInstallTests(unittest.TestCase):
 
 
 class BatchInstallUiTests(unittest.TestCase):
-    """客户端必须真的把 `failed` 用起来：装剩下的之前先说清跳过了谁。"""
+    """客户端必须真的把 `failed` 用起来：失败的模组也留着自己的框，原因写在框里。"""
 
     def setUp(self) -> None:
         self.client_ui = (
             Path(__file__).resolve().parent.parent / "sprocket_mod_manager" / "presentation" / "client_ui"
         )
 
-    def test_plan_body_lists_the_skipped_mods_with_their_reason(self) -> None:
+    def test_plan_body_writes_the_reason_inside_the_mod_box(self) -> None:
         catalog = (self.client_ui / "js" / "catalog.js").read_text(encoding="utf-8")
         self.assertIn("function createPlanBody(planState, onVersionChange = async () => {})", catalog)
-        self.assertIn('tr("skippedMods", {count: failed.length})', catalog)
-        self.assertIn('group.className = "plan-group skipped-group"', catalog)
-        self.assertIn("reason.textContent = item.message", catalog)
+        self.assertIn('group.className = failure ? "plan-group skipped" : "plan-group"', catalog)
+        self.assertIn('mark.textContent = tr("skipped")', catalog)
+        self.assertIn('`${tr("skippedReason")}: ${failure.message}`', catalog)
 
-    def test_install_flows_pass_failed_through_and_report_it(self) -> None:
+    def test_a_failed_package_keeps_its_box_and_stays_out_of_the_queue(self) -> None:
         installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
+        self.assertIn("createPlanBody(planState, selectPlanVersion)", installs)
         self.assertIn(
-            "createPlanBody(planState, selectPlanVersion)",
+            "planBoxes(result.plans, result.failed, versions, packageIds)",
             installs,
+            "解析不了的包也要有自己的框",
         )
+        self.assertIn(
+            "installablePlans(planState).map((plan) => plan.id)",
+            installs,
+            "失败的那个留着框只是为了让用户换一版，不该进队列",
+        )
+
+    def test_install_flows_report_the_skipped_count_after_queueing(self) -> None:
+        installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
         self.assertEqual(
             installs.count('tr("skippedMods", {count: queued.failed.length})'),
             1,
@@ -183,9 +193,10 @@ class BatchInstallUiTests(unittest.TestCase):
         self.assertIn('tr("skippedMods", {count: result.failed.length})', installs,
                       "批量更新的完成提示同样要带上跳过的数量")
 
-    def test_skipped_message_exists_in_both_languages(self) -> None:
+    def test_the_new_words_exist_in_both_languages(self) -> None:
         text = (self.client_ui / "js" / "i18n.js").read_text(encoding="utf-8")
-        self.assertEqual(text.count("skippedMods:"), 2, "zh 与 en 都要有")
+        for key in ("skippedMods", "skipped", "skippedReason"):
+            self.assertEqual(text.count(f"{key}:"), 2, f"{key} 的 zh 与 en 都要有")
 
 
 if __name__ == "__main__":

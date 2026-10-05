@@ -150,12 +150,16 @@ sandbox.pywebview = {
             const plans = sequence
                 ? (sequence[call - 1] ?? sequence[sequence.length - 1]) || []
                 : (call === 1 ? payload.plan?.plans : payload.replan?.plans) || [];
+            // 解析不了的包：`failed` 里的条目不一定有对应的计划，界面得照样给它一个框。
+            const failures = sequence
+                ? (payload.failed_sequence?.[call - 1] ?? []) || []
+                : ((call === 1 ? payload.plan?.failed : payload.replan?.failed) || []);
             return {
                 ok: true,
                 plans,
                 skipped: call === 1 ? payload.skipped || [] : [],
                 recommendations: payload.plan?.recommendations || [],
-                failed: [],
+                failed: failures,
             };
         },
         enqueue_install: async (...args) => {
@@ -237,6 +241,32 @@ function planLines(node) {
     return found;
 }
 
+// 对话框里每个框（`.plan-group`）的结构：标题、跳过标记、原因、以及这个框自己的依赖树。
+// 解析不了的包也要有自己的框 —— 它不该只剩一句报错。
+function planGroups(node) {
+    const found = [];
+    const klass = (element) => String(element.className || "").split(" ");
+    const collect = (element) => {
+        if (!element || element.tagName === "#text") return;
+        if (klass(element).includes("plan-group")) {
+            const child = (name) =>
+                (element.children || []).find((item) => klass(item).includes(name));
+            found.push({
+                className: element.className,
+                heading: (element.children || []).find((item) => item.tagName === "strong")?.textContent || "",
+                mark: child("plan-skipped-mark")?.textContent || "",
+                reason: child("plan-reason")?.textContent || "",
+                lines: planLines(element),
+                hasSelect: Boolean(selectElement(element)),
+            });
+            return;
+        }
+        for (const item of element.children || []) collect(item);
+    };
+    collect(node);
+    return found;
+}
+
 function lineText(element) {
     const parts = [];
     const walk = (element) => {
@@ -286,20 +316,31 @@ async function main() {
         options: options(select),
         className: select ? select.className : "",
         lines: planLines(body),
+        groups: planGroups(body),
         warnings: flatten(body)
             .filter((item) => item.className === "loader-displace-warning")
             .map((item) => item.text),
     };
 
-    if (select && payload.change_to) {
-        select.value = payload.change_to;
-        for (const handler of select.listeners.change || []) handler({});
+    // `changes` 按顺序改几次版本（每次都在重画后的新选择器上改）；`change_to` 是它的单值写法。
+    const steps = Array.isArray(payload.changes)
+        ? payload.changes
+        : (payload.change_to ? [payload.change_to] : []);
+    result.steps = [];
+    for (const version of steps) {
+        const control = selectElement(body);
+        if (!control) break;
+        control.value = version;
+        for (const handler of control.listeners.change || []) handler({});
         for (let attempt = 0; attempt < 10; attempt += 1) await tick();
-        result.after = {
+        result.steps.push({
+            version,
             options: options(selectElement(body)),
             lines: planLines(body),
-        };
+            groups: planGroups(body),
+        });
     }
+    result.after = result.steps.length ? result.steps[result.steps.length - 1] : null;
 
     resolveModal(payload.confirm !== false);
     await tick();
