@@ -44,20 +44,11 @@ jobs:
       - name: Run Python tests
         run: python -m unittest discover -s tests -v
 
-      - name: Run site tests
+      - name: Syntax-check the client UI scripts
         shell: pwsh
         run: |
-          node --check site/app.js
-          node --check site/release-api.js
-          Get-ChildItem site/js/*.js, sprocket_mod_manager/presentation/client_ui/js/*.js |
+          Get-ChildItem sprocket_mod_manager/presentation/client_ui/js/*.js |
             ForEach-Object { node --check $_.FullName }
-          node tests/site_release_api.test.js
-
-      - name: Validate Registry
-        shell: pwsh
-        run: |
-          python gen-index.py --mods-dir mods --output index.json
-          python validate_registry.py --mods-dir mods --offline
 
       - name: Build executable
         shell: pwsh
