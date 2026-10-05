@@ -401,6 +401,36 @@ if (Number.isInteger(payload.click_row)) {
     list.replaceChildren = originalReplace;
 }
 
+// 右键勾选一行：只该改勾选标记与浮动栏 —— 列表不重画，滚动位置因此留在原处。
+let rowSelect = null;
+if (Number.isInteger(payload.right_click_row)) {
+    const list = elements[listSelector];
+    const originalReplace = list.replaceChildren;
+    let rebuilds = 0;
+    list.replaceChildren = function (...nodes) {
+        rebuilds += 1;
+        return originalReplace.apply(this, nodes);
+    };
+    const before = packageRows();
+    list.scrollTop = Number(payload.scroll_top || 0);
+    const scrollBefore = list.scrollTop;
+    const target = before[payload.right_click_row];
+    for (const handler of target?.listeners?.contextmenu || []) {
+        handler({preventDefault: () => {}, target: null});
+    }
+    const after = packageRows();
+    rowSelect = {
+        rebuilds,
+        scrollBefore,
+        scrollAfter: list.scrollTop,
+        sameNodes: before.length === after.length && before.every((row, index) => row === after[index]),
+        checked: after.map((row) => Boolean(row.children?.[0]?.checked)),
+        picked: [...sandbox.__state.batch],
+        state: selectionState(),
+    };
+    list.replaceChildren = originalReplace;
+}
+
 const report = () => process.stdout.write(JSON.stringify({
         rows: firstRender.rows,
         emptyState: firstRender.emptyState,
@@ -426,6 +456,7 @@ const report = () => process.stdout.write(JSON.stringify({
         detail: detailSnapshot,
         readme: {default: readme, opened: readmeOpened},
         rowClick,
+        rowSelect,
 }));
 if (catalogLoadPending) {
     catalogLoadPending

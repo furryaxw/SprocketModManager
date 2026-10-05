@@ -59,8 +59,8 @@ class FakeElement {
         this.attributes[name] = String(value);
     }
 
-    querySelector() {
-        return null;
+    querySelector(selector) {
+        return findIn(this, selector);
     }
 
     get classList() {
@@ -106,6 +106,23 @@ const elements = {
     "#game-state-text": new FakeElement("span"),
     "#kill-sprocket": new FakeElement("button"),
 };
+
+// 最小可用的选择器匹配：`.class` 或 `[attr="value"]`（行内的选择框那几处用到）。
+function findIn(root, selector) {
+    for (const child of root.children || []) {
+        if (matches(child, selector)) return child;
+        const nested = findIn(child, selector);
+        if (nested) return nested;
+    }
+    return null;
+}
+
+function matches(element, selector) {
+    const attribute = /^\[([\w-]+)="([^"]*)"\]$/.exec(selector);
+    if (attribute) return element.attributes[attribute[1]] === attribute[2];
+    if (selector.startsWith(".")) return element.className.split(" ").includes(selector.slice(1));
+    return false;
+}
 
 const documentStub = {
     createElement: (tag) => new FakeElement(tag),
@@ -296,11 +313,36 @@ function dispatchRow(index, type, event) {
 }
 for (const index of payload.clickRows || []) dispatchRow(index, "click", {target: null});
 for (const index of payload.dblclickRows || []) dispatchRow(index, "dblclick", {target: null});
-for (const index of payload.contextRows || []) {
-    dispatchRow(index, "contextmenu", {target: null, preventDefault: () => {}});
-}
 for (const index of payload.dblclickRowButtons || []) {
     dispatchRow(index, "dblclick", {target: {closest: () => ({tagName: "BUTTON"})}});
+}
+
+// 右键多选一行：只该改这一行的勾选与工具栏 —— 列表不重画，滚动位置因此留在原处。
+let rowSelect = null;
+if (payload.contextRows?.length) {
+    const list = elements["#installed-list"];
+    const originalReplace = list.replaceChildren;
+    let rebuilds = 0;
+    list.replaceChildren = function (...nodes) {
+        rebuilds += 1;
+        return originalReplace.apply(this, nodes);
+    };
+    const before = list.children.slice();
+    list.scrollTop = Number(payload.scroll_top || 0);
+    const scrollBefore = list.scrollTop;
+    for (const index of payload.contextRows) {
+        dispatchRow(index, "contextmenu", {target: null, preventDefault: () => {}});
+    }
+    const after = list.children;
+    rowSelect = {
+        rebuilds,
+        scrollBefore,
+        scrollAfter: list.scrollTop,
+        sameNodes: before.length === after.length && before.every((row, index) => row === after[index]),
+        checked: after.map((row) => Boolean(row.children?.[0]?.checked)),
+        marked: after.map((row) => row.className.split(" ").includes("selected")),
+    };
+    list.replaceChildren = originalReplace;
 }
 
 function serialize(element) {
@@ -355,6 +397,7 @@ setImmediate(() => {
     process.stdout.write(JSON.stringify({
         count: elements["#installed-count"].textContent,
         rows,
+        rowSelect,
         clickedButtons: clicks,
         apiCalls,
         sidebar: {

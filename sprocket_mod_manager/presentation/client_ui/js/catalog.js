@@ -76,7 +76,8 @@ function togglePackageSelection(packageId) {
     const selection = catalogSelection();
     if (selection.has(packageId)) selection.delete(packageId);
     else selection.add(packageId);
-    renderCatalog();
+    paintPackageChecks();
+    updateCatalogSelection();
 }
 
 /** 刷新底部浮动栏：数量、显隐、以及每个动作当前有没有活可干。 */
@@ -294,6 +295,18 @@ function paintSelectedRow() {
         // 只有包行带 `data-package-id`（分组标题那些不带）。
         if (!row.dataset?.packageId) continue;
         row.classList.toggle("selected", row.dataset.packageId === state.selectedId);
+    }
+}
+
+/** 把勾选标记同步到已经画好的行上：行节点连同身份一起留着，列表才不会被重排。 */
+function paintPackageChecks() {
+    const {container} = packageBrowserView();
+    if (!container) return;
+    for (const row of container.children || []) {
+        // 只有包行带 `data-package-id`（分组标题那些不带）。
+        if (!row.dataset?.packageId) continue;
+        const checkbox = row.querySelector?.(".package-check");
+        if (checkbox) checkbox.checked = catalogSelection().has(row.dataset.packageId);
     }
 }
 

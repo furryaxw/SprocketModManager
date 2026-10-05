@@ -406,7 +406,23 @@ function setRowSelected(key, selected) {
     const selection = installedSelection();
     if (selected) selection.add(key);
     else selection.delete(key);
-    renderInstalled();
+    paintRowSelection(key, selected);
+    renderInstalledToolbar(filteredInstalledItems());
+}
+
+/**
+ * 把这一行的勾选与「选中」样式就地改掉：选中不改列表的内容（可见的行、筛选、计数都没变），
+ * 整份列表重画等于把滚动容器交给浏览器重新排版，位置就不再由这里说了算。
+ */
+function paintRowSelection(key, selected) {
+    const container = $("#installed-list");
+    if (!container) return;
+    for (const row of container.children || []) {
+        if (row.dataset?.rowKey !== String(key)) continue;
+        row.classList.toggle("selected", selected);
+        const checkbox = row.querySelector?.(".package-check");
+        if (checkbox) checkbox.checked = selected;
+    }
 }
 
 /** 当前筛选下可见的行是否已经被全部选中。 */
@@ -721,6 +737,7 @@ function renderScannedModRow(mod) {
     const key = installedRowKey(mod);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
+    row.dataset.rowKey = key;
     row.dataset.package = mod.installed_package_id || mod.registry_id || mod.declared_id || "";
     const title = document.createElement("div");
     title.className = "row-title";
@@ -819,6 +836,7 @@ function renderLegacyModRow(item) {
     const key = installedRowKey(item);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
+    row.dataset.rowKey = key;
     row.dataset.package = item.id;
     const title = document.createElement("div");
     title.className = "row-title";

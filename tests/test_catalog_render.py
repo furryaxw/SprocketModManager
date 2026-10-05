@@ -779,6 +779,26 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         self.assertTrue(click["sameNodes"], "列表行还是原来那些节点")
         self.assertEqual(click["scrollAfter"], 480, "点一行不能把列表滚走")
 
+    def test_right_clicking_a_row_keeps_the_list_and_its_scroll_untouched(self) -> None:
+        """右键勾选只改勾选标记与浮动栏：列表不重画，滚动位置留在原处。"""
+        result = self._render(
+            packages=[
+                package("test.first", [("1.0.0", "compatible")]),
+                package("test.second", [("1.0.0", "compatible")]),
+            ],
+            right_click_row=1,
+            scroll_top=480,
+        )
+
+        pick = result["rowSelect"]
+        self.assertEqual(pick["picked"], ["test.second"], "右键把这一行勾上")
+        self.assertEqual(pick["checked"], [False, True], "勾选标记就地改在选择框上")
+        self.assertFalse(pick["state"]["hidden"], "勾上之后浮动栏要出现")
+        self.assertEqual(pick["state"]["count"], "1 selected")
+        self.assertEqual(pick["rebuilds"], 0, "勾选不改列表内容，不该重画整份列表")
+        self.assertTrue(pick["sameNodes"], "列表行还是原来那些节点")
+        self.assertEqual(pick["scrollAfter"], 480, "右键一行不能把列表滚走")
+
 
 if __name__ == "__main__":
     unittest.main()

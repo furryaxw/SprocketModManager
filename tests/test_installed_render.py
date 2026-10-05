@@ -56,6 +56,7 @@ def payload(
         dblclick_rows: list | None = None,
         context_rows: list | None = None,
         dblclick_row_buttons: list | None = None,
+        scroll_top: int = 0,
         environment: dict | None = None,
         modloaders: list | None = None,
         local_mods: list | None = None,
@@ -164,6 +165,8 @@ def payload(
         document["dblclickRows"] = dblclick_rows
     if context_rows is not None:
         document["contextRows"] = context_rows
+    if scroll_top:
+        document["scroll_top"] = scroll_top
     if dblclick_row_buttons is not None:
         document["dblclickRowButtons"] = dblclick_row_buttons
     return document
@@ -601,6 +604,18 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertIn("selected", result["rows"][1]["className"])
         self.assertTrue(result["rows"][1]["children"][0]["checked"])
         self.assertNotIn("selected", result["rows"][0]["className"])
+        self.assertEqual(result["toolbar"]["selection"], "1 selected")
+
+    def test_right_clicking_a_row_keeps_the_list_and_its_scroll_untouched(self) -> None:
+        """右键多选只改这一行的勾选与工具栏：列表不重画，滚动位置留在原处。"""
+        result = self._render(context_rows=[1], scroll_top=480)
+
+        pick = result["rowSelect"]
+        self.assertEqual(pick["checked"], [False, True, False], "勾选标记就地改在选择框上")
+        self.assertEqual(pick["marked"], [False, True, False], "选中样式就地挪到点的那一行")
+        self.assertEqual(pick["rebuilds"], 0, "勾选不改列表内容，不该重画整份列表")
+        self.assertTrue(pick["sameNodes"], "列表行还是原来那些节点")
+        self.assertEqual(pick["scrollAfter"], 480, "右键一行不能把列表滚走")
         self.assertEqual(result["toolbar"]["selection"], "1 selected")
 
     def test_double_clicking_a_control_inside_a_row_leaves_the_row_alone(self) -> None:
