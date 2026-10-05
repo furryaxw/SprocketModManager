@@ -1,5 +1,7 @@
 # SprocketModManager Architecture
 
+[中文](architecture.zh.md) | **English**
+
 `sprocket_mod_manager` is organized by responsibility. Its root contains only
 `__init__.py`; implementation modules belong to one of five explicit packages.
 

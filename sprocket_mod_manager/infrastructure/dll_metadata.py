@@ -1,6 +1,6 @@
 """静态读取 DLL 内嵌元数据（只读 PE/CLR 字节，绝不加载或执行目标程序集）。
 
-字段来源与优先级见 `SprocketModAPI/docs/mod-metadata.md`；DLL 分类规则见
+字段来源与优先级见 `SprocketModAPI/docs/mod-metadata.en.md`；DLL 分类规则见
 `sprocket-mod-spec.md` 的「DLL 分类」。本模块只做读取，不做 Registry 匹配。
 """
 
