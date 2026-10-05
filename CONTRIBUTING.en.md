@@ -1,6 +1,6 @@
 # Submit a Mod
 
-[中文](CONTRIBUTING.md) | **English**
+[中文](CONTRIBUTING.zh.md) | **English**
 
 The Registry accepts only public, auditable, open-source Sprocket mods. An entry is a
 hand-written metadata file added to this repository through a Pull Request; you do not

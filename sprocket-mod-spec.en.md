@@ -1,6 +1,6 @@
 # SprocketModManager Registry Specification v1
 
-[中文](sprocket-mod-spec.md) | **English**
+[中文](sprocket-mod-spec.zh.md) | **English**
 
 The Registry is hosted on GitHub Pages and stores only package-level metadata.
 Versions, tags, Release assets, and binaries always come from each mod's own GitHub
