@@ -4,7 +4,7 @@
 //
 // 加载仓库里未修改的 i18n/core/compatibility/catalog/installs 五个文件，注入最小 DOM，
 // 然后**真的调用** beginInstall()：检查计划里根包的版本选择器、改选之后是否按新版本重新
-// 解析、以及最终入队时带的是不是用户选的那个版本。
+// 解析并重画依赖树、以及最终入队时带的是不是用户选的那个版本。
 "use strict";
 
 const fs = require("fs");
@@ -225,6 +225,38 @@ function options(element) {
     }));
 }
 
+// 计划里的依赖树：每条 `plan-line` 的「名字 + 版本」，按渲染顺序。
+function planLines(node) {
+    const found = [];
+    const collect = (element) => {
+        if (!element || element.tagName === "#text") return;
+        if (String(element.className || "").split(" ").includes("plan-line")) found.push(lineText(element));
+        for (const child of element.children || []) collect(child);
+    };
+    collect(node);
+    return found;
+}
+
+function lineText(element) {
+    const parts = [];
+    const walk = (element) => {
+        if (!element) return;
+        if (element.tagName === "#text") {
+            if (element.textContent) parts.push(element.textContent);
+            return;
+        }
+        if (element.tagName === "select") {
+            const selected = (element.children || []).find((option) => option.selected);
+            parts.push(selected ? selected.value : "");
+            return;
+        }
+        if (!(element.children || []).length && element.textContent) parts.push(element.textContent);
+        for (const child of element.children || []) walk(child);
+    };
+    walk(element);
+    return parts.join(" ");
+}
+
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function main() {
@@ -253,6 +285,7 @@ async function main() {
         title: modalOptions.title,
         options: options(select),
         className: select ? select.className : "",
+        lines: planLines(body),
         warnings: flatten(body)
             .filter((item) => item.className === "loader-displace-warning")
             .map((item) => item.text),
@@ -264,6 +297,7 @@ async function main() {
         for (let attempt = 0; attempt < 10; attempt += 1) await tick();
         result.after = {
             options: options(selectElement(body)),
+            lines: planLines(body),
         };
     }
 

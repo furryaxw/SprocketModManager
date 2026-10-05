@@ -47,22 +47,34 @@ PACKAGE = {
 }
 
 
-def plan(version: str) -> dict:
+def plan(version: str, dependencies: list[tuple[str, str]] = ()) -> dict:
+    packages = [
+        {
+            "id": "test.mod",
+            "display_name": {"en": "Test Mod"},
+            "name": "test.mod",
+            "version": version,
+            "tag": f"v{version}",
+            "assets": ["TestMod.dll"],
+        }
+    ]
+    packages.extend(
+        {
+            "id": package_id,
+            "display_name": {"en": package_id},
+            "name": package_id,
+            "version": dependency_version,
+            "tag": f"v{dependency_version}",
+            "assets": [f"{package_id}.dll"],
+        }
+        for package_id, dependency_version in dependencies
+    )
     return {
         "id": "test.mod",
         "display_name": {"en": "Test Mod"},
         "name": "test.mod",
         "replaces_autotranslator": False,
-        "packages": [
-            {
-                "id": "test.mod",
-                "display_name": {"en": "Test Mod"},
-                "name": "test.mod",
-                "version": version,
-                "tag": f"v{version}",
-                "assets": ["TestMod.dll"],
-            }
-        ],
+        "packages": packages,
     }
 
 
@@ -125,6 +137,17 @@ class PlanSelectorHarnessTests(unittest.TestCase):
             [option["value"] for option in result["after"]["options"] if option["selected"]],
             ["1.0.0"],
         )
+
+    def test_the_dependency_tree_is_redrawn_from_the_replanned_version(self) -> None:
+        """改选之后画的必须是新那一版解析出来的树：依赖跟着版本换，不是把旧的留在原地。"""
+        result = self._run(
+            plan={"plans": [plan("2.0.0", [("test.api", "2.0.0")])]},
+            replan={"plans": [plan("1.0.0", [("test.api", "1.0.0")])]},
+            change_to="1.0.0",
+        )
+
+        self.assertEqual(result["first"]["lines"], ["Test Mod 2.0.0", "test.api 2.0.0"])
+        self.assertEqual(result["after"]["lines"], ["Test Mod 1.0.0", "test.api 1.0.0"])
 
     def test_an_already_installed_target_still_opens_the_selector(self) -> None:
         """界面挑的那版＝装着的那版时后端会「跳过」；只要索引里还有别的版本，对话框就得照开。

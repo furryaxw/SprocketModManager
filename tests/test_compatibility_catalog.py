@@ -560,5 +560,126 @@ class EnvironmentChainTests(unittest.TestCase):
         self.assertEqual(versions, {"test.root": "1.0.0", "test.dep": "2.0.0"})
 
 
+def versioned_release(package_id: str, version: str, sprocket_range: str, release_id: int) -> dict:
+    """一条内嵌 release（自带资产与环境声明），用来造多发布版本的包。"""
+    return {
+        "id": release_id,
+        "tag": f"v{version}",
+        "version": version,
+        "prerelease": False,
+        "published_at": "2026-09-02T00:00:00Z",
+        "page_url": f"https://github.com/test/repo/releases/tag/v{version}",
+        "assets": [
+            {
+                "id": release_id,
+                "name": "TestMod.dll",
+                "size": 10,
+                "download_url": f"https://github.com/test/repo/releases/download/v{version}/TestMod.dll",
+            }
+        ],
+        "dependencies": [{"id": "hamish.sprocket", "version": sprocket_range}],
+        "compatibility": {"source": "declared"},
+    }
+
+
+def two_line_packages() -> list:
+    """一个仓库两条发布线：0.9.0 走 MelonLoader，1.0.0 走 BepInEx，各自的依赖也各写一条。
+
+    两条线各自声明包级依赖（`when`）与安装规则（`when`），所以从索引里读回来的规则必须带着
+    `when`，否则两条线的依赖会一起进计划。
+    """
+    rules = [
+        {"match": "*.dll", "type": "bepinex:plugin", "when": ">=1.0.0"},
+        {"match": "*.dll", "type": "melonloader:mod", "when": "<1.0.0"},
+    ]
+
+    def package_at(package_id: str, supply: dict | None = None) -> dict:
+        payload = json.loads(json.dumps(PACKAGE))
+        payload["id"] = package_id
+        payload["name"] = package_id
+        payload["display_name"] = {"en": package_id}
+        if supply:
+            payload["kind"] = "modloader"
+            payload["supply"] = dict(supply)
+        payload["releases"] = [versioned_release(package_id, "1.0.0", ">=0.2.53.0", 1)]
+        return payload
+
+    root = package_at("test.two-lines")
+    root["dependencies"] = [
+        {"id": "test.modern", "version": "*", "when": ">=1.0.0"},
+        {"id": "test.legacy", "version": "*", "when": "<1.0.0"},
+    ]
+    root["install"] = {"scan_dlls": True, "exclude": [], "files": [dict(rule) for rule in rules]}
+    root["releases"] = [
+        versioned_release("test.two-lines", "1.0.0", ">=0.2.53.0", 1),
+        versioned_release("test.two-lines", "0.9.0", ">=0.2.53.0", 2),
+    ]
+
+    return [
+        root,
+        package_at("bepinex.bepinex-be", {"bepinex:plugin": "{Sprocket}/BepInEx/plugins"}),
+        package_at("lavagang.melonloader", {"melonloader:mod": "{Sprocket}/Mods"}),
+        package_at("test.modern"),
+        package_at("test.legacy"),
+    ]
+
+
+class PinnedVersionDependencyTreeTests(unittest.TestCase):
+    """点定的那一版决定依赖树：包级依赖与隐含加载器依赖都按那一版筛（`when`）。"""
+
+    def _api(self, root: Path) -> ClientApi:
+        app_dir = root / "app"
+        game = game_dir(root)
+        ConfigStore(app_dir).save(
+            {
+                "language": "zh",
+                "game_path": str(game),
+                "index_url": str(index_dir(root, packages=two_line_packages())),
+            }
+        )
+        service = ModManagerService(app_dir)
+        return ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
+
+    def _close(self, api: ClientApi) -> None:
+        api._environment_monitor.stop()
+        api.install_queue.close()
+        api.data.close()
+
+    def _tree(self, api: ClientApi, version: str) -> dict:
+        plan = api.plan_install(["test.two-lines"], {"test.two-lines": version})
+        self.assertTrue(plan["ok"], plan)
+        return {item["id"]: item["version"] for item in plan["plans"][0]["packages"]}
+
+    def test_the_modern_line_pulls_in_its_own_dependency_and_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                tree = self._tree(api, "1.0.0")
+            finally:
+                self._close(api)
+
+        self.assertEqual(
+            tree,
+            {"test.two-lines": "1.0.0", "test.modern": "1.0.0", "bepinex.bepinex-be": "1.0.0"},
+            "1.0.0 那条线：包级依赖与安装规则都按 >=1.0.0 取",
+        )
+
+    def test_the_legacy_line_pulls_in_its_own_dependency_and_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api = self._api(Path(directory))
+            try:
+                api.load_catalog()
+                tree = self._tree(api, "0.9.0")
+            finally:
+                self._close(api)
+
+        self.assertEqual(
+            tree,
+            {"test.two-lines": "0.9.0", "test.legacy": "1.0.0", "lavagang.melonloader": "1.0.0"},
+            "0.9.0 那条线：包级依赖与安装规则都按 <1.0.0 取，另一条线的加载器不该进来",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

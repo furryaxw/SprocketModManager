@@ -268,6 +268,8 @@ class RegistryPackage:
                 {
                     "match": str(rule["match"]),
                     "type": str(rule["type"]),
+                    # `when` 是这条规则只对哪些自有版本生效：漏掉它，两条发布线的规则会同时命中。
+                    **({"when": str(rule["when"])} if rule.get("when") else {}),
                     **({"subpath": str(rule["subpath"])} if rule.get("subpath") else {}),
                     **({"layout": str(rule["layout"])} if rule.get("layout") else {}),
                 }
@@ -278,6 +280,7 @@ class RegistryPackage:
                 {
                     "match": str(rule["match"]),
                     "target": str(rule["target"]),
+                    **({"when": str(rule["when"])} if rule.get("when") else {}),
                     **({"subpath": str(rule["subpath"])} if rule.get("subpath") else {}),
                     **({"layout": str(rule["layout"])} if rule.get("layout") else {}),
                 }
