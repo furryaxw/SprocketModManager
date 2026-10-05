@@ -224,6 +224,8 @@ class DependencySolver:
         求解时一并装上，卸载时也按同一张依赖图判定能不能删。加载器自己供给的类型不算依赖。
         包声明的依赖已经点名了某个供给者时，那一条就是这条依赖，不再另加隐式依赖。隐式依赖的
         版本区间由选中的供给者给出（`*`，或表选中行的区间）。
+        安装规则可以带 `when`（一个仓库两条发布线时按版本各装各的），所以类型要按**这条 release
+        的版本**取：0.3.0 那条线依赖 MelonLoader，1.0.0 那条线依赖 BepInEx。
 
         只跳过本机能力：对本机能力的依赖由能力判定负责，装不了一个能力（例如游戏那根轴），
         也不该进依赖图。既不是包、也不是能力的 id 不是跳过，而是照旧报成解析不了的依赖。
@@ -236,7 +238,7 @@ class DependencySolver:
         )
         resolved_ids = {str(item.get("id")) for item in declared}
         implicit: list[dict[str, str]] = []
-        for file_type in package.declared_types():
+        for file_type in package.declared_types_for(str(release.version)):
             supplier = self._loader_for_type(package, file_type, frozenset(resolved_ids))
             if supplier is None:
                 continue

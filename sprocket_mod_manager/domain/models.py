@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .semver import Version
+from .semver import Version, satisfies
 
 ProgressCallback = Callable[[str], None]
 
@@ -52,6 +52,26 @@ def localized_value(values: dict[str, str], language: str = "en") -> str:
 
     requested_base = requested.split("-", 1)[0]
     return find_language(requested_base) or find_language("en") or next(iter(values.values()))
+
+
+def rule_applies_to_version(rule: dict[str, str], version: str) -> bool:
+    """这条安装规则管不管这一版。
+
+    规则的 `when` 是**这个包自己**的版本区间（与依赖那一项同一套写法），省略表示不限版本。
+    一个仓库两条发布线时，两条线各写一条规则、把分界版本写进 `when` 就能各装各的目录。
+    给不出可读的版本（例如 DLL 没自报版本、调用方还没挑出版本）时，只有不限版本的规则算命中 ——
+    那样扫描会退回按 DLL 自身的分类落位，比拿另一条线的规则硬套强。
+    """
+    when = str(rule.get("when") or "").strip()
+    if not when or when == "*":
+        return True
+    text = str(version or "").strip()
+    if not text:
+        return False
+    try:
+        return satisfies(text, when)
+    except (IndexError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -141,10 +161,27 @@ class RegistryPackage:
         """
         return dict(self.provides) if self.provides else {self.id: VERSION_TEMPLATE}
 
+    def file_rules_for(self, version: str) -> tuple[dict[str, str], ...]:
+        """命中这一版的 `install.files` 规则，按声明顺序（先写的先匹配）。"""
+        return tuple(rule for rule in self.file_rules if rule_applies_to_version(rule, version))
+
+    def payload_rules_for(self, version: str) -> tuple[dict[str, str], ...]:
+        """命中这一版的 `install.payload` 规则，按声明顺序。"""
+        return tuple(rule for rule in self.payload_rules if rule_applies_to_version(rule, version))
+
     def declared_types(self) -> tuple[str, ...]:
-        """静态规则覆盖到的类型（去重保序）。据此自动推导需要哪些加载器。"""
+        """全部规则覆盖到的类型（去重保序）：给「哪些加载器能供给这个包」这类与版本无关的判定用。"""
         seen: dict[str, None] = {}
         for rule in self.file_rules:
+            file_type = str(rule.get("type", ""))
+            if file_type:
+                seen.setdefault(file_type, None)
+        return tuple(seen)
+
+    def declared_types_for(self, version: str) -> tuple[str, ...]:
+        """这一版规则覆盖到的类型（去重保序）。据此自动推导这一版需要哪些加载器。"""
+        seen: dict[str, None] = {}
+        for rule in self.file_rules_for(version):
             file_type = str(rule.get("type", ""))
             if file_type:
                 seen.setdefault(file_type, None)

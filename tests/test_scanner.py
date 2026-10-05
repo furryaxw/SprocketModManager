@@ -150,5 +150,67 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(ignored, ["UserData/TestMod/config.json"])
 
 
+class VersionScopedRuleTests(unittest.TestCase):
+    """`when` 让同一条目按版本分流两套安装规则（一个仓库两条发布线）。"""
+
+    RULES = (
+        {"match": "*.dll", "type": "bepinex:plugin", "when": ">=1.0.0"},
+        {"match": "*.dll", "type": "melonloader:mod", "when": "<1.0.0"},
+    )
+
+    def two_line_package(self, rules=None) -> RegistryPackage:
+        chosen = tuple(dict(rule) for rule in (rules if rules is not None else self.RULES))
+        return RegistryPackage(
+            id="test.two-lines",
+            name="TwoLines",
+            authors=("test",),
+            repository="test/repo",
+            license="MIT",
+            display_name={"en": "Two Lines"},
+            description={"en": "Two lines"},
+            release={},
+            dependencies=(),
+            install={"scan_dlls": True, "exclude": [], "files": [dict(rule) for rule in chosen]},
+            category="utility",
+            tags=(),
+            file_rules=chosen,
+            schema_version=2,
+        )
+
+    def two_line_scanner(self) -> PackageScanner:
+        return PackageScanner({
+            "bepinex:plugin": PurePosixPath("BepInEx/plugins"),
+            "melonloader:mod": PurePosixPath("Mods"),
+        })
+
+    def test_the_rule_follows_the_release_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            asset = root / "TwoLines.dll"
+            asset.write_bytes(b"stub")
+
+            modern, _ = self.two_line_scanner().scan(
+                self.two_line_package(), asset, root / "out", version="1.2.0"
+            )
+            legacy, _ = self.two_line_scanner().scan(
+                self.two_line_package(), asset, root / "out", version="0.9.0"
+            )
+
+        self.assertEqual([item.target for item in modern], ["BepInEx/plugins/TwoLines.dll"])
+        self.assertEqual([item.target for item in legacy], ["Mods/TwoLines.dll"])
+
+    def test_an_unknown_version_falls_back_to_the_dll_classification(self) -> None:
+        """版本读不出来时带 `when` 的规则不命中：退回按 DLL 自己的分类落位，不硬套另一条线。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = self.two_line_package((self.RULES[1],))
+
+            files, _ = PackageScanner({
+                "bepinex:plugin": PurePosixPath("BepInEx/plugins"),
+            }).scan(package, FIXTURE_BEPINEX_PLUGIN, root / "out")
+
+        self.assertEqual([item.target for item in files], ["BepInEx/plugins/BepInExFixture.dll"])
+
+
 if __name__ == "__main__":
     unittest.main()

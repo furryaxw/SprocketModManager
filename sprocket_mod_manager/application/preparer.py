@@ -154,6 +154,7 @@ class PlanPreparer:
                         package,
                         destination,
                         package_dir / "scan" / str(asset.id),
+                        version=str(resolved.release.version),
                     )
                     item.files.extend(files)
                     item.ignored_files.extend(ignored)

@@ -383,6 +383,24 @@ class InstallTypeValidationTests(unittest.TestCase):
 
         INDEX.validate_meta(meta, "example.mod")
 
+    def test_install_rules_take_an_optional_version_range(self):
+        """`when` 是当前包自己的版本区间：两条规则按版本分流（一个仓库两条发布线）。"""
+        meta = self.schema_two()
+        meta["install"]["files"] = [
+            {"match": "*.dll", "type": "bepinex:plugin", "when": ">=1.0.0"},
+            {"match": "*.dll", "type": "melonloader:mod", "when": "<1.0.0"},
+        ]
+
+        INDEX.validate_meta(meta, "example.mod")
+
+    def test_an_install_rule_version_range_must_be_a_range(self):
+        for value in ("", "   ", "not a range", 3, None):
+            with self.subTest(value=value):
+                meta = self.schema_two()
+                meta["install"]["files"] = [{"match": "*.dll", "type": "melonloader:mod", "when": value}]
+                with self.assertRaises(INDEX.RegistryError):
+                    INDEX.validate_meta(meta, "example.mod")
+
     def test_install_file_types_must_be_well_formed(self):
         meta = self.schema_two()
         for value in ("", "melonloader", ":mod", "melonloader:"):

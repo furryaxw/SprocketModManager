@@ -403,7 +403,9 @@ class ExistingModsAdopter:
             if match_package_by_metadata(metadata, (package,)) is None:
                 continue
             try:
-                files, ignored = self.scanner.scan(package, path, game_dir)
+                files, ignored = self.scanner.scan(
+                    package, path, game_dir, version=declared_version_of(metadata)
+                )
             except ModManagerError as exc:
                 # 身份已经对上、目标却算不出来：这条认领被放弃，日志里必须留下原因，
                 # 否则磁盘上明明认得出的模组会静默地留在"本地"。
@@ -484,7 +486,9 @@ class ExistingModsAdopter:
                     if actual != expected:
                         continue
                     try:
-                        files, ignored = self.scanner.scan(package, path, game_dir)
+                        files, ignored = self.scanner.scan(
+                            package, path, game_dir, version=str(release.version)
+                        )
                     except ModManagerError as exc:
                         LOGGER.warning(
                             "cannot adopt %s from %s: %s", package.id, path.name, exc

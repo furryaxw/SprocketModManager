@@ -74,15 +74,19 @@ def _override_target(package: RegistryPackage, source_name: str) -> PurePosixPat
     return None
 
 
-def _matched_rule(package: RegistryPackage, source_name: str) -> dict[str, str] | None:
-    for rule in package.file_rules:
+def _matched_rule(package: RegistryPackage, source_name: str, version: str) -> dict[str, str] | None:
+    for rule in package.file_rules_for(version):
         if _matches(str(rule.get("match", "")), source_name):
             return rule
     return None
 
 
-def _matched_payload_rule(package: RegistryPackage, source_name: str) -> dict[str, str] | None:
-    for rule in package.payload_rules:
+def _matched_payload_rule(
+        package: RegistryPackage,
+        source_name: str,
+        version: str,
+) -> dict[str, str] | None:
+    for rule in package.payload_rules_for(version):
         if _matches(str(rule.get("match", "")), source_name):
             return rule
     return None
@@ -174,6 +178,9 @@ class PackageScanner:
 
     目标路径由**供给该类型的加载器**决定：注册表里 `supply` 说了 `melonloader:mod` 装在
     `{Sprocket}/Mods`，这里就把它落在那里。v1 条目没有类型，仍按写死的根与 override 解析。
+
+    `version` 是被扫的**这一版**（调用方按挑中的 release 给出，认领时用 DLL 自报的版本）：
+    规则里写了 `when` 就只能管它区间内的版本，一个仓库两条发布线时靠它各装各的目录。
     """
 
     def __init__(self, install_directories: Mapping[str, PurePosixPath] | None = None):
@@ -187,19 +194,22 @@ class PackageScanner:
             package: RegistryPackage,
             asset_path: Path,
             output_dir: Path,
+            *,
+            version: str = "",
     ) -> tuple[list[PreparedFile], list[str]]:
         suffix = asset_path.suffix.casefold()
         if suffix == ".dll":
-            return self._scan_file(package, asset_path.name, asset_path, output_dir)
+            return self._scan_file(package, asset_path.name, asset_path, output_dir, version)
         if suffix != ".zip":
             raise ScanError(f"unsupported Release asset type: {asset_path.name}")
-        return self._scan_archive(package, asset_path, output_dir)
+        return self._scan_archive(package, asset_path, output_dir, version)
 
     def _scan_archive(
             self,
             package: RegistryPackage,
             archive_path: Path,
             output_dir: Path,
+            version: str,
     ) -> tuple[list[PreparedFile], list[str]]:
         prepared: list[PreparedFile] = []
         ignored: list[str] = []
@@ -227,7 +237,9 @@ class PackageScanner:
                 extracted.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member, "r") as source, extracted.open("wb") as destination:
                     shutil.copyfileobj(source, destination, length=1024 * 1024)
-                files, skipped = self._scan_file(package, source_path.as_posix(), extracted, output_dir)
+                files, skipped = self._scan_file(
+                    package, source_path.as_posix(), extracted, output_dir, version
+                )
                 prepared.extend(files)
                 ignored.extend(skipped)
         return self._deduplicate(prepared), ignored
@@ -238,6 +250,7 @@ class PackageScanner:
             source_name: str,
             source_path: Path,
             output_dir: Path,
+            version: str,
     ) -> tuple[list[PreparedFile], list[str]]:
         del output_dir
         if _is_excluded(package, source_name):
@@ -246,9 +259,9 @@ class PackageScanner:
 
         target: PurePosixPath | None = None
         if package.uses_payload:
-            target = self._payload_target(package, source_name)
+            target = self._payload_target(package, source_name, version)
         elif package.schema_version >= 2:
-            rule = _matched_rule(package, source_name)
+            rule = _matched_rule(package, source_name, version)
             if rule is not None:
                 target = self._target_for_type(
                     str(rule["type"]),
@@ -282,13 +295,18 @@ class PackageScanner:
             )
         ], []
 
-    def _payload_target(self, package: RegistryPackage, source_name: str) -> PurePosixPath | None:
+    def _payload_target(
+            self,
+            package: RegistryPackage,
+            source_name: str,
+            version: str,
+    ) -> PurePosixPath | None:
         """加载器自己的载荷：目标直接写在规则里，不查任何供给表。
 
         一个加载器供给哪些**别人**用的类型（`supply`）与它自己装在哪里（`payload`）是两回事，
         所以这条线不经过「谁供给这个类型」。
         """
-        rule = _matched_payload_rule(package, source_name)
+        rule = _matched_payload_rule(package, source_name, version)
         if rule is None:
             return None
         directory = validate_supply_target(str(rule.get("target", "")))

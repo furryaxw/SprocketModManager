@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 from sprocket_mod_manager.domain.errors import ResolutionError
 from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
@@ -83,6 +84,40 @@ class SolverTests(unittest.TestCase):
         by_id = plan.by_id()
         self.assertEqual(str(by_id[root.id].release.version), "1.0.0")
         self.assertEqual(str(by_id[lib.id].release.version), "1.4.0")
+
+    def test_the_implicit_loader_dependency_follows_the_release_version(self):
+        """安装规则按版本分流时，隐含的加载器依赖也要跟着那一版走。"""
+        rules = (
+            {"match": "*.dll", "type": "bepinex:plugin", "when": ">=1.0.0"},
+            {"match": "*.dll", "type": "melonloader:mod", "when": "<1.0.0"},
+        )
+        root = replace(
+            package("test.two-lines"),
+            file_rules=rules,
+            install={"scan_dlls": True, "exclude": [], "files": [dict(rule) for rule in rules]},
+            schema_version=2,
+        )
+        melon = replace(
+            package("lavagang.melonloader"),
+            kind="modloader",
+            supply={"melonloader:mod": "{Sprocket}/Mods"},
+        )
+        bepinex = replace(
+            package("bepinex.bepinex-be"),
+            kind="modloader",
+            supply={"bepinex:plugin": "{Sprocket}/BepInEx/plugins"},
+        )
+        github = FakeGitHub({
+            root.id: (release("1.0.0"), release("0.9.0")),
+            melon.id: (release("0.7.3"),),
+            bepinex.id: (release("6.0.0"),),
+        })
+
+        plan = DependencySolver(Registry([root, melon, bepinex]), github).resolve(root.id)
+
+        ids = {item.package.id for item in plan.packages}
+        self.assertIn(bepinex.id, ids, "1.0.0 那条线要 BepInEx")
+        self.assertNotIn(melon.id, ids, "不该把另一条线的加载器拉进来")
 
     def test_failure_names_the_dependency_that_cannot_be_satisfied(self):
         """报错必须指到真正卡住的那个包：只报根包 `*` 等于什么都没说。"""
