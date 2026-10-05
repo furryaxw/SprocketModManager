@@ -1,0 +1,55 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "roanwassink.sprocket-keybinds",
+  "name": "SprocketKeybinds",
+  "authors": ["RoanWassink"],
+  "repository": "RoanWassink/SprocketKeybinds",
+  "license": "MIT",
+  "display_name": {
+    "en": "Sprocket Keybinds",
+    "zh": "Sprocket 按键绑定"
+  },
+  "description": {
+    "en": "A shared keybind menu for Sprocket mods, grouped by author or declared mod pack. Mods that opt into the API register their controls there, and the bindings are edited from the game's own Settings menu; they are kept in BepInEx/config/sprocket.keybinds.json and survive updates. Public beta for Sprocket 0.2.55.5.",
+    "zh": "供 Sprocket 模组共用的按键菜单，按作者或声明的模组包分组。接入该 API 的模组在这里登记自己的操作，按键在游戏自带的设置菜单里修改；绑定保存在 BepInEx/config/sprocket.keybinds.json，升级后仍然保留。适用于 Sprocket 0.2.55.5 的公开测试版。"
+  },
+  "release": {
+    "include_prerelease": true,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketKeybinds-v*.zip"],
+      "exclude": []
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    },
+    {
+      "id": "hans21223.sprocket-mod-loader",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "supply": {
+    "roanwassink:keybinds": "{Sprocket}"
+  },
+  "install": {
+    "files": [
+      {
+        "match": "BepInEx/plugins/SprocketKeybinds/**",
+        "type": "roanwassink:keybinds",
+        "layout": "tree"
+      }
+    ],
+    "scan_dlls": false,
+    "exclude": []
+  },
+  "category": "library",
+  "tags": ["keybinds", "input", "framework", "bepinex"]
+}

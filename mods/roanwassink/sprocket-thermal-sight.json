@@ -1,0 +1,65 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "roanwassink.sprocket-thermal-sight",
+  "name": "SprocketThermalSight",
+  "authors": ["RoanWassink"],
+  "repository": "RoanWassink/SprocketThermalSight",
+  "license": "MIT",
+  "display_name": {
+    "en": "Sprocket Thermal Sight",
+    "zh": "Sprocket 热成像瞄准具"
+  },
+  "description": {
+    "en": "One configurable thermal sight with selectable, saved profiles and a monochrome thermal display. The profiles live in BepInEx/plugins/SprocketThermalSight/thermal-models.json and are saved per sight; thermal operation is limited to the Cold War era, and an imported earlier-era sight keeps its profile and mass but shows the ordinary sight view. Remove custom sight parts before uninstalling: a missing custom part can stop a vehicle from loading.",
+    "zh": "一个可配置的热成像瞄准具，方案可切换并逐具保存，黑白热成像显示。方案保存在 BepInEx/plugins/SprocketThermalSight/thermal-models.json，按每一具瞄准具分别记录；热成像只在冷战时期生效，从更早时期导入的瞄准具保留其方案与质量，但显示普通瞄准镜视图。卸载前请先移除自定义瞄准具部件：缺少自定义部件会导致载具无法读取。"
+  },
+  "release": {
+    "include_prerelease": true,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["SprocketThermalSight-v*.zip"],
+      "exclude": ["*-customization-kit.zip"]
+    }
+  },
+  "dependencies": [
+    {
+      "id": "bepinex.bepinex-be",
+      "version": "*",
+      "when": "*"
+    },
+    {
+      "id": "hans21223.sprocket-mod-loader",
+      "version": "*",
+      "when": "*"
+    },
+    {
+      "id": "roanwassink.sprocket-keybinds",
+      "version": "*",
+      "when": "*"
+    }
+  ],
+  "recommendations": [],
+  "featured": false,
+  "supply": {
+    "roanwassink:thermalsight": "{Sprocket}"
+  },
+  "install": {
+    "files": [
+      {
+        "match": "BepInEx/plugins/SprocketThermalSight/**",
+        "type": "roanwassink:thermalsight",
+        "layout": "tree"
+      },
+      {
+        "match": "Sprocket_Data/**",
+        "type": "roanwassink:thermalsight",
+        "layout": "tree"
+      }
+    ],
+    "scan_dlls": false,
+    "exclude": []
+  },
+  "category": "gameplay",
+  "tags": ["thermal", "sight", "optics", "parts", "bepinex"]
+}
