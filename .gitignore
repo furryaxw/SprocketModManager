@@ -1,5 +1,6 @@
 .idea/
 .venv/
+/registry/
 artifacts/
 __pycache__/
 *.pyc
