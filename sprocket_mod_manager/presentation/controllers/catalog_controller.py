@@ -466,6 +466,9 @@ class CatalogController(ApiController):
     def get_installed(self) -> dict[str, Any]:
         """「已安装」页的数据：**只读磁盘 + 已缓存的 Registry**，不做任何网络访问。
 
+        这份计算就是数据层 `installed` 那个 key 的刷新器（`web_gui._refresh_installed` 调它），
+        界面显示的是推过去的那一份，不读这个返回值。
+
         认领（adoption）会去拉 GitHub Release，所以它是独立端点 `adopt_existing`，
         由前端在页面渲染完成之后再异步调用——网络永远不阻塞列表。
         """
@@ -519,16 +522,19 @@ class CatalogController(ApiController):
         except (ModManagerError, OSError, ValueError) as exc:
             return self._failure(exc, code="verify_installed_failed")
 
-    def get_local_mods(self, hashes: bool = False) -> dict[str, Any]:
-        """本地 DLL 清单：静态元数据 + Registry 匹配 + 安装记录归属 + 禁用状态。
+    def get_local_mods(self) -> dict[str, Any]:
+        """本地 DLL 清单：`installed` 那份读数里的一段，供命令行与工具同步取一次。
 
-        默认不算 SHA-256（列表刷新要快）；需要摘要的调用方显式传 `hashes=true`。
+        界面不读这个端点：它显示的是数据层推来的 `installed`（见 `client_ui/js/data.js`），
+        所以这里也走同一次计算，不另扫一遍盘。
         """
-        try:
-            service = self._current_service()
-            return self._success(**self._local_mods_payload(service, hashes=bool(hashes)))
-        except (ModManagerError, OSError, ValueError) as exc:
-            return self._failure(exc, code="local_mods_failed")
+        payload = self.get_installed()
+        if not payload.get("ok"):
+            return payload
+        return self._success(
+            mods=list(payload.get("local_mods") or []),
+            summary=dict(payload.get("local_summary") or {}),
+        )
 
     def toggle_mod(self, path: str, enabled: bool = True) -> dict[str, Any]:
         """启用/禁用模组（重命名，重启生效）。
@@ -660,7 +666,16 @@ class CatalogController(ApiController):
         return [target]
 
     def _installed_reading(self) -> dict:
-        """扫描出来的「已安装」读数；读不出来就当空的（依赖解析不到东西）。"""
+        """「已安装」那份读数：数据层正被界面订阅时用它的，否则同步读一次。
+
+        命令路径（启用时的依赖库闭包、禁用时的依赖者判定）优先读数据层那份，不再自己扫盘：
+        有订阅者就说明数据层的刷新任务在跑（界面在的时候才起），那份读数是活的；没有订阅者
+        时它只是上次读完留下的值，命令行/工具照样要当场读一次才算数。
+        """
+        if self.data.subscribers(KEY_INSTALLED):
+            reading = self.data.get(KEY_INSTALLED)
+            if isinstance(reading, dict) and reading:
+                return reading
         try:
             reading = self.data.refresh_now(KEY_INSTALLED)
         except (ModManagerError, OSError, ValueError) as exc:
@@ -759,7 +774,6 @@ class CatalogController(ApiController):
             self,
             service: ModManagerService | None = None,
             *,
-            hashes: bool = False,
             installed: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         try:
@@ -784,7 +798,6 @@ class CatalogController(ApiController):
                 packages,
                 installed=tuple(records),
                 capabilities=self._capabilities(service),
-                compute_hashes=hashes,
             )
         except Exception as exc:  # 扫描整体失败也要给出一张空表，别让这一页没有读数
             LOGGER.warning("local mod scan failed error=%s", exc)

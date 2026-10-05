@@ -153,6 +153,32 @@ class InstalledRefreshTests(unittest.TestCase):
                              "a disabled mod keeps its ownership and stays out of the local-only bucket")
             self.assertEqual(after["installed"][0]["id"], "fixture.sprocket-mod")
 
+    def test_a_command_reads_the_data_layer_reading_instead_of_rescanning(self) -> None:
+        """界面在的时候（数据层有订阅者）命令只读那份读数：一次改名不该再夹一整次磁盘扫描。"""
+        from sprocket_mod_manager.application import data_hub
+        from sprocket_mod_manager.application.identifiers import melonloader
+
+        with tempfile.TemporaryDirectory() as directory:
+            api, _game, _service = self._api(Path(directory))
+            calls: list[str] = []
+            real_read = melonloader.read_cached_metadata
+
+            def counting_read(path):
+                calls.append(str(path))
+                return real_read(path)
+
+            try:
+                self.assertTrue(api.adopt_existing()["ok"])
+                api.data.subscribe("ui", [data_hub.KEY_INSTALLED])
+                api.data.refresh_now(data_hub.KEY_INSTALLED)
+                with patch.object(melonloader, "read_cached_metadata", counting_read):
+                    toggled = api.toggle_mod("Mods/FixtureMod.dll", False)
+            finally:
+                api.install_queue.close()
+
+            self.assertTrue(toggled["ok"], toggled)
+            self.assertEqual(calls, [], "读数已经在数据层里，命令不该再扫一遍盘")
+
     def test_localized_registry_name_is_delivered_to_the_client(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, _game, _service = self._api(Path(directory))
