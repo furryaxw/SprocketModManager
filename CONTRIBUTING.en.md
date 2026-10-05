@@ -258,7 +258,7 @@ CI verifies that:
 
 - the metadata matches `schemas/sprocket-mod.schema.json`, the file path matches `id`,
   and it contains no version number or download URL;
-- the GitHub repository is public and not archived;
+- the GitHub repository is public;
 - the repository contains `LICENSE`/`COPYING` and actual source files; the license is the
   SPDX identifier the entry declares, and a file GitHub cannot classify still passes;
 - at least one non-draft Release has a tag that can be parsed as SemVer;

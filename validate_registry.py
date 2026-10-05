@@ -125,8 +125,6 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
         return [str(exc)]
     if repo.get("private"):
         errors.append("repository must be public")
-    if repo.get("archived"):
-        errors.append("repository must not be archived")
     pending_license = str(meta.get("license", "")).strip().casefold() == PLACEHOLDER_LICENSE.casefold()
     license_id = (repo.get("license") or {}).get("spdx_id")
     recognized_license = bool(license_id) and license_id not in {"NOASSERTION", "OTHER"}
