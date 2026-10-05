@@ -21,7 +21,9 @@ if (-not $Dotnet) {
 
 try {
     New-Item -ItemType Directory -Force -Path $Output | Out-Null
-    foreach ($Name in @('MelonLoaderStub', 'FixtureMod', 'FixturePlugin', 'FixtureLibrary')) {
+    foreach ($Name in @(
+            'MelonLoaderStub', 'FixtureMod', 'FixturePlugin', 'FixtureLibrary',
+            'BepInExStub', 'BepInExFixture', 'BepInExDependency')) {
         $Project = Join-Path $Src (Join-Path $Name "$Name.csproj")
         $ProjectOut = Join-Path $Staging $Name
         & $Dotnet.Source build $Project -c Release -o $ProjectOut --nologo -v quiet

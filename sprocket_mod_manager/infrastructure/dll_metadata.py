@@ -31,6 +31,15 @@ MELON_CREDITS_TYPE = "MelonAdditionalCreditsAttribute"
 MELON_ADDITIONAL_DEPENDENCIES_TYPE = "MelonAdditionalDependenciesAttribute"
 MELON_INCOMPATIBLE_ASSEMBLIES_TYPE = "MelonIncompatibleAssembliesAttribute"
 
+# BepInEx 的四个特性都在**插件类**上，不在程序集上：GUID 就是插件在 BepInEx 里的身份，
+# `BepInDependency` / `BepInIncompatibility` 的值也都是插件 GUID（不是程序集名）。
+BEPINEX_PLUGIN_TYPE = ("BepInEx", "BepInPlugin")
+BEPINEX_DEPENDENCY_TYPE = ("BepInEx", "BepInDependency")
+BEPINEX_INCOMPATIBILITY_TYPE = ("BepInEx", "BepInIncompatibility")
+# BepInEx.Core 的 `BepInDependency.DependencyFlags`：None=0、HardDependency=1、SoftDependency=2。
+# 软依赖只是「在场就排在它后面」，缺了不算问题，所以不进必需依赖。
+BEPINEX_SOFT_DEPENDENCY = 2
+
 ASSEMBLY_METADATA_TYPE = ("System.Reflection", "AssemblyMetadataAttribute")
 ASSEMBLY_FILE_VERSION_TYPE = ("System.Reflection", "AssemblyFileVersionAttribute")
 TARGET_FRAMEWORK_TYPE = ("System.Runtime.Versioning", "TargetFrameworkAttribute")
@@ -73,6 +82,9 @@ _INTERESTING_ATTRIBUTES = frozenset(
         ("MelonLoader", MELON_CREDITS_TYPE),
         ("MelonLoader", MELON_ADDITIONAL_DEPENDENCIES_TYPE),
         ("MelonLoader", MELON_INCOMPATIBLE_ASSEMBLIES_TYPE),
+        BEPINEX_PLUGIN_TYPE,
+        BEPINEX_DEPENDENCY_TYPE,
+        BEPINEX_INCOMPATIBILITY_TYPE,
     }
 )
 
@@ -87,6 +99,11 @@ class DllMetadata:
 
     `is_managed` 表示存在 CLR 元数据；`is_native` 表示 PE 解析成功但没有 CLR 元数据。
     两者可能同时为 False（PE 本身畸形或无法解析），此时 `errors` 里会有原因。
+
+    `melon_*` 与 `plugin_*` 是两套加载器各自的声明，同一个程序集只会有一套：
+    MelonLoader 写程序集级 `MelonInfo`，BepInEx 写插件类上的 `BepInPlugin`。
+    `required_dependencies` / `incompatible_assemblies` 按加载器各自的口径装值 ——
+    MelonLoader 是程序集名，BepInEx 是插件 GUID。
     """
 
     path: str
@@ -106,6 +123,9 @@ class DllMetadata:
     errors: tuple[str, ...]
     required_dependencies: tuple[str, ...] = ()
     incompatible_assemblies: tuple[str, ...] = ()
+    plugin_guid: str | None = None
+    plugin_name: str | None = None
+    plugin_version: str | None = None
 
 
 def melon_info_description(metadata: DllMetadata) -> str | None:
@@ -166,6 +186,8 @@ def read_dll_metadata(path: str | os.PathLike[str]) -> DllMetadata:
         melon_kind: str | None = None
         melon_name = melon_version = melon_author = melon_download_link = None
         melon_credits: str | None = None
+        plugin_guid: str | None = None
+        plugin_name = plugin_version = None
         required_dependencies: tuple[str, ...] = ()
         incompatible_assemblies: tuple[str, ...] = ()
         metadata_raw: dict[str, str] = {}
@@ -192,6 +214,18 @@ def read_dll_metadata(path: str | os.PathLike[str]) -> DllMetadata:
                     required_dependencies = required_dependencies + _string_array(attribute)
                 elif attribute.full_name == ("MelonLoader", MELON_INCOMPATIBLE_ASSEMBLIES_TYPE):
                     incompatible_assemblies = incompatible_assemblies + _string_array(attribute)
+                elif attribute.full_name == BEPINEX_PLUGIN_TYPE:
+                    if plugin_guid is None:
+                        plugin_guid, plugin_name, plugin_version = _read_plugin_info(attribute, errors)
+                    else:
+                        # 一个程序集里多个插件只留第一个：清单的条目是「一个文件一个身份」。
+                        errors.append(f"ignored duplicate {attribute.name} attribute")
+                elif attribute.full_name == BEPINEX_DEPENDENCY_TYPE:
+                    dependency = _read_plugin_dependency(attribute, errors)
+                    if dependency is not None:
+                        required_dependencies = required_dependencies + (dependency,)
+                elif attribute.full_name == BEPINEX_INCOMPATIBILITY_TYPE:
+                    incompatible_assemblies = incompatible_assemblies + _string_array(attribute)
 
         if file_version is None:
             # 托管程序集没有 AssemblyFileVersionAttribute 时，回退到 PE 的 VS_FIXEDFILEINFO。
@@ -215,6 +249,9 @@ def read_dll_metadata(path: str | os.PathLike[str]) -> DllMetadata:
             errors=tuple(errors),
             required_dependencies=_dedupe(required_dependencies),
             incompatible_assemblies=_dedupe(incompatible_assemblies),
+            plugin_guid=plugin_guid,
+            plugin_name=plugin_name,
+            plugin_version=plugin_version,
         )
     finally:
         if pe is not None:
@@ -303,12 +340,17 @@ def _read_melon_kind(net: object, errors: list[str]) -> str | None:
 class _Attribute:
     namespace: str
     name: str
-    shape: str | None
+    kinds: tuple[str, ...]
     arguments: tuple[object, ...]
 
     @property
     def full_name(self) -> tuple[str, str]:
         return (self.namespace, self.name)
+
+    @property
+    def shape(self) -> str | None:
+        """MelonInfo 那种按构造函数形状解释的写法；其余特性是 None。"""
+        return _MELON_INFO_SHAPES.get(self.kinds)
 
 
 def _iter_attributes(net: object, errors: list[str]) -> list[_Attribute]:
@@ -348,7 +390,7 @@ def _iter_attributes(net: object, errors: list[str]) -> list[_Attribute]:
             _Attribute(
                 namespace=declared[0],
                 name=declared[1],
-                shape=_MELON_INFO_SHAPES.get(kinds),
+                kinds=kinds,
                 arguments=arguments,
             )
         )
@@ -508,7 +550,9 @@ def _read_element_type(data: bytes, position: int) -> tuple[str, int]:
         return "?", position
     if tag in (0x11, 0x12):
         _, position = _read_compressed_uint(data, position)
-        return ("T" if tag == 0x12 else "?"), position
+        # 0x11 是值类型：自定义特性的参数里只可能是枚举（结构体不能当特性参数），
+        # 按 ECMA-335 它照底层类型编码 —— C# 枚举默认 int32，BepInEx 的 DependencyFlags 就是。
+        return ("T" if tag == 0x12 else "i"), position
     if tag in (0x13, 0x1E):
         _, position = _read_compressed_uint(data, position)
         return "?", position
@@ -547,6 +591,51 @@ def _string_array(attribute: _Attribute) -> tuple[str, ...]:
 def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:
     """保序去重；多个同类特性叠加时同样去重。"""
     return tuple(dict.fromkeys(values))
+
+
+def _read_plugin_info(
+        attribute: _Attribute,
+        errors: list[str],
+) -> tuple[str | None, str | None, str | None]:
+    """`BepInPlugin(string GUID, string Name, string Version)`。"""
+    if attribute.kinds != ("s", "s", "s"):
+        errors.append(f"unsupported {attribute.name} constructor signature")
+        return None, None, None
+    arguments = attribute.arguments
+    try:
+        guid = arguments[0]
+        name = arguments[1]
+        version = arguments[2]
+    except IndexError as exc:
+        errors.append(f"malformed {attribute.name} arguments: {exc}")
+        return None, None, None
+    if not isinstance(guid, str) or not guid.strip():
+        errors.append(f"{attribute.name} without a plugin GUID")
+        return None, None, None
+    return (
+        guid.strip(),
+        name if isinstance(name, str) and name else None,
+        version if isinstance(version, str) and version else None,
+    )
+
+
+def _read_plugin_dependency(attribute: _Attribute, errors: list[str]) -> str | None:
+    """`[BepInDependency]` 的插件 GUID；软依赖返回 None。
+
+    三种写法：`(GUID)`、`(GUID, Version)`、`(GUID, DependencyFlags)`。带版本的那种只取 GUID：
+    管理器的依赖检查只看这个插件在不在场，版本不参与。
+    """
+    if not attribute.kinds or attribute.kinds[0] != "s":
+        errors.append(f"unsupported {attribute.name} constructor signature")
+        return None
+    guid = attribute.arguments[0] if attribute.arguments else None
+    if not isinstance(guid, str) or not guid.strip():
+        errors.append(f"malformed {attribute.name} arguments")
+        return None
+    flags = attribute.arguments[1] if len(attribute.arguments) > 1 else None
+    if isinstance(flags, int) and flags & BEPINEX_SOFT_DEPENDENCY:
+        return None
+    return guid.strip()
 
 
 def _collect_metadata(attribute: _Attribute, target: dict[str, str], errors: list[str]) -> None:
@@ -664,7 +753,7 @@ _METADATA_CACHE_LIMIT = 512
 # 还落一份磁盘缓存，但**按内容 hash 键**：`files{路径: {size, mtime, hash}}` + `meta{hash: 解析结果}`。
 # 这样同一份 DLL 换了路径/名字可以复用解析结果，(size, mtime) 巧合也不会误命中。
 # 快路径仍然先看 (size, mtime)（免去每次刷新都算 hash），未命中才真正算 hash。
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 _disk_cache_path: Path | None = None
 _sections: dict[str, dict] = {"files": {}, "meta": {}}
 _sections_loaded = False
@@ -838,6 +927,9 @@ def _serialize(metadata: DllMetadata) -> dict:
         "errors": list(metadata.errors),
         "required_dependencies": list(metadata.required_dependencies),
         "incompatible_assemblies": list(metadata.incompatible_assemblies),
+        "plugin_guid": metadata.plugin_guid,
+        "plugin_name": metadata.plugin_name,
+        "plugin_version": metadata.plugin_version,
     }
 
 
@@ -861,6 +953,9 @@ def _deserialize(path: str, data: dict) -> DllMetadata:
         errors=tuple(data.get("errors") or ()),
         required_dependencies=tuple(data.get("required_dependencies") or ()),
         incompatible_assemblies=tuple(data.get("incompatible_assemblies") or ()),
+        plugin_guid=data.get("plugin_guid"),
+        plugin_name=data.get("plugin_name"),
+        plugin_version=data.get("plugin_version"),
     )
 
 

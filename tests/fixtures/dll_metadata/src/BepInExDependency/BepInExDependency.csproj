@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 测试夹具：GUID 与 BepInExFixture 的硬依赖同名，用来验证依赖按插件 GUID 解析。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>BepInExDependency</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DebugType>none</DebugType>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <CodePage>65001</CodePage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BepInExStub\BepInExStub.csproj" />
+  </ItemGroup>
+
+</Project>

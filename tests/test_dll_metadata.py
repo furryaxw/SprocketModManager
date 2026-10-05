@@ -22,7 +22,8 @@ FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "d
 FIXTURE_MOD = FIXTURE_DIR / "FixtureMod.dll"
 FIXTURE_PLUGIN = FIXTURE_DIR / "FixturePlugin.dll"
 FIXTURE_LIBRARY = FIXTURE_DIR / "FixtureLibrary.dll"
-REQUIRED_FIXTURES = (FIXTURE_MOD, FIXTURE_PLUGIN, FIXTURE_LIBRARY)
+FIXTURE_BEPINEX = FIXTURE_DIR / "BepInExFixture.dll"
+REQUIRED_FIXTURES = (FIXTURE_MOD, FIXTURE_PLUGIN, FIXTURE_LIBRARY, FIXTURE_BEPINEX)
 NATIVE_DLL = Path("C:/Windows/System32/version.dll")
 DEPLOYED_MOD = Path("G:/Sprocket/Mods/SprocketJitterFix.dll")
 
@@ -152,6 +153,41 @@ class FixtureLibraryTests(unittest.TestCase):
             "id": "fixture.sprocket-library",
             "display_name": "Fixture Library",
         })
+
+
+class BepInExFixtureTests(unittest.TestCase):
+    """BepInEx 插件：`BepInPlugin` 给身份，`BepInDependency` / `BepInIncompatibility` 给插件 GUID。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.metadata = read_dll_metadata(FIXTURE_BEPINEX)
+
+    def test_reads_the_plugin_identity(self) -> None:
+        self.assertTrue(self.metadata.is_managed)
+        self.assertEqual(self.metadata.plugin_guid, "fixture.bepinex-plugin")
+        self.assertEqual(self.metadata.plugin_name, "Fixture BepInEx Plugin")
+        self.assertEqual(self.metadata.plugin_version, "3.1.4")
+
+    def test_has_no_melon_fields(self) -> None:
+        self.assertIsNone(self.metadata.melon_kind)
+        self.assertIsNone(self.metadata.melon_name)
+        self.assertIsNone(self.metadata.melon_version)
+        self.assertIsNone(melon_info_description(self.metadata))
+
+    def test_reads_dependencies_by_plugin_guid(self) -> None:
+        # 软依赖（`DependencyFlags.SoftDependency`）不算必需；带版本的那条也要认出来。
+        self.assertEqual(
+            self.metadata.required_dependencies,
+            ("fixture.bepinex-dependency", "fixture.versioned-dependency"),
+        )
+        self.assertEqual(self.metadata.incompatible_assemblies, ("fixture.incompatible-plugin",))
+
+    def test_reads_sprocket_metadata_like_any_other_assembly(self) -> None:
+        self.assertEqual(self.metadata.sprocket.get("id"), "fixture.bepinex-plugin")
+        self.assertEqual(self.metadata.sprocket.get("display_name"), "Fixture BepInEx Plugin")
+
+    def test_enum_flag_arguments_decode_without_errors(self) -> None:
+        self.assertEqual(self.metadata.errors, (), "DependencyFlags 是枚举参数，要按 int32 读出来")
 
 
 class DegradationTests(unittest.TestCase):
