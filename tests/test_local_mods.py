@@ -20,6 +20,8 @@ FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "d
 FIXTURE_MOD = FIXTURE_DIR / "FixtureMod.dll"
 FIXTURE_PLUGIN = FIXTURE_DIR / "FixturePlugin.dll"
 FIXTURE_LIBRARY = FIXTURE_DIR / "FixtureLibrary.dll"
+FIXTURE_BEPINEX_PLUGIN = FIXTURE_DIR / "BepInExFixture.dll"
+FIXTURE_BEPINEX_DEPENDENCY = FIXTURE_DIR / "BepInExDependency.dll"
 
 
 def install_melonloader(game: Path) -> None:
@@ -27,6 +29,13 @@ def install_melonloader(game: Path) -> None:
     (game / "version.dll").touch()
     (game / "MelonLoader" / "net6").mkdir(parents=True, exist_ok=True)
     (game / "MelonLoader" / "net6" / "MelonLoader.dll").touch()
+
+
+def install_bepinex(game: Path) -> None:
+    """游戏根目录的 BepInEx 布局：doorstop 代理 + core 运行时；`BepInEx/plugins` 才会被扫描。"""
+    (game / "winhttp.dll").touch()
+    (game / "BepInEx" / "core").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(FIXTURE_LIBRARY, game / "BepInEx" / "core" / "BepInEx.Core.dll")
 
 
 def make_package(
@@ -246,6 +255,69 @@ class LocalScanTests(unittest.TestCase):
             self.assertEqual(len(paths), 5)
 
 
+class BepInExScanTests(unittest.TestCase):
+    """BepInEx 目录里的程序集按自己的元数据认身份，插件依赖按插件 GUID 解析。"""
+
+    def _build_game_dir(self, root: Path) -> Path:
+        (root / "Sprocket.exe").write_bytes(b"stub")
+        install_bepinex(root)
+        plugins = root / "BepInEx" / "plugins"
+        plugins.mkdir()
+        shutil.copyfile(FIXTURE_BEPINEX_PLUGIN, plugins / "BepInExFixture.dll")
+        shutil.copyfile(FIXTURE_BEPINEX_DEPENDENCY, plugins / "BepInExDependency.dll")
+        # 同一个目录里不声明 `[BepInPlugin]` 的库：身份照样来自它的 Sprocket.Mod.*。
+        shutil.copyfile(FIXTURE_LIBRARY, plugins / "LooseLibrary.dll")
+        return root
+
+    def test_plugins_get_identity_and_a_registry_match(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._build_game_dir(Path(directory))
+            packages = [
+                make_package("fixture.bepinex-plugin", "BepInExFixture", display={"en": "Fixture BepInEx Plugin"}),
+                make_package("fixture.bepinex-dependency", "BepInExDependency"),
+                make_package("fixture.sprocket-library", "FixtureLibrary"),
+            ]
+
+            mods = scan_local_mods(root, {}, packages)
+
+        by_path = {mod.path: mod for mod in mods}
+        self.assertEqual(set(by_path), {
+            "BepInEx/plugins/BepInExDependency.dll",
+            "BepInEx/plugins/BepInExFixture.dll",
+            "BepInEx/plugins/LooseLibrary.dll",
+        })
+
+        plugin = by_path["BepInEx/plugins/BepInExFixture.dll"]
+        self.assertEqual(plugin.kind, "BepInEx plugins")
+        self.assertEqual(plugin.display_name, "Fixture BepInEx Plugin")
+        self.assertEqual(plugin.version, "3.1.4")
+        self.assertEqual(plugin.plugin_guid, "fixture.bepinex-plugin")
+        self.assertEqual(plugin.declared_id, "fixture.bepinex-plugin")
+        self.assertEqual(plugin.registry_id, "fixture.bepinex-plugin")
+        self.assertEqual(plugin.registry_match, REASON_DECLARED_ID)
+        self.assertEqual(plugin.registry_display_name.get("en"), "Fixture BepInEx Plugin")
+        self.assertEqual(
+            plugin.required_dependencies,
+            ("fixture.bepinex-dependency", "fixture.versioned-dependency"),
+        )
+        self.assertEqual(
+            plugin.missing_dependencies,
+            ("fixture.versioned-dependency",),
+            "在场的那条按插件 GUID 认出来，软依赖不算缺口",
+        )
+        self.assertEqual(plugin.incompatible_assemblies, ("fixture.incompatible-plugin",))
+        self.assertEqual(plugin.as_dict()["plugin_guid"], "fixture.bepinex-plugin")
+
+        dependency = by_path["BepInEx/plugins/BepInExDependency.dll"]
+        self.assertEqual(dependency.plugin_guid, "fixture.bepinex-dependency")
+        self.assertEqual(dependency.version, "1.0.0")
+
+        loose = by_path["BepInEx/plugins/LooseLibrary.dll"]
+        self.assertEqual(loose.display_name, "Fixture Library")
+        self.assertEqual(loose.registry_id, "fixture.sprocket-library")
+        self.assertEqual(loose.plugin_guid, "", "没有 [BepInPlugin] 就没有插件 GUID")
+
+
 class LocalModsApiTests(unittest.TestCase):
     """通过 ClientApi 验证接线：清单端点 + 启用/禁用端点（含路径安全）。"""
 
@@ -455,7 +527,8 @@ class RuntimeDirectoryTests(unittest.TestCase):
 
             self.assertNotIn("MLLoader/MelonLoader/MelonLoader.dll", paths)
 
-    def test_bepinex_plugins_are_listed_without_a_fabricated_identity(self) -> None:
+    def test_bepinex_entries_take_their_identity_from_the_assembly(self) -> None:
+        """与 MelonLoader 同一口径：身份来自程序集自己的 `Sprocket.Mod.*`，不看加载器特性。"""
         with tempfile.TemporaryDirectory() as directory:
             root = self._game(Path(directory))
             mods = scan_local_mods(root, {}, [bepinex_package()], installed=(BEPINEX_ID,))
@@ -463,12 +536,13 @@ class RuntimeDirectoryTests(unittest.TestCase):
 
             entry = by_path["BepInEx/plugins/BepInExPlugin.dll"]
             self.assertEqual(entry.kind, "BepInEx plugins")
-            self.assertEqual(entry.display_name, "BepInExPlugin.dll")
-            self.assertEqual(entry.version, "")
-            self.assertEqual(entry.authors, ())
-            self.assertEqual(entry.declared_id, "")
-            self.assertEqual(entry.registry_id, "")
-            self.assertEqual(entry.assembly_name, "")
+            self.assertEqual(entry.display_name, "Fixture Mod")
+            self.assertEqual(entry.version, "1.2.3")
+            self.assertEqual(entry.authors, ("Fixture Author", "Second Author"))
+            self.assertEqual(entry.declared_id, "fixture.sprocket-mod")
+            self.assertEqual(entry.assembly_name, "FixtureMod")
+            self.assertEqual(entry.registry_id, "", "注册表里没有这个包时只认身份、不认领")
+            self.assertEqual(entry.plugin_guid, "", "没有 [BepInPlugin] 就没有插件 GUID")
             self.assertEqual(entry.error, "")
             self.assertIn("Mods/LegacyMod.dll", by_path, "传统目录照常扫描")
 

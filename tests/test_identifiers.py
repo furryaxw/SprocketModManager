@@ -1,4 +1,4 @@
-"""标识符：运行时检测决定激活，目录来自已装供给者的供给表，壳不认任何身份。"""
+"""标识符：运行时检测决定激活，目录来自已装供给者的供给表，身份由各标识符自己认。"""
 
 from __future__ import annotations
 
@@ -24,6 +24,9 @@ from sprocket_mod_manager.domain.models import RegistryPackage
 
 FIXTURE_MOD = (
     Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "dll" / "FixtureMod.dll"
+)
+FIXTURE_BEPINEX_PLUGIN = (
+    Path(__file__).resolve().parent / "fixtures" / "dll_metadata" / "dll" / "BepInExFixture.dll"
 )
 
 BRIDGE_ID = "1499501762.bepinex-melonloader-loader"
@@ -257,8 +260,20 @@ class IdentifyTests(unittest.TestCase):
         assert metadata is not None
         self.assertEqual(metadata.sprocket.get("id"), "fixture.sprocket-mod")
 
-    def test_bepinex_identifies_nothing(self) -> None:
-        self.assertIsNone(BepInExIdentifier().identify(FIXTURE_MOD))
+    def test_bepinex_identifies_the_assemblies_in_its_directories(self) -> None:
+        metadata = BepInExIdentifier().identify(FIXTURE_BEPINEX_PLUGIN)
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual(metadata.plugin_guid, "fixture.bepinex-plugin")
+        self.assertEqual(metadata.plugin_version, "3.1.4")
+
+    def test_bepinex_identifies_an_assembly_without_a_plugin_too(self) -> None:
+        """目录由标识符拥有，身份来自程序集自己的元数据 —— 与 MelonLoader 那条同一口径。"""
+        metadata = BepInExIdentifier().identify(FIXTURE_MOD)
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual(metadata.sprocket.get("id"), "fixture.sprocket-mod")
+        self.assertIsNone(metadata.plugin_guid, "没有 [BepInPlugin] 就没有插件 GUID")
 
     def test_a_directory_carries_its_type(self) -> None:
         directory = ModDirectory(

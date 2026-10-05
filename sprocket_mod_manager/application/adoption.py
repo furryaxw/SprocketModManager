@@ -61,8 +61,13 @@ def repository_of(metadata: DllMetadata) -> str:
 
 
 def declared_version_of(metadata: DllMetadata) -> str:
-    """DLL 自报的版本：MelonInfo 优先，用户库没有 MelonInfo 时用程序集/文件版本。"""
-    for value in (metadata.melon_version, metadata.assembly_version, metadata.file_version):
+    """DLL 自报的版本：加载器声明的那份优先（MelonInfo / BepInPlugin），没有就用程序集/文件版本。"""
+    for value in (
+        metadata.melon_version,
+        metadata.plugin_version,
+        metadata.assembly_version,
+        metadata.file_version,
+    ):
         text = str(value or "").strip()
         if text:
             return text

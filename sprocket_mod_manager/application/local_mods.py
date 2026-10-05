@@ -62,6 +62,7 @@ class LocalMod:
     registry_description: dict[str, str] = field(default_factory=dict)
     installed_package_id: str = ""
     assembly_name: str = ""
+    plugin_guid: str = ""
     sha256: str = ""
     error: str = ""
 
@@ -84,6 +85,7 @@ class LocalMod:
             "registry_description": dict(self.registry_description),
             "installed_package_id": self.installed_package_id,
             "assembly_name": self.assembly_name,
+            "plugin_guid": self.plugin_guid,
             "sha256": self.sha256,
             "error": self.error,
         }
@@ -152,6 +154,7 @@ def scan_local_mods(
             registry_display_name: dict[str, str] = {}
             registry_description: dict[str, str] = {}
             assembly_name = ""
+            plugin_guid = ""
             digest = ""
             error = ""
             required_dependencies: tuple[str, ...] = ()
@@ -169,10 +172,23 @@ def scan_local_mods(
                 if mod_type is None:
                     kind = metadata.melon_kind or directory
                 assembly_name = str(metadata.assembly_name or "")
+                plugin_guid = str(metadata.plugin_guid or "")
                 required_dependencies = tuple(metadata.required_dependencies)
                 incompatible_assemblies = tuple(metadata.incompatible_assemblies)
-                display_name = str(metadata.sprocket.get("display_name", "") or "") or str(metadata.melon_name or "") or assembly_name or path.name
-                version = str(metadata.melon_version or metadata.assembly_version or metadata.file_version or "")
+                display_name = (
+                    str(metadata.sprocket.get("display_name", "") or "")
+                    or str(metadata.melon_name or "")
+                    or str(metadata.plugin_name or "")
+                    or assembly_name
+                    or path.name
+                )
+                version = str(
+                    metadata.melon_version
+                    or metadata.plugin_version
+                    or metadata.assembly_version
+                    or metadata.file_version
+                    or ""
+                )
                 declared = str(metadata.sprocket.get("id", "") or "")
                 author_field = str(metadata.sprocket.get("authors", "") or "")
                 if author_field:
@@ -214,6 +230,7 @@ def scan_local_mods(
                     registry_description=registry_description,
                     installed_package_id=managed.get(canonical_relative(relative).casefold(), ""),
                     assembly_name=assembly_name,
+                    plugin_guid=plugin_guid,
                     sha256=digest,
                     error=error,
                 )
@@ -230,19 +247,20 @@ def scan_local_mods(
 
 
 def apply_dependency_graph(mods: list[LocalMod]) -> list[LocalMod]:
-    """用 DLL 元数据里的 `MelonAdditionalDependencies` 构建本地依赖关系。
+    """用 DLL 元数据里的依赖声明构建本地依赖关系。
 
-    依赖的"是否满足"以**本机存在同名程序集**为准：已加载的 melon 管不了 `UserLibs` 里的库，
-    而模组依赖库是合法的，所以这里用 `ModAssemblyIndex` 的同一套判据——
-    程序集名 + 文件名主干（`*.dll` / `*.dll.disable` 都算）。
+    依赖的"是否满足"以**本机存在同一个身份**为准：已加载的 melon 管不了 `UserLibs` 里的库，
+    而模组依赖库是合法的，所以这里用 `ModAssemblyIndex` 的同一套判据——程序集名、文件名主干
+    （`*.dll` / `*.dll.disable` 都算）与插件 GUID，三者任一命中即算在场。
     """
     if not mods:
         return mods
 
     available: set[str] = set()
     for mod in mods:
-        if mod.assembly_name:
-            available.add(mod.assembly_name.casefold())
+        for identity in (mod.assembly_name, mod.plugin_guid):
+            if identity:
+                available.add(identity.casefold())
         stem = Path(mod.name).name
         if stem.casefold().endswith(".dll.disable"):
             stem = stem[: -len(".dll.disable")]
@@ -253,7 +271,11 @@ def apply_dependency_graph(mods: list[LocalMod]) -> list[LocalMod]:
 
     resolved: list[LocalMod] = []
     for mod in mods:
-        own = {mod.assembly_name.casefold()} if mod.assembly_name else set()
+        own = {
+            identity.casefold()
+            for identity in (mod.assembly_name, mod.plugin_guid)
+            if identity
+        }
         missing: list[str] = []
         for dependency in mod.required_dependencies:
             name = dependency.strip()
