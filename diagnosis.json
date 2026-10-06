@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "pack_version": 1,
+  "pack_version": 2,
   "entries": [
     {
       "id": "loader-does-not-support-game",
@@ -135,6 +135,119 @@
       }
     },
     {
+      "id": "bepinex-chainloader-aborted",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "Failed to generate Il2Cpp interop assemblies|Unable to execute IL2CPP chainloader",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 2,
+      "title": {
+        "zh": "BepInEx 一个插件都没加载",
+        "en": "BepInEx loaded no plugins"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "互操作程序集没生成出来，BepInEx 就没能把控制权交给插件，这一行是它的兜底报错；日志里 Failed to generate Il2Cpp interop assemblies 那行的后半句写着真正的原因，例如 unity-libs 里那份基准库 zip 是坏的（解压报 End of Central Directory record could not be found）。生成步骤先删掉旧程序集、再解压基准库，所以这一步失败时连 UnityEngine.CoreModule 都装配不上，插件一个都不加载。",
+        "en": "Interop assemblies were not generated, so BepInEx never handed control to the plugins; this line is its catch-all. The Failed to generate Il2Cpp interop assemblies line carries the real reason after the colon, for example a broken base-libraries zip in unity-libs that fails extraction with End of Central Directory record could not be found. Generation deletes the old assemblies and unpacks those base libraries first, so when it fails not even UnityEngine.CoreModule resolves and no plugin loads."
+      },
+      "tutorial": {
+        "zh": [
+          "先看有没有 Failed to generate Il2Cpp interop assemblies 那行：它的后半句就是失败原因",
+          "打开「加载器」页，对 BepInEx 点「重装」，让管理器把这套文件重新铺一遍",
+          "重装不会碰下面这两个目录，得自己删：BepInEx\\interop 整个删掉，BepInEx\\unity-libs 里的 .zip 也删掉，然后联网启动一次游戏让它们重新生成、重新下载（首次明显更久）",
+          "重装并重新生成之后还是这一行，把日志传上来"
+        ],
+        "en": [
+          "Check for the Failed to generate Il2Cpp interop assemblies line first; the text after the colon is the reason",
+          "Open the Loaders page and choose Reinstall for BepInEx so the manager lays this set of files down again",
+          "A reinstall does not touch these two folders, so delete them yourself: the whole BepInEx\\interop folder and the .zip inside BepInEx\\unity-libs, then start the game once with a network connection so both are built again (noticeably longer than usual)",
+          "If the line is still there afterwards, upload the log"
+        ]
+      },
+      "go_to": {
+        "page": "modloaders"
+      }
+    },
+    {
+      "id": "bepinex-plugin-assembly-duplicated",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "Assembly with same name is already loaded",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 2,
+      "title": {
+        "zh": "同一个程序集装了两份，插件加载失败",
+        "en": "The same assembly is installed twice, so a plugin failed to load"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "BepInEx 按名字加载这个插件时，发现进程里已经有一份同名程序集，于是这次加载直接失败。多出现在从 MelonLoader 换成 BepInEx 的机器上：同一个模组在 MelonLoader 的 UserLibs 里留了一份旧的，BepInEx 插件目录里还有一份新的，先加载的那份占住名字，后加载的插件就起不来。这一条下面通常还跟着「依赖没加载被跳过」那条。",
+        "en": "While loading this plugin by name, BepInEx found an assembly with the same name already in the process, so this load failed outright. It shows up on machines moved from MelonLoader to BepInEx: the same mod is left over in the MelonLoader UserLibs folder and installed as a BepInEx plugin, whichever loads first takes the name and the later plugin cannot start. A skipped-dependency line usually follows this one."
+      },
+      "tutorial": {
+        "zh": [
+          "在「已安装」页找这个模组：它会出现两份（一份在 UserLibs，一份在 BepInEx 插件目录）",
+          "把旧的那份删掉或禁用（MelonLoader 时代的副本在 BepInEx 下没有用），只留 BepInEx 插件目录里的那份",
+          "重启游戏后在「已安装」页确认它真的在跑"
+        ],
+        "en": [
+          "Find this mod on the Installed page: it shows up twice, one copy in UserLibs and one in the BepInEx plugin folder",
+          "Delete or disable the older copy (the MelonLoader-era one is useless under BepInEx) and keep the BepInEx plugin",
+          "After restarting the game, check on the Installed page that it is actually running"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
+      "id": "bepinex-plugin-skipped-dependency",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "because it has a dependency that was not loaded",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 2,
+      "title": {
+        "zh": "有模组因为依赖没加载被跳过",
+        "en": "A mod was skipped because a dependency did not load"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "某个插件没加载成功，BepInEx 于是把依赖它的模组整条跳过：这个模组装是装着，但这一局完全没运行。真正的原因写在这条 Warning 上面最近的 Error 里，先按那条处理。",
+        "en": "A plugin failed to load, so BepInEx skipped the mod that depends on it: the mod stays installed but does not run at all in this session. The real reason is in the nearest Error above this line; fix that one first."
+      },
+      "tutorial": {
+        "zh": [
+          "往这条 Warning 上面找最近的 Error：它点名的是没加载成的那个插件",
+          "按那条 Error 说的处理（常见的是同一个模组装了两份，把旧的那份删掉或禁用）",
+          "重启游戏后在「已安装」页确认被跳过的这个模组起来了"
+        ],
+        "en": [
+          "Look above this Warning for the nearest Error; it names the plugin that failed to load",
+          "Handle what that Error says (the common one is a mod installed twice, so delete or disable the older copy)",
+          "After restarting, check on the Installed page that this skipped mod is running"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
       "id": "mod-hook-signature-missing",
       "match": {
         "sources": ["loader_log"],
@@ -169,6 +282,160 @@
       },
       "go_to": {
         "page": "installed"
+      }
+    },
+    {
+      "id": "turret-camera-tracking-null",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "TurretRing\\.get_CameraTrackInfo",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 3,
+      "title": {
+        "zh": "退出车辆编辑器时游戏抛了空引用",
+        "en": "The game threw a null reference when leaving the vehicle editor"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "这段 IL2CPP 栈全是游戏自己的帧：退出编辑器时 VehicleCameraTracking 要向炮塔环取相机跟踪信息，游戏在取这个属性时踩到空引用，异常沿着加载器的 interop 边界冒了出来（同一段开头的 native->managed trampoline 说的就是那次跨界调用）。这次启用被异常打断，那一辆车可能没有正常建立。",
+        "en": "Every frame in this IL2CPP stack belongs to the game: on leaving the editor VehicleCameraTracking asks the turret ring for its camera tracking information, and the game throws a null reference while reading it; the loader reports the exception as it crosses back out over the interop boundary (the native->managed trampoline line at the top of the block is that crossing). The exception cuts this enable pass short, so that vehicle may not be set up."
+      },
+      "tutorial": {
+        "zh": [
+          "记下是哪一辆车：换一辆车再退出一次编辑器，只有那一辆报错就是这辆车自己的状态问题",
+          "每次都报时，打开「加载器」页确认装的加载器与当前 Sprocket 版本对得上（互操作程序集是按游戏版本生成的）",
+          "还是每次都报：在「已安装」页逐个禁用模组，每禁一个再退出一次编辑器，找出这条跟着消失的那个",
+          "游戏照常运行、只报过这一次的话可以不管它；反复出现就把日志传上来"
+        ],
+        "en": [
+          "Note which vehicle it is: leave the editor once with another vehicle; if only that one reports it, that vehicle's own state is at fault",
+          "If every exit reports it, check on the Loaders page that the installed loader matches this Sprocket version (interop assemblies are generated per game build)",
+          "If it still reports every time, disable mods one at a time on the Installed page and leave the editor after each one to find the mod that takes this line away",
+          "If the game keeps running and this happened only once, it needs no action; if it repeats, upload the log"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
+      "id": "mod-missing-method",
+      "match": {
+        "sources": ["loader_log"],
+        "pattern": "System\\.MissingMethodException: Method not found",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 3,
+      "title": {
+        "zh": "模组调用的方法在这个版本里没有",
+        "en": "A mod called a method this version does not have"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "有个模组运行到一半找不到它要调用的方法，于是把那块功能关掉了。这发生在模组与当前游戏、Unity 或它的前置对不上版本的时候：模组按另一套程序集编译，运行时加载的那套里没有这个方法。日志行开头的来源名就是报错的模组。",
+        "en": "A mod could not find a method it calls and turned that feature off. This happens when the mod does not line up with the current game, Unity build, or its dependencies: it was compiled against a set of assemblies that differs from the ones loaded at runtime. The source name at the start of the line is the mod that reported it."
+      },
+      "tutorial": {
+        "zh": [
+          "这条日志的来源名就是报错的模组",
+          "在「已安装」页把它更新或重装到支持当前 Sprocket 版本的那一版",
+          "它的前置也要一起更新到同一代",
+          "更新后还是这条，把日志传上来交给模组作者"
+        ],
+        "en": [
+          "The source name at the start of the line is the mod that reported it",
+          "Update or reinstall it on the Installed page to the release that supports this Sprocket version",
+          "Bring its dependencies to the same generation as well",
+          "If the line is still there afterwards, upload the log for the mod's author"
+        ]
+      },
+      "go_to": {
+        "page": "installed"
+      }
+    },
+    {
+      "id": "manager-download-interrupted",
+      "match": {
+        "sources": ["manager_log"],
+        "pattern": "The read operation timed out|The write operation timed out|<urlopen error timed out>",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 3,
+      "title": {
+        "zh": "安装包没下载完",
+        "en": "An install download did not finish"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "管理器下载安装包时连接断了，那次安装整体失败；落盘是事务化的，不会留下装了一半的文件，重试一次通常就够。直连太慢或用着不稳定的代理时会反复出现。这一行来自管理器自己的日志，先看行首的时间戳是不是你想查的那一次。",
+        "en": "The connection dropped while the manager was downloading an install package, so that install failed as a whole; files are written transactionally, so nothing half-installed is left behind and a retry usually fixes it. It repeats when the direct connection is slow or an unstable proxy is in use. This line comes from the manager's own log, so check the timestamp at the start of the line to see whether it is the run you care about."
+      },
+      "tutorial": {
+        "zh": [
+          "在「下载队列」页对着那条失败的任务点「重试」",
+          "一直超时就换网络，或在「设置」页的「网络代理」/「GitHub 下载加速」里填一个能用的代理",
+          "装完再诊断一次，确认这条不再出现"
+        ],
+        "en": [
+          "Open the Download queue page and choose Retry on the failed task",
+          "If it keeps timing out, change network or fill in a working proxy under Network proxy / GitHub download proxy in Settings",
+          "Run the diagnosis again after the install to confirm the line is gone"
+        ]
+      },
+      "go_to": {
+        "page": "downloads"
+      }
+    },
+    {
+      "id": "manager-github-certificate-rejected",
+      "match": {
+        "sources": ["manager_log"],
+        "pattern": "CERTIFICATE_VERIFY_FAILED",
+        "min_count": 1
+      },
+      "bucket": "optional",
+      "level": 3,
+      "title": {
+        "zh": "管理器验不过 GitHub 的证书",
+        "en": "The manager cannot verify GitHub's certificate"
+      },
+      "evidence": {
+        "zh": "命中 {count} 行",
+        "en": "Matched {count} line(s)"
+      },
+      "explain": {
+        "zh": "管理器连 GitHub 时证书链验不过（unable to get local issuer certificate）：它拿到的证书不是 GitHub 自己那条 Sectigo 链，本机也找不到签发它的根证书。这通常不是「Windows 少了新根证书」——能正常打开注册表站点或其他 HTTPS 站点，就说明该有的根都有；更常见的是中间有东西替换了证书（GitHub 加速类工具、代理、校园或公司网关、杀毒与安全软件的 HTTPS 扫描），也可能 hosts 把 github.com 指到了别处。日志这一行带 peer_certificate=issuer= 时，写的正是给你证书的那一方。后果是自更新检查失败、托管在 GitHub 上的模组装不上，而注册表在另一个域名上照常能读。",
+        "en": "The manager cannot verify GitHub's certificate chain (unable to get local issuer certificate): what it received is not GitHub's own Sectigo chain, and no local root signs it. This is usually not a missing new root certificate — if the registry site or other HTTPS sites load, the roots that matter are there; far more often something in between replaces the certificate (GitHub accelerator tools, proxies, campus or corporate gateways, antivirus and security suites scanning HTTPS), or a hosts entry points github.com elsewhere. When this log line carries peer_certificate=issuer=, that is the party that handed over the certificate. The update check fails and mods hosted on GitHub cannot be downloaded, while the registry sits on another domain and still loads."
+      },
+      "tutorial": {
+        "zh": [
+          "先看拿到的是谁的证书：命令行跑 curl -v https://api.github.com/ ，输出里的 issuer 应该是 Sectigo；不是就说明中间有人替换了证书",
+          "关掉「GitHub 加速」类工具、代理和杀毒/安全软件的 HTTPS 扫描（或把管理器加入白名单），并检查 hosts 里有没有把 github.com 指到别处，然后重启管理器再试",
+          "只是要装模组的话，可以在「设置」页填「GitHub 下载加速」前缀，让下载绕开被拦的域名",
+          "换一个网络还是这样，就把日志传上来"
+        ],
+        "en": [
+          "See whose certificate arrives: run curl -v https://api.github.com/ in a terminal — the issuer should be Sectigo; anything else means something in between replaced the certificate",
+          "Turn off GitHub accelerator tools, proxies and antivirus/security HTTPS scanning (or whitelist the manager), check whether a hosts entry points github.com elsewhere, then restart the manager and retry",
+          "If you only need to install mods, fill in a GitHub download proxy prefix on the Settings page so the download goes around the blocked domain",
+          "If another network shows the same, upload the log"
+        ]
+      },
+      "go_to": {
+        "page": "settings"
       }
     },
     {
