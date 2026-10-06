@@ -1,5 +1,7 @@
 # 日志上传
 
+**中文** | [English](log-upload-design.en.md)
+
 用户在侧栏「上传日志」菜单里选一项后，客户端读取那一项对应的日志文件（管理器自身日志，或某个已安装运行时的日志），上传至 Hasty Paste II Quick API `https://paste.furryaxw.top/api/q/`，不执行后台自动上传。
 
 发送前最多保留最新 8 MiB，按 UTF-8 `text/plain` 原文发送。服务端返回 2xx 和完整 Paste URL；客户端不持久化日志副本，不自动重试。
