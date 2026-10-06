@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
 from ..domain.errors import DownloadError
 from ..domain.models import ProgressCallback, ReleaseAsset
 from ..utilities.urls import is_loopback_host, normalize_github_proxy_url, normalize_proxy_url
+from .tls_inspection import certificate_verification_error, peer_certificate_note
+from .tls_trust import default_ssl_context
 
 USER_AGENT = "sprocket-mod-manager/0.1"
 MAX_API_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -49,13 +51,19 @@ class HttpClient:
         self.proxy_url = ""
         self.github_proxy_url = ""
         self._opener = None
+        self._context = None
         self.configure_network(proxy_url, github_proxy_url)
 
     def configure_network(self, proxy_url: str = "", github_proxy_url: str = "") -> None:
         self.proxy_url = normalize_proxy_url(proxy_url)
         self.github_proxy_url = normalize_github_proxy_url(github_proxy_url)
+        # 走代理时由 opener 承载上下文；不走代理那条路直接把它交给 `urlopen`。
+        self._context = default_ssl_context()
         self._opener = (
-            build_opener(ProxyHandler({"http": self.proxy_url, "https": self.proxy_url}))
+            build_opener(
+                ProxyHandler({"http": self.proxy_url, "https": self.proxy_url}),
+                HTTPSHandler(context=self._context),
+            )
             if self.proxy_url
             else None
         )
@@ -68,7 +76,7 @@ class HttpClient:
     def _open(self, request: Request, timeout: int):
         if self._opener is not None:
             return self._opener.open(request, timeout=timeout)
-        return urlopen(request, timeout=timeout)
+        return urlopen(request, timeout=timeout, context=self._context)
 
     def _cache_paths(self, url: str, accept: str = "") -> tuple[Path, Path]:
         key = hashlib.sha256(f"{url}\0{accept}".encode("utf-8")).hexdigest()
@@ -177,7 +185,19 @@ class HttpClient:
             if body_path.is_file():
                 LOGGER.warning("HTTP request failed; using stale cache url=%s error=%s", safe_url, exc)
                 return body_path.read_bytes()
-            LOGGER.error("HTTP request failed url=%s error=%s", safe_url, exc)
+            # 证书被拒时把对端那张证书也写下来：用户上传的日志是唯一证据，只留一句「验不过」
+            # 分不清「本机缺根证书」和「中间有人替换了证书」。
+            rejected = certificate_verification_error(exc)
+            if rejected is None:
+                LOGGER.error("HTTP request failed url=%s error=%s", safe_url, exc)
+            else:
+                LOGGER.error(
+                    "HTTP request failed url=%s error=%s verify_message=%s peer_certificate=%s",
+                    safe_url,
+                    exc,
+                    getattr(rejected, "verify_message", "") or "",
+                    peer_certificate_note(url),
+                )
             raise DownloadError(f"request failed for {url}: {exc}") from exc
 
     def get_json(self, url: str, *, cache_seconds: int = 600) -> Any:

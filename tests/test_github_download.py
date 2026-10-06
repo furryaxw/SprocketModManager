@@ -1,11 +1,15 @@
+import ssl
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import URLError
+from urllib.request import HTTPSHandler
 
 from sprocket_mod_manager.domain.errors import DownloadError
 from sprocket_mod_manager.infrastructure.github import GitHubClient
 from sprocket_mod_manager.infrastructure.http_client import HttpClient
+from sprocket_mod_manager.infrastructure.tls_trust import default_ssl_context
 from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset
 
 
@@ -356,6 +360,104 @@ class GitHubDownloadTests(unittest.TestCase):
         releases = GitHubClient(NoNetworkHttp()).releases(package, refresh=True)
 
         self.assertEqual([str(release.version) for release in releases], ["1.3.1"])
+
+
+class CertificateFailureLoggingTests(unittest.TestCase):
+    """证书被拒时那行日志要说明对端递过来的是谁的证书。
+
+    用户上传的日志是排查「谁替换了证书」的唯一证据：只留一句「验不过」分不清本机缺根证书
+    和中间有人拆 HTTPS。
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+
+    def _http(self) -> HttpClient:
+        return HttpClient(self.root / "cache")
+
+    def test_a_rejected_certificate_logs_the_presented_certificate(self):
+        rejected = ssl.SSLCertVerificationError(
+            1, "certificate verify failed: unable to get local issuer certificate"
+        )
+        note = "issuer=CN=Fake Interception CA subject=CN=api.github.com not_after=2026-11-01"
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=URLError(rejected)
+        ), patch(
+            "sprocket_mod_manager.infrastructure.http_client.peer_certificate_note", return_value=note
+        ) as probe, self.assertLogs(
+            "sprocket_mod_manager.infrastructure.http_client", level="ERROR"
+        ) as logs:
+            with self.assertRaises(DownloadError):
+                self._http().get_bytes(
+                    "https://api.github.com/repos/example/mod",
+                    allowed_hosts={"api.github.com"},
+                )
+
+        line = "\n".join(logs.output)
+        self.assertIn("certificate verify failed", line)
+        self.assertIn(f"peer_certificate={note}", line)
+        self.assertIn("verify_message=", line)
+        probe.assert_called_once_with("https://api.github.com/repos/example/mod")
+
+    def test_a_plain_network_failure_does_not_probe_the_peer(self):
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen",
+            side_effect=URLError("connection refused"),
+        ), patch(
+            "sprocket_mod_manager.infrastructure.http_client.peer_certificate_note"
+        ) as probe, self.assertLogs(
+            "sprocket_mod_manager.infrastructure.http_client", level="ERROR"
+        ) as logs:
+            with self.assertRaises(DownloadError):
+                self._http().get_bytes(
+                    "https://api.github.com/repos/example/mod",
+                    allowed_hosts={"api.github.com"},
+                )
+
+        self.assertNotIn("peer_certificate", "\n".join(logs.output))
+        probe.assert_not_called()
+
+
+class HttpsTrustWiringTests(unittest.TestCase):
+    """直连与走代理这两条路都要用同一份「系统根库 ∪ 内置公共根」的上下文。"""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.asset = ReleaseAsset(
+            id=1,
+            name="TestMod.dll",
+            size=4,
+            download_url="https://github.com/example/mod/releases/download/v1.0.0/TestMod.dll",
+        )
+
+    def test_direct_requests_validate_with_the_shared_context(self):
+        response = FakeResponse(b"test", self.asset.download_url)
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen", return_value=response
+        ) as call:
+            HttpClient(self.root / "cache").download(self.asset, self.root / "TestMod.dll")
+
+        self.assertIs(call.call_args.kwargs["context"], default_ssl_context())
+
+    def test_the_proxy_opener_carries_the_same_context(self):
+        opener = unittest.mock.MagicMock()
+        opener.open.return_value = FakeResponse(b"test", self.asset.download_url)
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.build_opener", return_value=opener
+        ) as build:
+            HttpClient(self.root / "cache", proxy_url="http://127.0.0.1:7890").download(
+                self.asset, self.root / "TestMod.dll"
+            )
+
+        https_handlers = [
+            handler for handler in build.call_args.args if isinstance(handler, HTTPSHandler)
+        ]
+        self.assertEqual(len(https_handlers), 1)
+        self.assertIs(https_handlers[0]._context, default_ssl_context())
 
 
 if __name__ == "__main__":
