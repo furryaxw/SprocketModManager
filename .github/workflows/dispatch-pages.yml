@@ -1,0 +1,19 @@
+name: Dispatch Pages
+
+on:
+  push:
+    branches: [registry]
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      # GitHub runs push workflows from the pushed ref and schedule workflows
+      # only from the default branch, so this file carries the push trigger and
+      # pages.yml carries the schedule.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref main --repo "${{ github.repository }}"

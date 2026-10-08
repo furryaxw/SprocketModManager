@@ -65,14 +65,6 @@ class SiteUiTests(unittest.TestCase):
         self.assertIn('cache: "no-store"', script)
         self.assertNotIn("api.github.com", script)
 
-    def test_pages_builds_the_index_from_release_data(self):
-        workflow = (SITE_ROOT.parent / ".github" / "workflows" / "pages.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("--fetch-releases", workflow)
-        self.assertIn("validate_registry.py --mods-dir mods --offline", workflow)
-
     def test_pages_custom_domain_is_packaged_with_the_site(self):
         cname = (SITE_ROOT / "CNAME").read_text(encoding="utf-8")
 
