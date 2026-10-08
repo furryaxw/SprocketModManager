@@ -1,40 +1,48 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "sectumsempra.sprocket-material-editor",
-  "name": "SprocketMaterialEditor",
-  "authors": ["Sectumsempra"],
-  "repository": "furryaxw/SprocketMaterialEditor",
-  "license": "MIT",
-  "display_name": {
-    "en": "Sec's Material Editor",
-    "zh": "Sec 的材质编辑器"
-  },
-  "description": {
-    "en": "In-game editor for changing armour materials on saved Sprocket vehicle blueprints.",
-    "zh": "在游戏内编辑已保存的 Sprocket 车辆蓝图装甲材质。"
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["SprocketMaterialEditor.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [],
-  "recommendations": [],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "melonloader:*"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "sectumsempra.sprocket-material-editor",
+    "name": "SprocketMaterialEditor",
+    "authors": [
+        "Sectumsempra"
     ],
-    "scan_dlls": true,
-    "exclude": []
-  },
-  "category": "utility",
-  "tags": ["blueprint", "materials", "vehicle-editor"]
+    "repository": "furryaxw/SprocketMaterialEditor",
+    "license": "MIT",
+    "display_name": {
+        "en": "Sec's Material Editor",
+        "zh": "Sec 的材质编辑器"
+    },
+    "description": {
+        "en": "In-game editor for changing armour materials on saved Sprocket vehicle blueprints.",
+        "zh": "在游戏内编辑已保存的 Sprocket 车辆蓝图装甲材质。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketMaterialEditor.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "melonloader:*"
+            }
+        ],
+        "scan_dlls": true,
+        "exclude": []
+    },
+    "category": "utility",
+    "tags": [
+        "blueprint",
+        "materials",
+        "vehicle-editor"
+    ]
 }

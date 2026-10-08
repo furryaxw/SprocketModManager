@@ -1,57 +1,67 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "furryaxw.sprocket-part-clipboard",
-  "name": "SprocketPartClipboard",
-  "authors": ["furryAxw"],
-  "repository": "furryaxw/SprocketPartClipboard",
-  "license": "GPL-3.0-only",
-  "display_name": {
-    "en": "Part Clipboard",
-    "zh": "部件剪贴板"
-  },
-  "description": {
-    "en": "Copies a selected part and its whole subtree to a clipboard kept across vehicles and restarts, and pastes it back into any vehicle in hand-held placement. Turret-tested only; back up your save before copying anything else.",
-    "zh": "把选中的部件连同整棵子树复制进剪贴板（跨载具、跨启动保留），并在任意载具里粘回、进入手持摆放。只在炮塔上做过完整测试；复制别的东西前请先备份存档。"
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["SprocketPartClipboard.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "furryaxw.sprocket-mod-api",
-      "version": ">=1.0.0 <2.0.0",
-      "when": ">=1.0.0"
-    },
-    {
-      "id": "furryaxw.sprocket-mod-api",
-      "version": ">=0.3.0 <1.0.0",
-      "when": "<1.0.0"
-    }
-  ],
-  "recommendations": [],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:*",
-        "when": ">=1.0.0"
-      },
-      {
-        "match": "*.dll",
-        "type": "melonloader:*",
-        "when": "<1.0.0"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "furryaxw.sprocket-part-clipboard",
+    "name": "SprocketPartClipboard",
+    "authors": [
+        "furryAxw"
     ],
-    "scan_dlls": true,
-    "exclude": []
-  },
-  "category": "gameplay",
-  "tags": ["designer", "clipboard", "copy", "paste", "parts"]
+    "repository": "furryaxw/SprocketPartClipboard",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Part Clipboard",
+        "zh": "部件剪贴板"
+    },
+    "description": {
+        "en": "Copies a selected part and its whole subtree to a clipboard kept across vehicles and restarts, and pastes it back into any vehicle in hand-held placement. Turret-tested only; back up your save before copying anything else.",
+        "zh": "把选中的部件连同整棵子树复制进剪贴板（跨载具、跨启动保留），并在任意载具里粘回、进入手持摆放。只在炮塔上做过完整测试；复制别的东西前请先备份存档。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketPartClipboard.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=1.0.0 <2.0.0",
+            "when": ">=1.0.0"
+        },
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=0.3.0 <1.0.0",
+            "when": "<1.0.0"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:*",
+                "when": ">=1.0.0"
+            },
+            {
+                "match": "*.dll",
+                "type": "melonloader:*",
+                "when": "<1.0.0"
+            }
+        ],
+        "scan_dlls": true,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "designer",
+        "clipboard",
+        "copy",
+        "paste",
+        "parts"
+    ]
 }

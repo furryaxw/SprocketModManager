@@ -1,43 +1,54 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "furryaxw.sprocket-mod-api",
-  "name": "SprocketModAPI",
-  "authors": ["furryAxw"],
-  "repository": "furryaxw/SprocketModAPI",
-  "license": "LGPL-3.0-or-later",
-  "display_name": {
-    "en": "Sprocket Mod API",
-    "zh": "Sprocket 模组 API"
-  },
-  "description": {
-    "en": "Shared runtime library: keybindings, input routing, native UI, mod metadata, declarative config and the in-game mod menu.",
-    "zh": "共享运行时库：键位与输入路由、原生 UI、模组元数据、声明式配置与游戏内 Mod 菜单。"
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": { "include": ["SprocketModAPI.dll"], "exclude": [] }
-  },
-  "dependencies": [],
-  "recommendations": [],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:*",
-        "when": ">=1.0.0"
-      },
-      {
-        "match": "*.dll",
-        "type": "melonloader:*",
-        "when": "<1.0.0"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "furryaxw.sprocket-mod-api",
+    "name": "SprocketModAPI",
+    "authors": [
+        "furryAxw"
     ],
-    "scan_dlls": true,
-    "exclude": []
-  },
-  "category": "library",
-  "tags": ["api", "input", "keybindings"]
+    "repository": "furryaxw/SprocketModAPI",
+    "license": "LGPL-3.0-or-later",
+    "display_name": {
+        "en": "Sprocket Mod API",
+        "zh": "Sprocket 模组 API"
+    },
+    "description": {
+        "en": "Shared runtime library: keybindings, input routing, native UI, mod metadata, declarative config and the in-game mod menu.",
+        "zh": "共享运行时库：键位与输入路由、原生 UI、模组元数据、声明式配置与游戏内 Mod 菜单。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketModAPI.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:*",
+                "when": ">=1.0.0"
+            },
+            {
+                "match": "*.dll",
+                "type": "melonloader:*",
+                "when": "<1.0.0"
+            }
+        ],
+        "scan_dlls": true,
+        "exclude": []
+    },
+    "category": "library",
+    "tags": [
+        "api",
+        "input",
+        "keybindings"
+    ]
 }

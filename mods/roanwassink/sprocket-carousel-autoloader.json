@@ -1,51 +1,55 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "roanwassink.sprocket-carousel-autoloader",
-  "name": "SprocketCarouselAutoloader",
-  "authors": ["RoanWassink"],
-  "repository": "RoanWassink/SprocketCarouselAutoloader",
-  "license": "MIT",
-  "display_name": {
-    "en": "Sprocket Carousel Autoloader",
-    "zh": "Sprocket 转盘自动装弹机"
-  },
-  "description": {
-    "en": "Turns a turret basket into a carousel autoloader: choose a T-72-style horizontal cassette or a T-64/80-style upright charge layout, assign a cannon, and let the turret ring and basket segments decide how much ammunition fits. The carousel carries its own finite rack, so it needs no crew loader.",
-    "zh": "把炮塔吊篮变成转盘自动装弹机：可选 T-72 式水平弹匣或 T-64/80 式立式药筒布局，指定一门火炮，弹药容量由炮塔座圈与吊篮分段尺寸决定。转盘自带有限的弹药架，不需要装填手。"
-  },
-  "release": {
-    "include_prerelease": true,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["SprocketCarouselAutoloader.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "bepinex.bepinex-be",
-      "version": "*",
-      "when": "*"
-    },
-    {
-      "id": "hans21223.sprocket-mod-loader",
-      "version": "*",
-      "when": "*"
-    }
-  ],
-  "recommendations": [],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:plugin"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "roanwassink.sprocket-carousel-autoloader",
+    "name": "SprocketCarouselAutoloader",
+    "authors": [
+        "RoanWassink"
     ],
-    "scan_dlls": false,
-    "exclude": []
-  },
-  "category": "gameplay",
-  "tags": ["autoloader", "turret", "ammunition", "bepinex"]
+    "repository": "RoanWassink/SprocketCarouselAutoloader",
+    "license": "MIT",
+    "display_name": {
+        "en": "Sprocket Carousel Autoloader",
+        "zh": "Sprocket 转盘自动装弹机"
+    },
+    "description": {
+        "en": "Turns a turret basket into a carousel autoloader: choose a T-72-style horizontal cassette or a T-64/80-style upright charge layout, assign a cannon, and let the turret ring and basket segments decide how much ammunition fits. The carousel carries its own finite rack, so it needs no crew loader.",
+        "zh": "把炮塔吊篮变成转盘自动装弹机：可选 T-72 式水平弹匣或 T-64/80 式立式药筒布局，指定一门火炮，弹药容量由炮塔座圈与吊篮分段尺寸决定。转盘自带有限的弹药架，不需要装填手。"
+    },
+    "release": {
+        "include_prerelease": true,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketCarouselAutoloader.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "hans21223.sprocket-mod-loader",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "autoloader",
+        "turret",
+        "ammunition",
+        "bepinex"
+    ]
 }

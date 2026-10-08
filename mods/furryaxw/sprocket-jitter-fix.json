@@ -1,57 +1,66 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "furryaxw.sprocket-jitter-fix",
-  "name": "SprocketJitterFix",
-  "authors": ["furryAxw"],
-  "repository": "furryaxw/SprocketJitterFix",
-  "license": "GPL-3.0-only",
-  "display_name": {
-    "en": "Laying Drive Jitter Fix",
-    "zh": "火炮俯仰抖动修复"
-  },
-  "description": {
-    "en": "Stabilizes high-sensitivity laying drives near their target angle.",
-    "zh": "改善高灵敏度火炮俯仰机构接近目标角度时的过冲和反复震荡。"
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["SprocketJitterFix.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "furryaxw.sprocket-mod-api",
-      "version": ">=1.0.0 <2.0.0",
-      "when": ">=1.0.0"
-    },
-    {
-      "id": "furryaxw.sprocket-mod-api",
-      "version": ">=0.3.0 <1.0.0",
-      "when": "<1.0.0"
-    }
-  ],
-  "recommendations": [],
-  "featured": true,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:*",
-        "when": ">=1.0.0"
-      },
-      {
-        "match": "*.dll",
-        "type": "melonloader:*",
-        "when": "<1.0.0"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "furryaxw.sprocket-jitter-fix",
+    "name": "SprocketJitterFix",
+    "authors": [
+        "furryAxw"
     ],
-    "scan_dlls": true,
-    "exclude": []
-  },
-  "category": "utility",
-  "tags": ["weapons", "laying-drive", "stability", "jitter-fix"]
+    "repository": "furryaxw/SprocketJitterFix",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Laying Drive Jitter Fix",
+        "zh": "火炮俯仰抖动修复"
+    },
+    "description": {
+        "en": "Stabilizes high-sensitivity laying drives near their target angle.",
+        "zh": "改善高灵敏度火炮俯仰机构接近目标角度时的过冲和反复震荡。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketJitterFix.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=1.0.0 <2.0.0",
+            "when": ">=1.0.0"
+        },
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=0.3.0 <1.0.0",
+            "when": "<1.0.0"
+        }
+    ],
+    "recommendations": [],
+    "featured": true,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:*",
+                "when": ">=1.0.0"
+            },
+            {
+                "match": "*.dll",
+                "type": "melonloader:*",
+                "when": "<1.0.0"
+            }
+        ],
+        "scan_dlls": true,
+        "exclude": []
+    },
+    "category": "utility",
+    "tags": [
+        "weapons",
+        "laying-drive",
+        "stability",
+        "jitter-fix"
+    ]
 }

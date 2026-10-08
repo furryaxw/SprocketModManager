@@ -1,65 +1,71 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "roanwassink.sprocket-hydropneumatic",
-  "name": "SprocketHydropneumatic",
-  "authors": ["RoanWassink"],
-  "repository": "RoanWassink/SprocketHydropneumatic",
-  "license": "MIT",
-  "display_name": {
-    "en": "Sprocket Hydropneumatic Suspension",
-    "zh": "Sprocket 液气悬挂"
-  },
-  "description": {
-    "en": "Adds a Hydropneumatic suspension part alongside Christie, torsion bar and HVSS, with ride height and hull pitch adjustable while driving. Public beta for Sprocket 0.2.55.5. Switch saved tanks back to a stock suspension before uninstalling: a missing custom part can stop a tank from loading.",
-    "zh": "在 Christie、扭杆与 HVSS 之外加入液气悬挂部件，行驶中可调整车高与车体俯仰。适用于 Sprocket 0.2.55.5 的公开测试版。卸载前请先把使用该悬挂的存档载具换回原厂悬挂：缺少自定义部件会导致载具无法读取。"
-  },
-  "release": {
-    "include_prerelease": true,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["SprocketHydropneumatic-v*.zip"],
-      "exclude": ["*-manual.zip"]
-    }
-  },
-  "dependencies": [
-    {
-      "id": "bepinex.bepinex-be",
-      "version": "*",
-      "when": "*"
-    },
-    {
-      "id": "hans21223.sprocket-mod-loader",
-      "version": "*",
-      "when": "*"
-    },
-    {
-      "id": "roanwassink.sprocket-keybinds",
-      "version": "*",
-      "when": "*"
-    }
-  ],
-  "recommendations": [],
-  "featured": false,
-  "supply": {
-    "roanwassink:hydropneumatic": "{Sprocket}"
-  },
-  "install": {
-    "files": [
-      {
-        "match": "BepInEx/plugins/SprocketHydropneumatic/**",
-        "type": "roanwassink:hydropneumatic",
-        "layout": "tree"
-      },
-      {
-        "match": "Sprocket_Data/**",
-        "type": "roanwassink:hydropneumatic",
-        "layout": "tree"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "roanwassink.sprocket-hydropneumatic",
+    "name": "SprocketHydropneumatic",
+    "authors": [
+        "RoanWassink"
     ],
-    "scan_dlls": false,
-    "exclude": []
-  },
-  "category": "gameplay",
-  "tags": ["suspension", "hydropneumatic", "parts", "bepinex"]
+    "repository": "RoanWassink/SprocketHydropneumatic",
+    "license": "MIT",
+    "display_name": {
+        "en": "Sprocket Hydropneumatic Suspension",
+        "zh": "Sprocket 液气悬挂"
+    },
+    "description": {
+        "en": "Adds a Hydropneumatic suspension part alongside Christie, torsion bar and HVSS, with ride height and hull pitch adjustable while driving. Public beta for Sprocket 0.2.55.5. Switch saved tanks back to a stock suspension before uninstalling: a missing custom part can stop a tank from loading.",
+        "zh": "在 Christie、扭杆与 HVSS 之外加入液气悬挂部件，行驶中可调整车高与车体俯仰。适用于 Sprocket 0.2.55.5 的公开测试版。卸载前请先把使用该悬挂的存档载具换回原厂悬挂：缺少自定义部件会导致载具无法读取。"
+    },
+    "release": {
+        "include_prerelease": true,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketHydropneumatic-v*.zip"
+            ],
+            "exclude": [
+                "*-manual.zip"
+            ]
+        }
+    },
+    "dependencies": [
+        {
+            "id": "hans21223.sprocket-mod-loader",
+            "version": "*",
+            "when": "*"
+        },
+        {
+            "id": "roanwassink.sprocket-keybinds",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "supply": {
+        "roanwassink:hydropneumatic": "{Sprocket}"
+    },
+    "install": {
+        "files": [
+            {
+                "match": "BepInEx/plugins/SprocketHydropneumatic/**",
+                "type": "roanwassink:hydropneumatic",
+                "layout": "tree"
+            },
+            {
+                "match": "Sprocket_Data/**",
+                "type": "roanwassink:hydropneumatic",
+                "layout": "tree"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "suspension",
+        "hydropneumatic",
+        "parts",
+        "bepinex"
+    ]
 }

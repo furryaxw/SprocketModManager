@@ -1,67 +1,77 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "furryaxw.sprocket-laser-rangefinder",
-  "name": "SprocketLaserRangefinder",
-  "authors": ["furryAxw"],
-  "repository": "furryaxw/SprocketLaserRangefinder",
-  "license": "GPL-3.0-only",
-  "display_name": {
-    "en": "Sprocket Laser Rangefinder",
-    "zh": "Sprocket 激光测距仪"
-  },
-  "description": {
-    "en": "Laser rangefinder and automatic ballistic sight for Sprocket.",
-    "zh": "为 Sprocket 提供激光测距和自动弹道瞄准。"
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["SprocketLaserRangefinder.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "furryaxw.sprocket-mod-api",
-      "version": ">=1.0.0 <2.0.0",
-      "when": ">=1.0.0"
-    },
-    {
-      "id": "furryaxw.sprocket-mod-api",
-      "version": ">=0.3.0 <1.0.0",
-      "when": "<1.0.0"
-    },
-    {
-      "id": "furryaxw.sprocket-depth",
-      "version": ">=1.0.0 <2.0.0",
-      "when": ">=1.0.0"
-    },
-    {
-      "id": "furryaxw.sprocket-depth",
-      "version": ">=0.1.2 <1.0.0",
-      "when": "<1.0.0"
-    }
-  ],
-  "recommendations": ["furryaxw.sprocket-jitter-fix"],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:*",
-        "when": ">=1.0.0"
-      },
-      {
-        "match": "*.dll",
-        "type": "melonloader:*",
-        "when": "<1.0.0"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "furryaxw.sprocket-laser-rangefinder",
+    "name": "SprocketLaserRangefinder",
+    "authors": [
+        "furryAxw"
     ],
-    "scan_dlls": true,
-    "exclude": []
-  },
-  "category": "utility",
-  "tags": ["optics", "rangefinder", "ballistics"]
+    "repository": "furryaxw/SprocketLaserRangefinder",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Sprocket Laser Rangefinder",
+        "zh": "Sprocket 激光测距仪"
+    },
+    "description": {
+        "en": "Laser rangefinder and automatic ballistic sight for Sprocket.",
+        "zh": "为 Sprocket 提供激光测距和自动弹道瞄准。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketLaserRangefinder.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=1.0.0 <2.0.0",
+            "when": ">=1.0.0"
+        },
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=0.3.0 <1.0.0",
+            "when": "<1.0.0"
+        },
+        {
+            "id": "furryaxw.sprocket-depth",
+            "version": ">=1.0.0 <2.0.0",
+            "when": ">=1.0.0"
+        },
+        {
+            "id": "furryaxw.sprocket-depth",
+            "version": ">=0.1.2 <1.0.0",
+            "when": "<1.0.0"
+        }
+    ],
+    "recommendations": [
+        "furryaxw.sprocket-jitter-fix"
+    ],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:*",
+                "when": ">=1.0.0"
+            },
+            {
+                "match": "*.dll",
+                "type": "melonloader:*",
+                "when": "<1.0.0"
+            }
+        ],
+        "scan_dlls": true,
+        "exclude": []
+    },
+    "category": "utility",
+    "tags": [
+        "optics",
+        "rangefinder",
+        "ballistics"
+    ]
 }
