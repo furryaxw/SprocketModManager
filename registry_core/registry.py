@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .errors import RegistryError, ScanError
 from .models import RegistryPackage
@@ -26,11 +26,17 @@ class Registry:
             game_id: str = DEFAULT_GAME_CAPABILITY,
             game_name: str = "",
             diagnosis: dict[str, Any] | None = None,
+            game_supply: Mapping[str, str] | None = None,
             *,
             server_packages: Iterable[RegistryPackage] = (),
     ):
         self.game_id = str(game_id)
         self.game_name = str(game_name)
+        # 游戏自己供给的位置：游戏不是可安装的包，所以它不进包列表，只有这张表。
+        self.game_supply = {
+            validate_file_type(str(file_type)): str(target)
+            for file_type, target in (game_supply or {}).items()
+        }
         self.provider_table = providers_table(provider_table)
         self.diagnosis = diagnosis_pack(diagnosis)
         # 索引带来的那些包。私有包是整批换的（见 `merged_with`），所以这份底子要留着。
@@ -54,7 +60,8 @@ class Registry:
 
         clean = [combined[index] for index in clean_indexes]
         self._suppliers = self._build_suppliers(clean)
-        supplied_types = set(self._suppliers)
+        # 游戏自己供给的类型同样算有着落：它始终在场，没人能替它装。
+        supplied_types = set(self._suppliers) | set(self.game_supply)
         for index in clean_indexes:
             for file_type in combined[index].declared_types():
                 if not self._type_is_supplied(file_type, supplied_types):
@@ -223,12 +230,15 @@ class Registry:
         return None
 
     def install_directories(self, installed: Iterable[str] = ()) -> dict[str, PurePosixPath]:
-        """类型 -> 游戏根目录下的相对目录（`{Sprocket}` 前缀已去掉）。
+        """类型 -> 记录形态的相对目录（游戏目录是默认根，其他根带占位符第一段）。
 
         只列出能唯一确定供给者的类型；有多个候选且无法从已安装集合里定下来的类型不在这里，
-        调用方必须自己先报错，而不是拿一个猜出来的目录去安装。
+        调用方必须自己先报错，而不是拿一个猜出来的目录去安装。游戏自己供给的类型没有候选问题。
         """
-        directories: dict[str, PurePosixPath] = {}
+        directories: dict[str, PurePosixPath] = {
+            file_type: validate_supply_target(target)
+            for file_type, target in self.game_supply.items()
+        }
         for file_type in self._suppliers:
             provider = self.supplier_for_type(file_type, installed)
             if provider is None:
@@ -256,9 +266,13 @@ class Registry:
         raw_game = data.get("game")
         game_id = DEFAULT_GAME_CAPABILITY
         game_name = ""
+        game_supply: dict[str, str] = {}
         if isinstance(raw_game, dict) and raw_game.get("id"):
             game_id = str(raw_game["id"])
             game_name = str(raw_game.get("name", ""))
+            supply = raw_game.get("supply")
+            if isinstance(supply, dict):
+                game_supply = {str(key): str(value) for key, value in supply.items()}
         packages: list[RegistryPackage] = []
         for index, raw in enumerate(raw_packages):
             if not isinstance(raw, dict):
@@ -275,7 +289,12 @@ class Registry:
                     )
                 )
         return cls(
-            packages, data.get("providers"), game_id, game_name, diagnosis=data.get("diagnosis")
+            packages,
+            data.get("providers"),
+            game_id,
+            game_name,
+            diagnosis=data.get("diagnosis"),
+            game_supply=game_supply,
         )
 
     @property
@@ -298,6 +317,7 @@ class Registry:
             list(self._index_packages),
             game_id=self.game_id,
             game_name=self.game_name,
+            game_supply=self.game_supply,
             server_packages=tuple(packages),
         )
         merged.provider_table = self.provider_table

@@ -29,6 +29,9 @@ from ..utilities.package_paths import (
 )
 from .private_assets import PrivateAssetSource
 
+# 游戏自己供给的位置在目录表里的归属名：它不是包，冲突报错时只能这么称呼它。
+GAME_SUPPLY_OWNER = "the game"
+
 
 def satisfied_versions(records: Mapping[str, Any]) -> dict[str, str]:
     """已装读数里的包版本（`installed()` 的返回值 → `prepare(satisfied=...)` 的输入）。
@@ -72,14 +75,22 @@ class PlanPreparer:
         self.http.download(asset, destination, progress=None, hosts=set(package.asset_hosts()))
 
     @staticmethod
-    def install_directories(plan: ResolutionPlan) -> dict[str, PurePosixPath]:
-        """计划里的加载器供给表：类型 -> 游戏根目录下的相对目录。
+    def install_directories(
+            plan: ResolutionPlan,
+            game_supply: Mapping[str, str] | None = None,
+    ) -> dict[str, PurePosixPath]:
+        """计划里的加载器供给表，加上游戏自己供给的位置：类型 -> 记录形态的相对目录。
 
         隐式依赖保证供给者一定在计划里，所以这里不需要再问注册表。同一个类型在计划里出现
-        两个供给者时无法确定该用哪个目录，直接报错而不是让后一个悄悄覆盖前一个。
+        两个供给者时无法确定该用哪个目录，直接报错而不是让后一个悄悄覆盖前一个；游戏供给的
+        类型同理，没人的条目能跟游戏抢同一个类型。
         """
         directories: dict[str, PurePosixPath] = {}
         owners: dict[str, str] = {}
+        for file_type, target in (game_supply or {}).items():
+            validated = validate_file_type(file_type)
+            owners[validated] = GAME_SUPPLY_OWNER
+            directories[validated] = validate_supply_target(target)
         for resolved in plan.packages:
             for file_type, target in resolved.package.supply.items():
                 validated = validate_file_type(file_type)
@@ -98,19 +109,20 @@ class PlanPreparer:
             plan: ResolutionPlan,
             progress: ProgressCallback | None = None,
             satisfied: Mapping[str, str] | None = None,
+            game_supply: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
         """取回并扫描计划里每个包的载荷。
 
         `satisfied` 是目标游戏目录里已经装着的版本（包 id → 版本）：**已经就是这个版本**的依赖
         不再取回、也不再落盘 —— 计划里的供给关系照旧（目录表由完整的 `ResolutionPlan` 算出），
         所以模组的落点不变，只是不用为了重铺一份原样的运行时再下一遍。根包永远准备：用户点它
-        就是在要求重装。
+        就是在要求重装。`game_supply` 是游戏自己供给的位置（索引里 `game.supply`）。
         """
         work_root = self.app_dir / "work"
         work_root.mkdir(parents=True, exist_ok=True)
         work_dir = Path(tempfile.mkdtemp(prefix="prepare-", dir=work_root))
         prepared_packages: list[PreparedPackage] = []
-        directories = self.install_directories(plan)
+        directories = self.install_directories(plan, game_supply)
         scanner = PackageScanner(directories)
         installed_versions = {str(key): str(value) for key, value in (satisfied or {}).items()}
         try:

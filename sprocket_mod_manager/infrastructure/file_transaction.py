@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from ..domain.errors import InstallError
+from ..utilities.package_paths import validate_relative_path
 
 
 class FileTransaction:
@@ -22,19 +23,24 @@ class FileTransaction:
         self._files: dict[Path, Path | None] = {}
         self._directories: dict[Path, Path | None] = {}
 
-    def backup_file(self, target: Path, base_dir: Path) -> None:
+    def backup_file(self, target: Path, key: str) -> None:
+        """把 `target` 备份进事务目录。
+
+        `key` 是这份备份在事务目录里的相对路径，由调用方给**记录形态**的路径
+        （`Mods/X.dll`、`{Documents}/My Games/Sprocket/X.json`）—— 落点可能不在游戏目录里，
+        而且两个根下的同名文件不能撞在一起。
+        """
         if target in self._files:
             return
         if not target.exists():
             self._files[target] = None
             return
-        relative = target.resolve().relative_to(base_dir.resolve())
-        backup = self.path / "files" / relative
+        backup = self._backup_path("files", key)
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(target, backup)
         self._files[target] = backup
 
-    def backup_directory(self, target: Path, base_dir: Path) -> None:
+    def backup_directory(self, target: Path, key: str) -> None:
         if target in self._directories:
             return
         if not target.exists():
@@ -42,11 +48,13 @@ class FileTransaction:
             return
         if not target.is_dir():
             raise InstallError(f"transaction target is not a directory: {target}")
-        relative = target.resolve().relative_to(base_dir.resolve())
-        backup = self.path / "directories" / relative
+        backup = self._backup_path("directories", key)
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(target, backup)
         self._directories[target] = backup
+
+    def _backup_path(self, kind: str, key: str) -> Path:
+        return self.path / kind / Path(*validate_relative_path(key).parts)
 
     def rollback(self) -> None:
         for target, backup in reversed(list(self._files.items())):

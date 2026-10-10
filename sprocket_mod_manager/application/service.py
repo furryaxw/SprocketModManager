@@ -152,7 +152,10 @@ class ModManagerService:
             satisfied: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
         return PlanPreparer(self.app_dir, self.http, self.github, self.private_assets).prepare(
-            plan, progress, satisfied=satisfied
+            plan,
+            progress,
+            satisfied=satisfied,
+            game_supply=self.registry.game_supply if self.registry is not None else None,
         )
 
     def install(

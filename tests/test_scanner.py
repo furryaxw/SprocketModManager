@@ -150,6 +150,85 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(ignored, ["UserData/TestMod/config.json"])
 
 
+class TreeAnchorTests(unittest.TestCase):
+    """`layout: "tree"` 保留 `match` 通配符覆盖到的那段路径：固定目录段是锚点，落点由 `subpath` 定。"""
+
+    @staticmethod
+    def rule_package(rule: dict[str, str]) -> RegistryPackage:
+        return RegistryPackage(
+            id="test.tree",
+            name="TestTree",
+            authors=("test",),
+            repository="test/repo",
+            license="MIT",
+            display_name={"en": "Test"},
+            description={"en": "Test"},
+            release={},
+            dependencies=(),
+            install={"scan_dlls": False, "exclude": [], "files": [dict(rule)]},
+            category="utility",
+            tags=(),
+            file_rules=(dict(rule),),
+            schema_version=2,
+        )
+
+    @staticmethod
+    def archive(root: Path) -> Path:
+        path = root / "mod.zip"
+        with zipfile.ZipFile(path, "w") as output:
+            output.writestr("BepInEx/plugins/Example/Example.dll", b"not a dll")
+            output.writestr("BepInEx/plugins/Example/assets/icon.png", b"png")
+        return path
+
+    def scan(self, root: Path, rule: dict[str, str], directories: dict[str, PurePosixPath]):
+        files, _ignored = PackageScanner(directories).scan(
+            self.rule_package(rule), self.archive(root), root / "out"
+        )
+        return [item.target for item in files]
+
+    def test_the_fixed_directory_of_the_match_is_the_anchor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            targets = self.scan(
+                Path(temporary),
+                {
+                    "match": "BepInEx/plugins/Example/**",
+                    "type": "bepinex:plugin",
+                    "layout": "tree",
+                    "subpath": "Example",
+                },
+                {"bepinex:plugin": PurePosixPath("BepInEx/plugins")},
+            )
+
+            self.assertEqual(
+                targets,
+                [
+                    "BepInEx/plugins/Example/Example.dll",
+                    "BepInEx/plugins/Example/assets/icon.png",
+                ],
+            )
+
+    def test_the_supplied_directory_can_carry_the_anchor_without_a_subpath(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "assets.zip"
+            with zipfile.ZipFile(path, "w") as output:
+                output.writestr("Sprocket_Data/StreamingAssets/Parts/part.json", b"{}")
+
+            rule = {
+                "match": "Sprocket_Data/StreamingAssets/**",
+                "type": "sprocket:streamingassets",
+                "layout": "tree",
+            }
+            files, _ignored = PackageScanner(
+                {"sprocket:streamingassets": PurePosixPath("Sprocket_Data/StreamingAssets")}
+            ).scan(self.rule_package(rule), path, root / "out")
+
+            self.assertEqual(
+                [item.target for item in files],
+                ["Sprocket_Data/StreamingAssets/Parts/part.json"],
+            )
+
+
 class VersionScopedRuleTests(unittest.TestCase):
     """`when` 让同一条目按版本分流两套安装规则（一个仓库两条发布线）。"""
 

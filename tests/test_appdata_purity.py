@@ -101,7 +101,7 @@ class AppDataPurityTests(unittest.TestCase):
 
             transaction = FileTransaction(game / "SprocketModManager")
             try:
-                transaction.backup_file(target, game)
+                transaction.backup_file(target, "Mods/FixtureMod.dll")
                 backups = list((game / "SprocketModManager" / "backup").rglob("FixtureMod.dll"))
                 self.assertEqual(len(backups), 1, "备份必须落在游戏目录的 backup/ 下")
                 self.assertEqual(backups[0].read_bytes(), b"original payload")

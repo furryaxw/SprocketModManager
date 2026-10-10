@@ -88,6 +88,7 @@ def bridge_package() -> RegistryPackage:
             "melonloader:mod": "{Sprocket}/MLLoader/Mods",
             "melonloader:plugin": "{Sprocket}/MLLoader/Plugins",
             "melonloader:userlib": "{Sprocket}/MLLoader/UserLibs",
+            "melonloader:userdata": "{Sprocket}/MLLoader/UserData",
         },
         provides={"lavagang.melonloader": "0.7.3"},
         kind="loaderbridge",
@@ -101,6 +102,7 @@ def bepinex_package() -> RegistryPackage:
             "bepinex:core": "{Sprocket}/BepInEx/core",
             "bepinex:plugin": "{Sprocket}/BepInEx/plugins",
             "bepinex:patchers": "{Sprocket}/BepInEx/patchers",
+            "bepinex:config": "{Sprocket}/BepInEx/config",
         },
         provides={BEPINEX_CAPABILITY: "{version}"},
     )
@@ -170,6 +172,22 @@ class DirectoryResolutionTests(unittest.TestCase):
             self.assertEqual(
                 mod_directory_paths(game, []),
                 ("BepInEx/plugins", "BepInEx/patchers"),
+            )
+
+    def test_a_config_region_is_supplied_but_not_read_as_a_mod_directory(self) -> None:
+        """配置区域只是给模组落 `.cfg` 的落点：标识符不认识这个类型，不当模组目录读，不能启用/禁用。"""
+        with tempfile.TemporaryDirectory() as directory:
+            game = bridged_game(Path(directory))
+            bridge = bridge_package()
+            self.assertNotIn(
+                "MLLoader/UserData", mod_directory_paths(game, [bridge], (BRIDGE_ID,))
+            )
+            self.assertNotIn(
+                "MLLoader/UserData", toggle_directories(game, [bridge], (BRIDGE_ID,))
+            )
+            bepinex = bepinex_package()
+            self.assertNotIn(
+                "BepInEx/config", mod_directory_paths(game, [bepinex], (BEPINEX_ID,))
             )
 
     def test_the_same_directory_is_only_read_once(self) -> None:

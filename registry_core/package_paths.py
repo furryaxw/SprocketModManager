@@ -8,9 +8,12 @@ from .errors import ScanError
 STANDARD_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
 ALLOWED_ROOTS = STANDARD_ROOTS | {"AutoTranslator"}
 
-# 供给表里的安装位置写成游戏根目录占位符加相对目录：`{Sprocket}/Mods`、`{Sprocket}/BepInEx/plugins`。
+# 供给表里的安装位置写成根占位符加相对目录：`{Sprocket}/Mods`、`{Sprocket}/BepInEx/plugins`。
 # 单独一个 `{Sprocket}` 表示游戏根目录本身（加载器把自己的载荷放在这里）。
+# `{Documents}` 是用户的 Documents 目录：游戏的存档位置（`My Games/Sprocket`）在游戏目录之外。
 GAME_ROOT_TOKEN = "{Sprocket}"
+DOCUMENTS_ROOT_TOKEN = "{Documents}"
+ROOT_TOKENS = (GAME_ROOT_TOKEN, DOCUMENTS_ROOT_TOKEN)
 TYPE_WILDCARD = "*"
 FILE_TYPE_RE = re.compile(
     r"^[a-z0-9]+(?:[.-][a-z0-9]+)*:[a-z0-9]+(?:[.-][a-z0-9]+)*$"
@@ -71,14 +74,34 @@ def validate_subpath(value: str) -> PurePosixPath:
 
 
 def validate_supply_target(value: str) -> PurePosixPath:
-    """把供给表里的位置（`{Sprocket}/Mods`）解析成游戏根目录下的相对目录。
+    """把供给表里的位置解析成**记录形态**的相对路径。
 
-    游戏根目录本身返回 `.`。反斜杠按 `/` 归一，注册表里两种写法都收。
+    `{Sprocket}/Mods` 落在游戏目录里，返回游戏目录下的相对目录（游戏根目录本身返回 `.`）——
+    游戏目录是默认根，所以记录里不带占位符。`{Documents}/My Games/Sprocket` 落在游戏目录之外，
+    返回的路径带占位符第一段，由调用方按根解析。反斜杠按 `/` 归一，注册表里两种写法都收。
     """
     text = str(value).strip().replace("\\", "/")
-    if text != GAME_ROOT_TOKEN and not text.startswith(GAME_ROOT_TOKEN + "/"):
-        raise ScanError(f"supply target must start with {GAME_ROOT_TOKEN}: {value!r}")
-    rest = text[len(GAME_ROOT_TOKEN):].strip("/")
-    if not rest:
-        return PurePosixPath(".")
-    return validate_relative_path(rest)
+    for token in ROOT_TOKENS:
+        if text != token and not text.startswith(token + "/"):
+            continue
+        rest = text[len(token):].strip("/")
+        if token == GAME_ROOT_TOKEN:
+            return PurePosixPath(".") if not rest else validate_relative_path(rest)
+        parts = validate_relative_path(rest).parts if rest else ()
+        return PurePosixPath(token, *parts)
+    raise ScanError(f"supply target must start with one of {ROOT_TOKENS}: {value!r}")
+
+
+def split_managed_root(value: str) -> tuple[str, str]:
+    """记录路径拆成 (根占位符, 根内相对路径)。
+
+    游戏目录是默认根：`Mods/X.dll` 读作 `{Sprocket}` 下的 `Mods/X.dll`。其他根以占位符开头，
+    必须显式写出来（`{Documents}/My Games/Sprocket/X.json`）。
+    """
+    text = str(value).strip().replace("\\", "/")
+    for token in ROOT_TOKENS:
+        if text == token:
+            return token, ""
+        if text.startswith(token + "/"):
+            return token, text[len(token) + 1:]
+    return GAME_ROOT_TOKEN, text

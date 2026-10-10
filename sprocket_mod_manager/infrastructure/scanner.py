@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
 import shutil
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -17,6 +16,7 @@ from ..utilities.archive_safety import (
     MAX_COMPRESSION_RATIO,
 )
 from ..utilities.checksums import sha256_file
+from ..utilities.matching import fixed_directory, matches
 from ..utilities.package_paths import (
     STANDARD_ROOTS,
     file_type_is_wildcard,
@@ -58,10 +58,7 @@ ROOT_TYPES = {
 
 
 def _matches(pattern: str, path: str) -> bool:
-    folded = path.casefold()
-    return fnmatch.fnmatchcase(folded, pattern.casefold()) or fnmatch.fnmatchcase(
-        PurePosixPath(path).name.casefold(), pattern.casefold()
-    )
+    return matches(pattern, path)
 
 
 def _override_target(package: RegistryPackage, source_name: str) -> PurePosixPath | None:
@@ -94,6 +91,20 @@ def _matched_payload_rule(
 
 def _is_excluded(package: RegistryPackage, source_name: str) -> bool:
     return any(_matches(str(pattern), source_name) for pattern in package.install.get("exclude", ()))
+
+
+def _append_layout_parts(rule: Mapping[str, object], source_name: str, parts: list[str]) -> None:
+    """把条目路径按规则接进落点：`tree` 接通配符覆盖到的那段，`file` 只取文件名。
+
+    `layout: "tree"` 保留的是 `match` 通配符覆盖到的相对路径：`match` 开头那段固定目录是锚点，
+    它对应落点里的 `subpath`（压缩包镜像游戏目录时，`BepInEx/plugins/<Mod>/**` 那段就靠 `subpath`
+    落回同一处）。模式命中整条路径，所以命中的条目一定以这些段开头。
+    """
+    if str(rule.get("layout") or "file") == "tree":
+        fixed = fixed_directory(str(rule.get("match", "")))
+        parts.extend(validate_relative_path(source_name).parts[len(fixed):])
+        return
+    parts.append(PurePosixPath(source_name).name)
 
 
 def _declared_target(source_name: str) -> PurePosixPath | None:
@@ -267,12 +278,11 @@ class PackageScanner:
                     str(rule["type"]),
                     source_path,
                     source_name,
-                    subpath=rule.get("subpath"),
-                    layout=str(rule.get("layout") or "file"),
+                    rule=rule,
                 )
             elif suffix == ".dll" and package.install.get("scan_dlls", True):
                 target = self._target_for_type(
-                    classify_dll_type(source_path), source_path, source_name, layout="file"
+                    classify_dll_type(source_path), source_path, source_name
                 )
         else:
             target = _override_target(package, source_name)
@@ -313,10 +323,7 @@ class PackageScanner:
         parts = [part for part in directory.parts if part != "."]
         if rule.get("subpath"):
             parts.extend(validate_subpath(str(rule["subpath"])).parts)
-        if str(rule.get("layout") or "file") == "tree":
-            parts.extend(validate_relative_path(source_name).parts)
-        else:
-            parts.append(PurePosixPath(source_name).name)
+        _append_layout_parts(rule, source_name, parts)
         target = PurePosixPath(*parts)
         validate_relative_path(target.as_posix())
         return target
@@ -327,8 +334,7 @@ class PackageScanner:
             source_path: Path,
             source_name: str,
             *,
-            subpath: object = None,
-            layout: str = "file",
+            rule: Mapping[str, object] | None = None,
     ) -> PurePosixPath:
         file_type = validate_file_type(file_type)
         if file_type_is_wildcard(file_type):
@@ -343,14 +349,11 @@ class PackageScanner:
             raise ScanError(
                 f"no installed modloader supplies the install type {file_type!r}"
             )
+        rule = rule or {}
         parts = [part for part in directory.parts if part != "."]
-        if subpath:
-            parts.extend(validate_subpath(str(subpath)).parts)
-        if layout == "tree":
-            # 加载器自己的载荷：ZIP 里的目录结构就是游戏目录里的结构。
-            parts.extend(validate_relative_path(source_name).parts)
-        else:
-            parts.append(PurePosixPath(source_name).name)
+        if rule.get("subpath"):
+            parts.extend(validate_subpath(str(rule["subpath"])).parts)
+        _append_layout_parts(rule, source_name, parts)
         target = PurePosixPath(*parts)
         validate_relative_path(target.as_posix())
         return target

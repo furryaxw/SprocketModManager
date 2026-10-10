@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import fnmatch
 import logging
 import os
 import shutil
@@ -11,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 from .file_transaction import FileTransaction
+from .known_folders import documents_directory
 from .loader_archive import (
     archive_location,
     discard_archive,
@@ -37,7 +37,11 @@ from ..domain.models import (
     ReleaseInfo,
 )
 from ..utilities.checksums import sha256_file
+from ..utilities.matching import matches
 from ..utilities.package_paths import (
+    DOCUMENTS_ROOT_TOKEN,
+    GAME_ROOT_TOKEN,
+    split_managed_root,
     validate_relative_path,
     validate_subpath,
     validate_supply_target,
@@ -72,11 +76,7 @@ def _is_modloader_record(package: dict[str, Any]) -> bool:
 
 
 def _payload_rule_matches(rule: dict[str, str], source_name: str) -> bool:
-    pattern = str(rule.get("match", ""))
-    folded = source_name.casefold()
-    return fnmatch.fnmatchcase(folded, pattern.casefold()) or fnmatch.fnmatchcase(
-        PurePosixPath(source_name).name.casefold(), pattern.casefold()
-    )
+    return matches(str(rule.get("match", "")), source_name)
 
 
 def _recorded_directories(package: dict[str, Any]) -> set[str]:
@@ -134,27 +134,45 @@ def _path_exists(game_dir: Path, relative: str) -> bool:
 
 def _directory_exists(game_dir: Path, relative: str) -> bool:
     try:
-        return _safe_game_path(game_dir, relative).is_dir()
+        return _safe_managed_path(game_dir, relative).is_dir()
     except InstallError:
         return False
 
 
-def _safe_game_path(game_dir: Path, relative: str) -> Path:
-    # 目标根由注册表的供给表决定（`Mods`、`BepInEx/plugins`、加载器自己的游戏根载荷），
-    # 所以这里只保证是安全的相对路径并且不越出游戏目录。
-    target = validate_relative_path(relative)
-    root = game_dir.resolve()
+def _managed_root(game_dir: Path, relative: str) -> tuple[Path, str, str]:
+    """记录路径的 (根目录, 根内相对路径, 根占位符)。
+
+    游戏目录是默认根，其他根由路径第一段的占位符给出（`{Documents}/My Games/Sprocket/...`）。
+    占位符由注册表的供给表决定，所以这里只认认得的根。
+    """
+    token, rest = split_managed_root(relative)
+    if token == DOCUMENTS_ROOT_TOKEN:
+        try:
+            return documents_directory().resolve(), rest, token
+        except OSError as exc:
+            raise InstallError(f"cannot resolve the Documents directory: {exc}") from exc
+    return game_dir.resolve(), rest, GAME_ROOT_TOKEN
+
+
+def _safe_managed_path(game_dir: Path, relative: str) -> Path:
+    """记录路径 → 磁盘路径；越出它那个根就报错。
+
+    落点由注册表的供给表决定（`Mods`、`BepInEx/plugins`、游戏根、`Documents` 下的存档目录），
+    所以这里只保证是安全的相对路径并且不越出自己那个根。
+    """
+    root, rest, _token = _managed_root(game_dir, relative)
+    target = validate_relative_path(rest)
     full = (root / Path(*target.parts)).resolve()
     try:
         full.relative_to(root)
     except ValueError as exc:
-        raise InstallError(f"install target escapes the game directory: {relative}") from exc
+        raise InstallError(f"install target escapes its root: {relative}") from exc
     return full
 
 
 def _existing_managed_file(game_dir: Path, canonical: str) -> Path | None:
     """该逻辑文件在磁盘上的真实路径（先做越界校验，两种变体交给 `mod_toggle.actual_path_for`）。"""
-    return actual_path_for(_safe_game_path(game_dir, canonical))
+    return actual_path_for(_safe_managed_path(game_dir, canonical))
 
 
 def _write_target(game_dir: Path, relative: str) -> Path:
@@ -163,7 +181,7 @@ def _write_target(game_dir: Path, relative: str) -> Path:
     落盘、归档、冲突判定都按同一个路径走，否则禁用文件旁边会多出一份同名 DLL，补丁的原件也
     会归档落空。文件还不在场时就是规范路径。
     """
-    return _existing_managed_file(game_dir, relative) or _safe_game_path(game_dir, relative)
+    return _existing_managed_file(game_dir, relative) or _safe_managed_path(game_dir, relative)
 
 
 def _patched_backup_dir(game_dir: Path) -> Path:
@@ -181,16 +199,20 @@ def _patched_archive_path(game_dir: Path, relative: str) -> Path:
     return _patched_backup_dir(game_dir) / Path(*validate_relative_path(canonical_relative(relative)).parts)
 
 
-def _missing_parents(game_dir: Path, directory: Path) -> list[str]:
-    """这次会被新建的目录（相对游戏目录，自浅到深）。用于记录"安装时创建了哪些文件夹"。"""
+def _missing_parents(root: Path, directory: Path, token: str = GAME_ROOT_TOKEN) -> list[str]:
+    """这次会被新建的目录（记录形态，自浅到深）。用于记录"安装时创建了哪些文件夹"。
+
+    游戏目录是默认根，记出来的路径不带占位符；其他根带上占位符，卸载时才解得回同一处。
+    """
     try:
-        root = game_dir.resolve()
+        root = root.resolve()
         current = directory.resolve()
     except OSError:
         return []
     missing: list[str] = []
     while current != root and root in current.parents and not current.is_dir():
-        missing.append(current.relative_to(root).as_posix())
+        relative = current.relative_to(root).as_posix()
+        missing.append(relative if token == GAME_ROOT_TOKEN else f"{token}/{relative}")
         current = current.parent
     return list(reversed(missing))
 
@@ -582,11 +604,11 @@ class Installer:
         transaction = FileTransaction(manager_state_dir(game_dir))
         try:
             for file_type, directory in replaced_directories.items():
-                target = _safe_game_path(game_dir, directory)
+                target = _safe_managed_path(game_dir, directory)
                 archive = archive_replaced_directory(backups_dir(game_dir), file_type, target)
                 if archive is not None and progress:
                     progress(f"Backed up {file_type}: {archive.name}")
-                transaction.backup_directory(target, game_dir)
+                transaction.backup_directory(target, directory)
                 if target.exists():
                     shutil.rmtree(target)
                 if progress:
@@ -599,7 +621,7 @@ class Installer:
                 if sha256_file(target) != entry.get("sha256"):
                     warnings.append(f"preserved modified obsolete file: {relative}")
                     continue
-                transaction.backup_file(target, game_dir)
+                transaction.backup_file(target, relative)
                 target.unlink()
 
             created_by_package: dict[str, set[str]] = {}
@@ -630,8 +652,9 @@ class Installer:
                         archived = self._archive_patched_file(game_dir, sample.target, displaced)
                         if progress:
                             progress(f"Archived {sample.target} -> {archived}")
-                transaction.backup_file(target, game_dir)
-                for relative in _missing_parents(game_dir, target.parent):
+                transaction.backup_file(target, sample.target)
+                root, _rest, token = _managed_root(game_dir, sample.target)
+                for relative in _missing_parents(root, target.parent, token):
                     if "/" not in relative:
                         continue  # `Mods` / `Plugins` / `UserLibs` 这类游戏根目录不记、也不删
                     for item in files:
@@ -680,7 +703,7 @@ class Installer:
 
         next_state = copy.deepcopy(state)
         for file in files:
-            target = _safe_game_path(game_dir, file.target)
+            target = _safe_managed_path(game_dir, file.target)
             if not target.is_file() or sha256_file(target) != file.sha256:
                 raise InstallError(f"adoption candidate changed during scan: {file.target}")
             state_key = self._state_file_key(next_state, file.target)
@@ -743,11 +766,11 @@ class Installer:
         if package.id in state["packages"]:
             return False
         for relative in directories:
-            if not _safe_game_path(game_dir, relative).is_dir():
+            if not _safe_managed_path(game_dir, relative).is_dir():
                 raise InstallError(f"adopted loader directory is missing: {relative}")
         recorded_files: list[dict[str, str]] = []
         for relative, digest in payload_files:
-            target = _safe_game_path(game_dir, relative)
+            target = _safe_managed_path(game_dir, relative)
             if not target.is_file():
                 raise InstallError(f"adopted loader file is missing: {relative}")
             if sha256_file(target) != digest:
@@ -889,11 +912,11 @@ class Installer:
         transaction = FileTransaction(manager_state_dir(game_dir))
         try:
             for file_type, directory in replaced_restores.items():
-                target = _safe_game_path(game_dir, directory)
+                target = _safe_managed_path(game_dir, directory)
                 for relative in list(next_state["files"]):
                     if _is_under_any(relative, [directory]):
                         del next_state["files"][relative]
-                transaction.backup_directory(target, game_dir)
+                transaction.backup_directory(target, directory)
                 if target.exists():
                     shutil.rmtree(target)
                 restore_replaced_directory(backups_dir(game_dir), file_type, target)
@@ -910,9 +933,9 @@ class Installer:
                     continue
                 if sha256_file(target) == entry.get("sha256"):
                     # 磁盘还是补丁装进去的内容：把归档的原件放回去。归档在就说明这里原本有别的内容。
-                    transaction.backup_file(target, game_dir)
+                    transaction.backup_file(target, relative)
                     temporary = target.with_name(f".{target.name}.smm-{uuid.uuid4().hex}.tmp")
-                    shutil.copy2(_safe_game_path(game_dir, record["backup"]), temporary)
+                    shutil.copy2(_safe_managed_path(game_dir, record["backup"]), temporary)
                     os.replace(temporary, target)
                     if entry.get("owners"):
                         entry["sha256"] = record["sha256"]
@@ -948,7 +971,7 @@ class Installer:
                 if sha256_file(target) != entry.get("sha256"):
                     warnings.append(f"preserved modified file: {relative}")
                     continue
-                transaction.backup_file(target, game_dir)
+                transaction.backup_file(target, relative)
                 target.unlink()
             self.state_store.save(next_state)
         except Exception:
@@ -960,7 +983,7 @@ class Installer:
             transaction.close()
         self._prune_patched_archives(game_dir, next_state)
         for relative in sorted(recorded_directories, key=lambda item: item.count("/"), reverse=True):
-            candidate = _safe_game_path(game_dir, relative)
+            candidate = _safe_managed_path(game_dir, relative)
             try:
                 candidate.rmdir()  # 只有空目录会成功：用户往里放过东西就保留
             except OSError:
@@ -993,7 +1016,7 @@ class Installer:
         dropped: list[str] = []
         for relative in list(next_state["files"]):
             try:
-                target = _safe_game_path(root, relative)
+                target = _safe_managed_path(root, relative)
             except InstallError:
                 LOGGER.warning("dropping recorded path that escapes the game directory: %s", relative)
                 del next_state["files"][relative]
