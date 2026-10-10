@@ -33,7 +33,7 @@
     "install": {
         "files": [
             {
-                "match": "*.dll",
+                "match": "**/*.dll",
                 "type": "melonloader:*"
             }
         ],

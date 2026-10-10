@@ -37,19 +37,17 @@
     ],
     "recommendations": [],
     "featured": false,
-    "supply": {
-        "roanwassink:thermalsight": "{Sprocket}"
-    },
     "install": {
         "files": [
             {
                 "match": "BepInEx/plugins/SprocketThermalSight/**",
-                "type": "roanwassink:thermalsight",
-                "layout": "tree"
+                "type": "bepinex:plugin",
+                "layout": "tree",
+                "subpath": "SprocketThermalSight"
             },
             {
-                "match": "Sprocket_Data/**",
-                "type": "roanwassink:thermalsight",
+                "match": "Sprocket_Data/StreamingAssets/**",
+                "type": "sprocket:streamingassets",
                 "layout": "tree"
             }
         ],

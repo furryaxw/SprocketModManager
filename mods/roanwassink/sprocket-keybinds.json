@@ -29,15 +29,13 @@
     "dependencies": [],
     "recommendations": [],
     "featured": false,
-    "supply": {
-        "roanwassink:keybinds": "{Sprocket}"
-    },
     "install": {
         "files": [
             {
                 "match": "BepInEx/plugins/SprocketKeybinds/**",
-                "type": "roanwassink:keybinds",
-                "layout": "tree"
+                "type": "bepinex:plugin",
+                "layout": "tree",
+                "subpath": "SprocketKeybinds"
             }
         ],
         "scan_dlls": false,

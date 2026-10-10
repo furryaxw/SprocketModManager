@@ -161,10 +161,12 @@ installed in the target game directory**; with several candidates and none insta
 reports an error and asks the user to install a loader first. So a rule only needs the
 right type, not a directory.
 
-`match` tests both the ZIP entry path and its file name, case-insensitively, and the
-first matching rule decides the type. `subpath` narrows the location below the supplied
-directory. `layout` is `file` (the default, taking only the file name) or `tree` (keeping
-the archive-relative path). A file matched by `exclude` is not installed. While
+`match` tests the ZIP entry path (`/`-separated), case-insensitively, and the first matching rule
+decides the type: `*` and `?` match within one segment, `**` as a whole segment matches any depth
+(`*.dll` is a DLL at the archive root, `**/*.dll` is any depth). `subpath` narrows the location below
+the supplied directory. `layout` is `file` (the default, taking only the file name) or `tree` (keeping
+the path the `match` wildcards cover: the fixed directory at the start of `match` is the
+anchor, and `subpath` puts it back). A file matched by `exclude` is not installed. While
 `scan_dlls` is on, a DLL matching no rule is classified from metadata; with it off, a DLL
 not covered by a rule fails the scan for that package.
 

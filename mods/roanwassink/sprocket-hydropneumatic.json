@@ -37,19 +37,17 @@
     ],
     "recommendations": [],
     "featured": false,
-    "supply": {
-        "roanwassink:hydropneumatic": "{Sprocket}"
-    },
     "install": {
         "files": [
             {
                 "match": "BepInEx/plugins/SprocketHydropneumatic/**",
-                "type": "roanwassink:hydropneumatic",
-                "layout": "tree"
+                "type": "bepinex:plugin",
+                "layout": "tree",
+                "subpath": "SprocketHydropneumatic"
             },
             {
-                "match": "Sprocket_Data/**",
-                "type": "roanwassink:hydropneumatic",
+                "match": "Sprocket_Data/StreamingAssets/**",
+                "type": "sprocket:streamingassets",
                 "layout": "tree"
             }
         ],

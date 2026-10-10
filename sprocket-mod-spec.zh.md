@@ -359,10 +359,15 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 }
 ```
 
-- `match` 同时按 ZIP 条目路径和它的文件名匹配，大小写不敏感。
+- `match` 匹配 ZIP 条目路径（`/` 分隔），大小写不敏感：`*` 与 `?` 只在当前一层里匹配，`**` 独占
+  一段时匹配任意层（含零层，所以 `**/x` 也命中根上的 `x`）。没有按文件名匹配的兜底，所以 `*.dll`
+  指压缩包根目录下的 DLL，子目录里的要写 `**/*.dll`。
 - `subpath` 在供给目录之下再细分一层。
-- `layout` 是 `file`（默认，只取文件名放进类型的目录）或 `tree`（保留压缩包里的相对路径）。
-  两种安装行共用同一套取值。
+- `layout` 是 `file`（默认，只取文件名放进类型的目录）或 `tree`（保留 `match` 通配符覆盖到的那段
+  压缩包内路径）。两种安装行共用同一套取值。
+- `tree` 下 `match` 开头那段固定目录是锚点：条目路径去掉它之后才是落点里的相对路径，那几段由
+  `subpath` 决定。压缩包镜像游戏目录（`BepInEx/plugins/<Mod>/**`）时，锚点吃掉镜像的那段，
+  `subpath` 把它落回同名目录。
 - `exclude` 命中的文件不安装。
 - 没有规则命中的 DLL 在 `scan_dlls` 打开时按元数据归类；关掉 `scan_dlls` 时，没有被规则
   覆盖的 DLL 会让这个包的扫描失败。
@@ -376,8 +381,8 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
    `BepInEx/plugins` 加载），否则 -> `melonloader:userlib`。
 5. 原生 DLL 和无法解析的 DLL 没有自动归类，必须由安装规则给出类型。
 
-目标路径 = 供给目录 + `subpath` + 文件名（`layout: "file"`）或压缩包内相对路径
-（`layout: "tree"`）。绝对路径、`..` 和 Windows 设备路径均无效。
+目标路径 = 供给目录 + `subpath` + 文件名（`layout: "file"`）或 `match` 通配符覆盖到的压缩包内
+相对路径（`layout: "tree"`）。绝对路径、`..` 和 Windows 设备路径均无效。
 
 ## 加载器包
 
@@ -530,7 +535,7 @@ Releases。外部来源没有可以查询的 API，因此这样的条目必须�
 - Release tag 可解析并至少包含一个可扫描资产；
 - 每个依赖 id 都是已注册的包或一个能力，真实包之间无环；每个伴随 id 都是已注册的包；
 - `game.json` 存在、带可用的供给表，且每个安装类型都有供给者（`sprocket:*` 由游戏自己供给）；
-- 每个静态声明的安装类型都有供给者，供给目录与 `subpath` 不越出游戏目录。
+- 每个静态声明的安装类型都有供给者，供给目录与 `subpath` 不越出它自己那个根（游戏目录或 `{Documents}`）。
 
 验证过程不能构建或执行第三方代码。公开源码不能证明 Release 二进制一定来自该
 源码；由公开 CI 构建或带 Artifact Attestation 的项目可另外显示 Verified Build。

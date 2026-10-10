@@ -417,11 +417,18 @@ version cannot be read, only rules without a `when` match.
 }
 ```
 
-- `match` tests both the ZIP entry path and its file name, case-insensitively.
+- `match` tests the ZIP entry path (`/`-separated), case-insensitively: `*` and `?` match within one
+  segment, and `**` as a whole segment matches any depth (zero included, so `**/x` also matches `x`
+  at the root). There is no file-name fallback, so `*.dll` means DLLs at the archive root and
+  `**/*.dll` means any depth.
 - `subpath` narrows the location below the supplied directory.
 - `layout` is `file` (the default, taking only the file name into the type's
-  directory) or `tree` (keeping the archive-relative path). Both install lines share
-  the same values.
+  directory) or `tree` (keeping the archive-relative path the `match` wildcards
+  cover). Both install lines share the same values.
+- Under `tree` the fixed directory at the start of `match` is the anchor: the entry
+  path loses it, and `subpath` decides those segments in the target. An archive that
+  mirrors the game directory (`BepInEx/plugins/<Mod>/**`) has the mirrored part eaten by
+  the anchor and put back in place by `subpath`.
 - A file matched by `exclude` is not installed.
 - A DLL matching no rule is classified from metadata while `scan_dlls` is on; with
   `scan_dlls` off, a DLL not covered by a rule fails the scan for that package.
@@ -439,7 +446,8 @@ not execute downloaded content:
    rule that gives them a type.
 
 The target path is the supplied directory plus `subpath` plus the file name
-(`layout: "file"`) or the archive-relative path (`layout: "tree"`). Absolute paths,
+(`layout: "file"`) or the archive-relative path the `match` wildcards cover
+(`layout: "tree"`). Absolute paths,
 `..`, and Windows device paths are invalid.
 
 ## Loader Packages
@@ -618,7 +626,7 @@ least that:
 - every dependency id is a registered package or a capability, and real packages contain no cycles; every companion id is a registered package;
 - `game.json` is present with a usable supply table, and every install type has a supplier (`sprocket:*` comes from the game itself);
 - every statically declared install type has a supplier, and supplied directories and
-  `subpath` values stay inside the game directory.
+  `subpath` values stay inside their own root (the game directory or `{Documents}`).
 
 Validation must not build or execute third-party code. Public source does not prove
 that a Release binary was built from that source. Projects built by public CI or

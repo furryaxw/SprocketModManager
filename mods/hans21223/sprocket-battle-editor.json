@@ -37,13 +37,13 @@
                 "subpath": "SprocketMaps"
             },
             {
-                "match": "*.dll",
+                "match": "BepInEx/plugins/*.dll",
                 "type": "bepinex:plugin"
             }
         ],
         "scan_dlls": false,
         "exclude": [
-            "*.txt"
+            "**/*.txt"
         ]
     },
     "category": "gameplay",
