@@ -109,6 +109,7 @@ class HttpClient:
             timeout: int = 30,
             max_bytes: int = MAX_API_RESPONSE_BYTES,
             cache_seconds: int = 0,
+            use_cache: bool = True,
             allowed_hosts: set[str] | None = None,
             allow_loopback_http: bool = False,
             progress: ProgressCallback | None = None,
@@ -122,14 +123,22 @@ class HttpClient:
         )
         meta_path, body_path = self._cache_paths(url, accept)
         cached_meta: dict[str, Any] = {}
-        if meta_path.is_file() and body_path.is_file():
+        cached_body: bytes | None = None
+        # 取载荷本身的调用（`use_cache=False`）不参与磁盘缓存：不读、不写，出错时也没有旧副本可退。
+        if use_cache and cache_seconds > 0 and meta_path.is_file() and body_path.is_file():
             try:
                 cached_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                if cache_seconds and time.time() - float(cached_meta.get("fetched_at", 0)) < cache_seconds:
-                    LOGGER.debug("HTTP cache hit url=%s", safe_url)
-                    return body_path.read_bytes()
+                cached_body = body_path.read_bytes()
             except (OSError, ValueError, json.JSONDecodeError):
-                cached_meta = {}
+                cached_meta, cached_body = {}, None
+            else:
+                # 上限是每次调用各自的：缓存副本不能替调用方放宽 max_bytes。
+                if len(cached_body) > max_bytes:
+                    LOGGER.warning("HTTP cache entry exceeds this call's limit url=%s", safe_url)
+                    cached_meta, cached_body = {}, None
+                elif time.time() - float(cached_meta.get("fetched_at", 0)) < cache_seconds:
+                    LOGGER.debug("HTTP cache hit url=%s", safe_url)
+                    return cached_body
 
         headers = {"Accept": accept, "User-Agent": USER_AGENT}
         request_host = (urlparse(url).hostname or "").casefold()
@@ -161,30 +170,31 @@ class HttpClient:
                     if progress:
                         progress(f"downloaded {total:,} bytes")
                 body = b"".join(chunks)
-                _atomic_write(body_path, body)
-                meta = {
-                    "url": url,
-                    "etag": response.headers.get("ETag"),
-                    "fetched_at": time.time(),
-                }
-                _atomic_write(meta_path, json.dumps(meta, indent=2).encode("utf-8"))
+                if use_cache:
+                    _atomic_write(body_path, body)
+                    meta = {
+                        "url": url,
+                        "etag": response.headers.get("ETag"),
+                        "fetched_at": time.time(),
+                    }
+                    _atomic_write(meta_path, json.dumps(meta, indent=2).encode("utf-8"))
                 LOGGER.debug("HTTP fetch completed url=%s bytes=%d", safe_url, len(body))
                 return body
         except HTTPError as exc:
-            if exc.code == 304 and body_path.is_file():
+            if exc.code == 304 and cached_body is not None and cached_meta.get("etag"):
                 LOGGER.debug("HTTP cache revalidated url=%s", safe_url)
                 cached_meta["fetched_at"] = time.time()
                 _atomic_write(meta_path, json.dumps(cached_meta, indent=2).encode("utf-8"))
-                return body_path.read_bytes()
-            if body_path.is_file() and exc.code in {403, 429, 500, 502, 503, 504}:
+                return cached_body
+            if cached_body is not None and exc.code in {403, 429, 500, 502, 503, 504}:
                 LOGGER.warning("HTTP %d; using stale cache url=%s", exc.code, safe_url)
-                return body_path.read_bytes()
+                return cached_body
             LOGGER.error("HTTP request failed status=%d url=%s", exc.code, safe_url)
             raise DownloadError(f"HTTP {exc.code} for {url}") from exc
         except (URLError, TimeoutError, OSError) as exc:
-            if body_path.is_file():
+            if cached_body is not None:
                 LOGGER.warning("HTTP request failed; using stale cache url=%s error=%s", safe_url, exc)
-                return body_path.read_bytes()
+                return cached_body
             # 证书被拒时把对端那张证书也写下来：用户上传的日志是唯一证据，只留一句「验不过」
             # 分不清「本机缺根证书」和「中间有人替换了证书」。
             rejected = certificate_verification_error(exc)
@@ -243,6 +253,7 @@ class HttpClient:
             max_bytes=declared_size + 1024 * 1024,
             allowed_hosts=allowed_hosts,
             progress=progress,
+            use_cache=False,
         )
         if asset.size and len(data) != asset.size:
             raise DownloadError(

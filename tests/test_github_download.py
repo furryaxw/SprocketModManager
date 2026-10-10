@@ -1,9 +1,11 @@
+import io
+import json
 import ssl
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPSHandler
 
 from sprocket_mod_manager.domain.errors import DownloadError
@@ -418,6 +420,134 @@ class CertificateFailureLoggingTests(unittest.TestCase):
 
         self.assertNotIn("peer_certificate", "\n".join(logs.output))
         probe.assert_not_called()
+
+
+class HttpCachePolicyTests(unittest.TestCase):
+    """`cache_seconds` 是读窗口：窗口为 0 就不许拿磁盘上的副本，取载荷本身的调用完全不进缓存。"""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.http = HttpClient(self.root / "cache")
+        self.url = "https://api.github.com/repos/example/mod"
+        self.accept = "application/vnd.github+json"
+
+    def _fetch(self, *, cache_seconds: int, max_bytes: int = 16 * 1024 * 1024) -> bytes:
+        return self.http.get_bytes(
+            self.url,
+            accept=self.accept,
+            max_bytes=max_bytes,
+            cache_seconds=cache_seconds,
+            allowed_hosts={"api.github.com"},
+        )
+
+    def _seed(self) -> None:
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen",
+            return_value=FakeResponse(b"old", self.url),
+        ):
+            self._fetch(cache_seconds=3600)
+
+    def _expire(self) -> None:
+        """把副本的抓取时刻推到过去：窗口内的命中不成立，只剩复验和兜底两条路。"""
+        meta_path, _body_path = self.http._cache_paths(self.url, self.accept)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["fetched_at"] = 0
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    def test_a_zero_second_window_sends_no_validator(self):
+        self._seed()
+        validators = []
+
+        def respond(request, **_kwargs):
+            validators.append(request.get_header("If-none-match"))
+            return FakeResponse(b"fresh", self.url)
+
+        with patch("sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=respond):
+            data = self._fetch(cache_seconds=0)
+
+        self.assertEqual(data, b"fresh")
+        self.assertIsNone(validators[0])
+
+    def test_a_zero_second_window_has_no_stale_fallback(self):
+        failures = (
+            HTTPError(self.url, 503, "Service Unavailable", {}, io.BytesIO(b"")),
+            URLError("connection refused"),
+        )
+        for failure in failures:
+            with self.subTest(failure=failure):
+                self._seed()
+                with patch(
+                    "sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=failure
+                ), self.assertLogs(
+                    "sprocket_mod_manager.infrastructure.http_client", level="ERROR"
+                ):
+                    with self.assertRaises(DownloadError):
+                        self._fetch(cache_seconds=0)
+
+    def test_a_positive_window_revalidates_and_falls_back(self):
+        self._seed()
+        self._expire()
+        not_modified = HTTPError(self.url, 304, "Not Modified", {}, io.BytesIO(b""))
+
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=not_modified
+        ):
+            self.assertEqual(self._fetch(cache_seconds=3600), b"old")
+
+        failures = (
+            HTTPError(self.url, 503, "Service Unavailable", {}, io.BytesIO(b"")),
+            URLError("connection refused"),
+        )
+        for failure in failures:
+            with self.subTest(failure=failure):
+                self._expire()
+                with patch(
+                    "sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=failure
+                ), self.assertLogs(
+                    "sprocket_mod_manager.infrastructure.http_client", level="WARNING"
+                ):
+                    self.assertEqual(self._fetch(cache_seconds=3600), b"old")
+
+    def test_a_cached_body_over_the_callers_limit_is_fetched_again(self):
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen",
+            return_value=FakeResponse(b"x" * 4096, self.url),
+        ):
+            self._fetch(cache_seconds=3600, max_bytes=64 * 1024)
+        validators = []
+
+        def respond(request, **_kwargs):
+            validators.append(request.get_header("If-none-match"))
+            return FakeResponse(b"small", self.url)
+
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen", side_effect=respond
+        ), self.assertLogs("sprocket_mod_manager.infrastructure.http_client", level="WARNING") as logs:
+            data = self._fetch(cache_seconds=3600, max_bytes=16)
+
+        self.assertEqual(data, b"small")
+        self.assertIsNone(validators[0])
+        self.assertIn("exceeds this call's limit", "\n".join(logs.output))
+
+    def test_an_asset_download_writes_only_its_destination(self):
+        asset = ReleaseAsset(
+            id=1,
+            name="TestMod.dll",
+            size=4,
+            download_url="https://github.com/example/mod/releases/download/v1.0.0/TestMod.dll",
+        )
+        destination = self.root / "TestMod.dll"
+
+        with patch(
+            "sprocket_mod_manager.infrastructure.http_client.urlopen",
+            return_value=FakeResponse(b"test", asset.download_url),
+        ):
+            HttpClient(self.root / "cache").download(asset, destination)
+
+        self.assertEqual(destination.read_bytes(), b"test")
+        self.assertEqual(sorted((self.root / "cache" / "http").glob("*.body")), [])
 
 
 class HttpsTrustWiringTests(unittest.TestCase):

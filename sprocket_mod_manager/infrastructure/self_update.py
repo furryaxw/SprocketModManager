@@ -164,6 +164,7 @@ def published_digest(http: object, update: ManagerUpdate) -> str:
             timeout=30,
             max_bytes=CHECKSUM_MAX_BYTES,
             allowed_hosts=GITHUB_ASSET_HOSTS,
+            use_cache=False,
         ).decode("utf-8-sig")
     except (DownloadError, UnicodeDecodeError) as exc:
         LOGGER.warning("could not read the published checksum: %s", exc)

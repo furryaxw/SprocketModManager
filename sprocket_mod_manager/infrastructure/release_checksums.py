@@ -40,6 +40,7 @@ def publisher_checksum(
                 timeout=30,
                 max_bytes=1024 * 1024,
                 allowed_hosts=GITHUB_ASSET_HOSTS | set(package.asset_hosts()),
+                use_cache=False,
             ).decode("utf-8-sig")
         except (DownloadError, UnicodeDecodeError):
             continue
