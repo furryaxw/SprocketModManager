@@ -47,6 +47,7 @@ from ..infrastructure.config import ConfigStore, detect_language, effective_game
     effective_proxy_url
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.desktop import open_directory
+from ..infrastructure import app_cache
 from ..infrastructure.app_logging import manager_log_path
 from ..infrastructure.providers_cache import read_providers_table
 from ..infrastructure.environment_monitor import (
@@ -746,6 +747,55 @@ class ClientApi:
             return self._success(path=str(self.config_store.app_dir))
         except (OSError, ValueError) as exc:
             return self._failure(exc, code="open_manager_directory_failed")
+
+    def open_game_directory(self) -> dict[str, Any]:
+        """打开设置里那个 Sprocket 路径（游戏安装目录）。"""
+        try:
+            value = effective_game_path(self.config)
+            if not value:
+                raise ValueError("no Sprocket path is configured")
+            directory = Path(value).expanduser()
+            if not directory.is_dir():
+                raise OSError(f"Sprocket directory is not on disk: {directory}")
+            open_directory(directory)
+            LOGGER.info("opened game directory path=%s", directory)
+            return self._success(path=str(directory))
+        except (OSError, ValueError) as exc:
+            return self._failure(exc, code="open_game_directory_failed")
+
+    def clear_http_cache(self) -> dict[str, Any]:
+        """清掉网络文档缓存；供给表与诊断规则包留着。"""
+        try:
+            removed = app_cache.clear_http_cache(self.config_store.app_dir)
+            LOGGER.info("cleared http cache files=%d bytes=%d", removed.files, removed.bytes_removed)
+            return self._success(files=removed.files, bytes_removed=removed.bytes_removed)
+        except OSError as exc:
+            return self._failure(exc, code="clear_cache_failed")
+
+    def clear_all_cache(self) -> dict[str, Any]:
+        """清掉整个缓存目录；内存里那份供给表读数同时作废。"""
+        try:
+            removed = app_cache.clear_app_cache(self.config_store.app_dir)
+            self._providers_table_cache = None
+            self._providers_table_read = False
+            LOGGER.info("cleared app cache files=%d bytes=%d", removed.files, removed.bytes_removed)
+            return self._success(files=removed.files, bytes_removed=removed.bytes_removed)
+        except OSError as exc:
+            return self._failure(exc, code="clear_cache_failed")
+
+    def clear_metadata_cache(self) -> dict[str, Any]:
+        """清掉这个游戏目录的 DLL 元数据缓存；下次扫描重新解析。"""
+        try:
+            value = effective_game_path(self.config)
+            if not value:
+                raise ValueError("no Sprocket path is configured")
+            removed = app_cache.clear_file_metadata_cache(Path(value).expanduser())
+            LOGGER.info(
+                "cleared dll metadata cache files=%d bytes=%d", removed.files, removed.bytes_removed
+            )
+            return self._success(files=removed.files, bytes_removed=removed.bytes_removed)
+        except (OSError, ValueError) as exc:
+            return self._failure(exc, code="clear_cache_failed")
 
     def get_manager_update(self) -> dict[str, Any]:
         """管理器自己的版本：最新发布是什么、有没有新、这台机器能不能就地换掉自己。"""

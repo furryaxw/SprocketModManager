@@ -58,6 +58,10 @@ function wireEvents() {
     $("#open-repository").addEventListener("click", () => openUrl(state.links.repository));
     $("#open-registry").addEventListener("click", () => openUrl(state.links.registry));
     $("#open-manager-directory").addEventListener("click", openManagerDirectory);
+    $("#open-game-directory").addEventListener("click", openGameDirectory);
+    $("#clear-http-cache").addEventListener("click", () => void clearHttpCache());
+    $("#clear-all-cache").addEventListener("click", () => void clearAllCache());
+    $("#clear-metadata-cache").addEventListener("click", () => void clearMetadataCache());
     $("#run-diagnosis").addEventListener("click", () => void runDiagnosis());
     $("#diagnosis-upload-logs").addEventListener("click", () => void openLogPicker());
     $("#modal-close").addEventListener("click", () => closeModal(false));

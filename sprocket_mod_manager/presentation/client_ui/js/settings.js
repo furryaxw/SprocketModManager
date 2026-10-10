@@ -66,6 +66,67 @@ async function openManagerDirectory() {
     setStatus(tr("managerDirectoryOpened"), "ready", result.path || "");
 }
 
+async function openGameDirectory() {
+    const result = await callApi("open_game_directory");
+    if (!result.ok) {
+        resultError(result);
+        return;
+    }
+    toast(tr("gameDirectoryOpened"));
+    setStatus(tr("gameDirectoryOpened"), "ready", result.path || "");
+}
+
+/** 三个清理入口共用这一段：确认框说清删哪一个，回话里带删掉的文件数与大小。 */
+async function confirmCacheClear({api, title, confirm, done}) {
+    const confirmed = await showModal({
+        kicker: tr("aboutTitle"),
+        title: tr(title),
+        body: tr(confirm),
+        confirmText: tr("clearCache"),
+        destructive: true,
+    });
+    if (!confirmed) return;
+    const result = await api();
+    if (!result.ok) {
+        resultError(result);
+        return;
+    }
+    const message = tr(done, {files: result.files, size: megabytes(result.bytes_removed)});
+    toast(message);
+    setStatus(message, "ready");
+}
+
+async function clearHttpCache() {
+    await confirmCacheClear({
+        api: () => callApi("clear_http_cache"),
+        title: "clearHttpCache",
+        confirm: "clearHttpCacheConfirm",
+        done: "clearHttpCacheDone",
+    });
+}
+
+async function clearAllCache() {
+    await confirmCacheClear({
+        api: () => callApi("clear_all_cache"),
+        title: "clearAllCache",
+        confirm: "clearAllCacheConfirm",
+        done: "clearAllCacheDone",
+    });
+}
+
+async function clearMetadataCache() {
+    await confirmCacheClear({
+        api: () => callApi("clear_metadata_cache"),
+        title: "clearMetadataCache",
+        confirm: "clearMetadataCacheConfirm",
+        done: "clearMetadataCacheDone",
+    });
+}
+
+function megabytes(bytes) {
+    return (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
+}
+
 async function detectGamePathPlaceholder() {
     const result = await callApi("find_game_path");
     if (!result.ok) return;

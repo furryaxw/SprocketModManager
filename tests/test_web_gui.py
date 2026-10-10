@@ -1,4 +1,5 @@
 import hashlib
+import json
 import shutil
 import subprocess
 import threading
@@ -769,6 +770,160 @@ class ChooseGamePathTests(unittest.TestCase):
         self.assertEqual(dialog_type, webview.FileDialog.OPEN, "选的是文件，不是文件夹")
         self.assertNotEqual(dialog_type, webview.FileDialog.FOLDER)
         self.assertEqual(kwargs.get("file_types"), ("Sprocket (*.exe)",))
+
+
+class DirectoryAndCacheActionTests(unittest.TestCase):
+    """关于页那四个动作：开目录按配置的路径，三个清缓存各删各的。"""
+
+    PROVIDERS_TABLE = {
+        "schema_version": 2,
+        "entries": [{
+            "loader": "lavagang.melonloader",
+            "version": ">=0.7.0 <0.8.0",
+            "sprocket": "<0.2.54.0",
+        }],
+    }
+
+    def _api(self, app_dir: Path, game_dir: Path | None = None) -> ClientApi:
+        app_dir.mkdir(parents=True, exist_ok=True)
+        ConfigStore(app_dir).save({
+            "language": "en",
+            "game_path": str(game_dir) if game_dir else "",
+            "index_url": "",
+        })
+        return ClientApi("test", app_dir=app_dir)
+
+    def test_open_game_directory_uses_the_configured_path(self) -> None:
+        with TemporaryDirectory() as directory:
+            game = Path(directory) / "Sprocket"
+            game.mkdir()
+            api = self._api(Path(directory) / "app", game)
+            try:
+                with patch("sprocket_mod_manager.presentation.web_gui.open_directory") as opener:
+                    result = api.open_game_directory()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["path"], str(game))
+        opener.assert_called_once_with(game)
+
+    def test_open_game_directory_without_a_path_reports_the_failure(self) -> None:
+        with TemporaryDirectory() as directory:
+            api = self._api(Path(directory) / "app")
+            try:
+                with patch(
+                    "sprocket_mod_manager.infrastructure.config.detect_game_path", return_value=""
+                ):
+                    result = api.open_game_directory()
+            finally:
+                api.install_queue.close()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "open_game_directory_failed")
+
+    def test_open_game_directory_does_not_create_a_missing_directory(self) -> None:
+        with TemporaryDirectory() as directory:
+            missing = Path(directory) / "gone"
+            api = self._api(Path(directory) / "app", missing)
+            try:
+                with patch("sprocket_mod_manager.presentation.web_gui.open_directory") as opener:
+                    result = api.open_game_directory()
+            finally:
+                api.install_queue.close()
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(missing.exists(), "打开的目录必须本来就在磁盘上")
+        opener.assert_not_called()
+
+    def test_clearing_the_http_cache_keeps_the_synced_table(self) -> None:
+        with TemporaryDirectory() as directory:
+            app = Path(directory) / "app"
+            http_cache = app / "cache" / "http"
+            http_cache.mkdir(parents=True)
+            (http_cache / "abc.body").write_bytes(b"payload")
+            table = app / "cache" / "providers.json"
+            table.write_text(json.dumps(self.PROVIDERS_TABLE), encoding="utf-8")
+            api = self._api(app)
+            try:
+                result = api.clear_http_cache()
+                http_cache_gone = not http_cache.exists()
+                table_kept = table.is_file()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["files"], 1)
+        self.assertEqual(result["bytes_removed"], len(b"payload"))
+        self.assertTrue(http_cache_gone)
+        self.assertTrue(table_kept, "供给表不是网络文档缓存")
+
+    def test_clearing_everything_forgets_the_table_read_from_the_cache(self) -> None:
+        with TemporaryDirectory() as directory:
+            app = Path(directory) / "app"
+            cache = app / "cache"
+            cache.mkdir(parents=True)
+            (cache / "providers.json").write_text(
+                json.dumps(self.PROVIDERS_TABLE), encoding="utf-8"
+            )
+            api = self._api(app)
+            try:
+                _table, source = api.providers_table()
+                self.assertEqual(source, "cache")
+                result = api.clear_all_cache()
+                _table, source = api.providers_table()
+                cache_gone = not cache.exists()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(cache_gone)
+        self.assertEqual(source, "missing")
+
+    def test_clearing_the_metadata_cache_uses_the_configured_game_path(self) -> None:
+        with TemporaryDirectory() as directory:
+            game = Path(directory) / "Sprocket"
+            cached = game / "SprocketModManager" / "file-metadata.json"
+            cached.parent.mkdir(parents=True)
+            cached.write_text("{}", encoding="utf-8")
+            api = self._api(Path(directory) / "app", game)
+            try:
+                result = api.clear_metadata_cache()
+                cached_gone = not cached.exists()
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["files"], 1)
+        self.assertTrue(cached_gone)
+
+    def test_the_about_page_wires_the_directory_and_cache_actions(self) -> None:
+        root = Path(__file__).parents[1] / "sprocket_mod_manager" / "presentation" / "client_ui"
+        html = (root / "index.html").read_text(encoding="utf-8")
+        javascript = client_javascript(root)
+
+        for identifier in (
+            "open-game-directory",
+            "clear-http-cache",
+            "clear-all-cache",
+            "clear-metadata-cache",
+        ):
+            self.assertIn(f'id="{identifier}"', html)
+            self.assertIn(f'$("#{identifier}").addEventListener("click"', javascript)
+        for handler in (
+            "openGameDirectory",
+            "clearHttpCache",
+            "clearAllCache",
+            "clearMetadataCache",
+        ):
+            self.assertIn(f"function {handler}", javascript)
+        for api_name in (
+            "open_game_directory",
+            "clear_http_cache",
+            "clear_all_cache",
+            "clear_metadata_cache",
+        ):
+            self.assertIn(f'callApi("{api_name}")', javascript)
 
 
 if __name__ == "__main__":
