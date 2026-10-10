@@ -42,6 +42,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/dependency" }
     },
+    "companions": {
+      "description": "Packages this one is installed and uninstalled with. One side naming the other is enough: the client closes the pair both ways.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/companion" }
+    },
     "recommendations": {
       "type": "array",
       "uniqueItems": true,
@@ -231,6 +236,18 @@
         },
         "version": { "type": "string", "minLength": 1 },
         "when": { "type": "string", "minLength": 1 }
+      }
+    },
+    "companion": {
+      "description": "One side of a pair, with the version range this package needs its companion to be. A pair installs and uninstalls as one unit, and this edge is what a dependency cycle is allowed to run through.",
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
+        },
+        "version": { "type": "string", "minLength": 1 }
       }
     },
     "provides": {

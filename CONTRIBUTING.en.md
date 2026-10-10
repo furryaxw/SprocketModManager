@@ -45,6 +45,7 @@ A minimal entry you can use as it stands (with `kind` absent, meaning the defaul
     }
   },
   "dependencies": [],
+  "companions": [],
   "recommendations": [],
   "install": {
     "files": [
@@ -122,6 +123,10 @@ into the index unchanged.
   the range the dependency must satisfy, `when` is the range of this package's own
   version, and `*` means "any". Exact versions, comparison operators, `^`, and `~` are
   supported.
+- `companions`: an array whose items are `{id, version}`, naming the packages this one is
+  tied to. One side naming the other is enough. A pair installs and uninstalls as one unit
+  and installing it satisfies both packages' dependencies. The edge decides no install
+  order, and it is the one edge a cycle may run through.
 - `recommendations`: a duplicate-free list of registered package ids that cannot name
   the current package; they take no part in dependency resolution and are never installed
   automatically — the client lists them unchecked in the install confirmation.
@@ -266,6 +271,7 @@ CI verifies that:
 - every dependency id is a registered package or a capability, and real packages contain
   no dependency cycles;
 - every recommendation is registered;
+- every companion id is a registered package;
 - every concrete install type named by a rule has at least one supplying loader (a
   wildcard only needs a supplier somewhere in its namespace), and the `supply` of the
   loader actually installed decides where the file goes;

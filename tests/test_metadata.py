@@ -743,6 +743,102 @@ class SchemaThreeTests(unittest.TestCase):
             INDEX.validate_meta(broken, "example.mod")
 
 
+class CompanionTests(unittest.TestCase):
+    """伴随对：一起装一起卸；`dependencies` 的环仍然不允许，环只允许经过伴随边。"""
+
+    @staticmethod
+    def entry(package_id: str, *, companions=(), dependencies=()) -> dict:
+        return {
+            "schema_version": 3,
+            "id": package_id,
+            "name": package_id.split(".", 1)[1].title(),
+            "dependencies": list(dependencies),
+            "companions": list(companions),
+            "install": {},
+        }
+
+    @staticmethod
+    def companion(package_id: str, version: str = "*") -> dict:
+        return {"id": package_id, "version": version}
+
+    def scan(self, entries: dict[str, dict]) -> list[dict]:
+        """把条目按 `mods/<作者>/<modid>.json` 落盘后走一遍 `scan_mods`。"""
+        with tempfile.TemporaryDirectory() as directory:
+            mods_dir = Path(directory) / "mods"
+            for package_id, meta in entries.items():
+                author, modid = package_id.split(".", 1)
+                author_dir = mods_dir / author
+                author_dir.mkdir(parents=True, exist_ok=True)
+                (author_dir / f"{modid}.json").write_text(json.dumps(meta), encoding="utf-8")
+            return INDEX.scan_mods(mods_dir)
+
+    def test_a_pair_is_accepted_and_reaches_the_index(self):
+        packages = self.scan(
+            {
+                "example.loader": self.entry(
+                    "example.loader", companions=[self.companion("example.patch", ">=1.0.0")]
+                ),
+                "example.patch": self.entry(
+                    "example.patch",
+                    dependencies=[{"id": "example.loader", "version": "*", "when": "*"}],
+                ),
+            }
+        )
+        by_id = {package["id"]: package for package in packages}
+        self.assertEqual(
+            by_id["example.loader"]["companions"],
+            [{"id": "example.patch", "version": ">=1.0.0"}],
+        )
+        self.assertEqual(by_id["example.patch"]["companions"], [])
+
+    def test_a_companion_must_be_registered(self):
+        with self.assertRaisesRegex(INDEX.RegistryError, "companion is not registered"):
+            self.scan(
+                {"example.loader": self.entry("example.loader", companions=[self.companion("example.patch")])}
+            )
+
+    def test_a_dependency_cycle_is_still_rejected(self):
+        with self.assertRaisesRegex(INDEX.RegistryError, "dependency cycle"):
+            self.scan(
+                {
+                    "example.loader": self.entry(
+                        "example.loader",
+                        dependencies=[{"id": "example.patch", "version": "*", "when": "*"}],
+                    ),
+                    "example.patch": self.entry(
+                        "example.patch",
+                        dependencies=[{"id": "example.loader", "version": "*", "when": "*"}],
+                    ),
+                }
+            )
+
+    def test_companions_are_optional_and_validated_when_present(self):
+        INDEX.validate_meta({**metadata(), "companions": []}, "example.mod")
+        INDEX.validate_meta(
+            {**metadata(), "companions": [self.companion("example.patch", ">=1.0.0 <2.0.0")]},
+            "example.mod",
+        )
+
+        for companions, message in (
+            ("example.patch", "companions must be a list"),
+            (["example.patch"], "companion entries must be objects"),
+            ([{"version": "*"}], "companion is missing id"),
+            ([{"id": "example.patch"}], "companion is missing version"),
+            ([{"id": "Invalid", "version": "*"}], "invalid companion id"),
+            ([{"id": "example.patch", "version": 1}], "companion version must be a string"),
+            ([{"id": "example.patch", "version": "not-a-range"}], "invalid companion version"),
+            ([{"id": "example.mod", "version": "*"}], "cannot be its own companion"),
+            (
+                [self.companion("example.patch"), self.companion("example.patch", ">=1.0.0")],
+                "duplicate companion",
+            ),
+        ):
+            with self.subTest(companions=companions):
+                meta = {**metadata(), "companions": companions}
+                with self.assertRaisesRegex(INDEX.RegistryError, message):
+                    INDEX.validate_meta(meta, "example.mod")
+
+
 class RegistryIsolationTests(unittest.TestCase):
     """一条坏数据只让它自己标成不可用；别的包、供给表与目录读数都不受牵连。"""
 

@@ -77,6 +77,13 @@ class SiteUiTests(unittest.TestCase):
         self.assertIn('id="detail-recommendations"', html)
         self.assertIn("pkg.recommendations || []", script)
 
+    def test_details_show_companions(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        script = site_javascript()
+
+        self.assertIn('id="detail-companions"', html)
+        self.assertIn("pkg.companions || []", script)
+
     def test_featured_packages_are_pinned_and_labeled(self):
         html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
         script = site_javascript()

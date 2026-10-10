@@ -164,6 +164,10 @@ function renderDetails(packageId) {
     document.querySelector("#detail-dependencies").innerHTML = pkg.dependencies.length
         ? pkg.dependencies.map((item) => `<span class="dependency-pill">${escapeHtml(item.id)} ${escapeHtml(item.version)}</span>`).join("")
         : `<span class="dependency-pill">${escapeHtml(tr("none"))}</span>`;
+    const companions = pkg.companions || [];
+    document.querySelector("#detail-companions").innerHTML = companions.length
+        ? companions.map((item) => `<span class="dependency-pill">${escapeHtml(item.id)} ${escapeHtml(item.version)}</span>`).join("")
+        : `<span class="dependency-pill">${escapeHtml(tr("none"))}</span>`;
     const recommendations = pkg.recommendations || [];
     document.querySelector("#detail-recommendations").innerHTML = recommendations.length
         ? recommendations.map((item) => `<span class="dependency-pill">${escapeHtml(item)}</span>`).join("")

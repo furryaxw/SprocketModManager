@@ -1146,6 +1146,31 @@ def validate_meta(meta: dict, expected_id: str) -> None:
             except ValueError as exc:
                 raise RegistryError(f"invalid dependency {field}: {dependency[field]!r}") from exc
 
+    companions = meta.get("companions", [])
+    if not isinstance(companions, list):
+        raise RegistryError("companions must be a list")
+    seen_companions: set[str] = set()
+    for companion in companions:
+        if not isinstance(companion, dict):
+            raise RegistryError("companion entries must be objects")
+        missing_companion = sorted({"id", "version"} - set(companion))
+        if missing_companion:
+            raise RegistryError(f"companion is missing {', '.join(missing_companion)}")
+        companion_id = companion["id"]
+        if not isinstance(companion_id, str) or not ID_RE.fullmatch(companion_id):
+            raise RegistryError(f"invalid companion id: {companion_id!r}")
+        if companion_id in seen_companions:
+            raise RegistryError(f"duplicate companion: {companion_id}")
+        seen_companions.add(companion_id)
+        if companion_id == package_id:
+            raise RegistryError("package cannot be its own companion")
+        if not isinstance(companion["version"], str):
+            raise RegistryError(f"companion version must be a string: {companion['version']!r}")
+        try:
+            validate_range(companion["version"])
+        except ValueError as exc:
+            raise RegistryError(f"invalid companion version: {companion['version']!r}") from exc
+
     recommendations = meta.get("recommendations", [])
     if not isinstance(recommendations, list):
         raise RegistryError("recommendations must be a list")
@@ -1222,6 +1247,11 @@ def validate_meta(meta: dict, expected_id: str) -> None:
 
 
 def find_dependency_cycle(packages: dict[str, dict]) -> list[str] | None:
+    """`dependencies` 之间的环。
+
+    伴随关系（`companions`）不是这里的边：一对互相需要的包本来就是一个环，只有单向的
+    `dependencies` 环才是写错了。因此这里只看 `dependencies`。
+    """
     visiting: list[str] = []
     visited: set[str] = set()
 
@@ -1313,6 +1343,11 @@ def scan_mods(mods_dir: Path) -> list[dict]:
             if recommendation not in packages:
                 raise RegistryError(
                     f"{package['id']}: recommendation is not registered: {recommendation}"
+                )
+        for companion in package.get("companions", []):
+            if companion["id"] not in packages:
+                raise RegistryError(
+                    f"{package['id']}: companion is not registered: {companion['id']}"
                 )
 
     validate_install_types(packages)

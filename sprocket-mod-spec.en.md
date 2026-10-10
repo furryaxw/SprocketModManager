@@ -70,6 +70,12 @@ instead; see "External Download Sources".
     }
   ],
   "recommendations": ["furryaxw.sprocket-jitter-fix"],
+  "companions": [
+    {
+      "id": "example.companion-patch",
+      "version": "*"
+    }
+  ],
   "featured": true,
 
   "install": {
@@ -151,6 +157,42 @@ implicit dependency. A mod declaring `melonloader:mod` needs a package supplying
 type, so resolution puts it into the same install plan, and removal consults the same
 dependency graph. A wildcard type resolves through the suppliers in its namespace. A
 type a package supplies itself is not one of its dependencies.
+
+## Companions
+
+`companions` is an optional list of `{ "id": ..., "version": ... }` objects naming the
+packages this one is tied to. A pair installs and uninstalls as one unit, and installing
+it satisfies both packages' dependencies at once. `version` constrains the companion's
+version and is written like a dependency range.
+
+One side naming the other is enough, and the side that names it is normally the one whose need
+cannot be written as a dependency: a loader that needs a patch to run on this game build writes
+`companions`; a patch that lands files inside the loader's directory writes a plain
+`dependencies` entry, or lets the install type imply it. Registry CI requires a companion id to
+be a registered package. Cycles among `dependencies` are not allowed, and the companion edge is
+exactly where a cycle may run - writing both sides is allowed too, just written twice.
+
+```json
+{
+  "companions": [
+    {
+      "id": "hans21223.sprocket-mod-loader",
+      "version": "*"
+    }
+  ]
+}
+```
+
+Resolution pulls a companion into the install plan like a dependency, and its version
+constraint applies; it does not decide install order and does not block removal - install
+order and cycle detection read `dependencies` (including the implicit dependencies that
+install types produce). The client closes a pair both ways, so removing either side removes
+the other. The one
+exception is a base runtime: removing a loader handles its companions separately - the
+loader's supply directories move into the backup area whole and take whatever sits in
+them along, and a companion does not count as a dependent that blocks that removal.
+Reinstalling a package likewise never uninstalls its companions: it is an overwrite
+install, and files another package owns are not silently displaced.
 
 ## Compatibility
 
@@ -550,7 +592,7 @@ least that:
   the entry declares;
 - the repository contains source or project files rather than DLLs only;
 - a Release tag is parseable and at least one scannable asset exists;
-- every dependency id is a registered package or a capability, and real packages contain no cycles;
+- every dependency id is a registered package or a capability, and real packages contain no cycles; every companion id is a registered package;
 - every statically declared install type has a supplier, and supplied directories and
   `subpath` values stay inside the game directory.
 

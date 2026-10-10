@@ -52,9 +52,13 @@
         }
     ],
     "dependencies": [],
-    "recommendations": [
-        "hans21223.sprocket-mod-loader"
+    "companions": [
+        {
+            "id": "hans21223.sprocket-mod-loader",
+            "version": "*"
+        }
     ],
+    "recommendations": [],
     "featured": false,
     "kind": "modloader",
     "provides": {
