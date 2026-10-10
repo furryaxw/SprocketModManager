@@ -30,11 +30,6 @@
     },
     "dependencies": [
         {
-            "id": "hans21223.sprocket-mod-loader",
-            "version": "*",
-            "when": "*"
-        },
-        {
             "id": "roanwassink.sprocket-keybinds",
             "version": "*",
             "when": "*"

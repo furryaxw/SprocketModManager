@@ -26,13 +26,7 @@
             "exclude": []
         }
     },
-    "dependencies": [
-        {
-            "id": "hans21223.sprocket-mod-loader",
-            "version": "*",
-            "when": "*"
-        }
-    ],
+    "dependencies": [],
     "recommendations": [],
     "featured": false,
     "supply": {
