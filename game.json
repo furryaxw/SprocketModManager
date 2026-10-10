@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "game": {
+    "id": "hamish.sprocket",
+    "name": "Sprocket",
+    "supply": {
+      "sprocket:root": "{Sprocket}",
+      "sprocket:userdata": "{Documents}/My Games/Sprocket",
+      "sprocket:blueprints": "{Documents}/My Games/Sprocket/Factions/Default/Blueprints",
+      "sprocket:streamingassets": "{Sprocket}/Sprocket_Data/StreamingAssets"
+    }
+  }
+}

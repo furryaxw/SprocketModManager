@@ -49,6 +49,42 @@ def override_module(path: Path):
     return Module
 
 
+def game_module(path: Path):
+    """Stand-in for gen-index.py with GAME_FILE pointed at `path`."""
+
+    class Module:
+        GAME_FILE = path
+        load_game_file = staticmethod(GEN_INDEX.load_game_file)
+
+    return Module
+
+
+class GameFileGateTests(unittest.TestCase):
+    def write(self, directory: str, payload) -> Path:
+        path = Path(directory) / GEN_INDEX.GAME_FILE_NAME
+        path.write_text(
+            payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_the_shipped_file_passes(self) -> None:
+        self.assertEqual(VALIDATE.validate_game(GEN_INDEX), [])
+
+    def test_a_missing_file_is_a_failure(self) -> None:
+        errors = VALIDATE.validate_game(game_module(Path("nowhere") / GEN_INDEX.GAME_FILE_NAME))
+
+        self.assertEqual(errors, [f"{GEN_INDEX.GAME_FILE_NAME} is missing"])
+
+    def test_a_file_without_a_usable_supply_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, {"schema_version": 1, "game": {"id": GEN_INDEX.GAME_CAPABILITY_ID}})
+
+            errors = VALIDATE.validate_game(game_module(path))
+
+        self.assertIn(f"{GEN_INDEX.GAME_FILE_NAME} has no usable supply entry", errors)
+
+
 class ProvidersTableGateTests(unittest.TestCase):
     def write(self, directory: str, payload) -> Path:
         path = Path(directory) / GEN_INDEX.PROVIDERS_FILE_NAME
@@ -98,7 +134,8 @@ class CompatOverrideGateTests(unittest.TestCase):
         return path
 
     def test_the_shipped_table_passes(self) -> None:
-        packages = GEN_INDEX.scan_mods(ROOT / "mods")
+        game, _warnings = GEN_INDEX.load_game_file(GEN_INDEX.GAME_FILE)
+        packages = GEN_INDEX.scan_mods(ROOT / "mods", game=game)
 
         self.assertEqual(VALIDATE.validate_overrides(GEN_INDEX, packages), [])
 

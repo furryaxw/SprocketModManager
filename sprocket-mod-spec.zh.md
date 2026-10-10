@@ -200,13 +200,27 @@ Release 在正文里用注释块声明它落在哪些区间：
 （`<0.2.54`）。发布说明里没有可用声明的 release 沿用比它旧、最近一个有可用声明的区间；
 声明写坏时该 release 记作未声明。
 
-`data/environment.json` 用 `game` 写出游戏能力：
+`data/environment.json` 用 `game` 写出游戏能力，以及游戏自己供给的位置：
 
 ```json
 {
-  "game": { "id": "hamish.sprocket", "name": "Sprocket" }
+  "game": {
+    "id": "hamish.sprocket",
+    "name": "Sprocket",
+    "supply": {
+      "sprocket:root": "{Sprocket}",
+      "sprocket:userdata": "{Documents}/My Games/Sprocket",
+      "sprocket:blueprints": "{Documents}/My Games/Sprocket/Factions/Default/Blueprints",
+      "sprocket:streamingassets": "{Sprocket}/Sprocket_Data/StreamingAssets"
+    }
+  }
 }
 ```
+
+游戏不是可安装的包，没人能替它装，所以它的身份与供给来自注册表根目录的 `game.json`，
+构建时原样写进 `data/environment.json`；`game.json` 缺失或写坏时退回内置身份、供给留空并给出告警。
+用到 `sprocket:*` 的安装规则因此要求这份文件在场（客户端把它当作一个始终在场的供给者，
+它不是包、不产生依赖边、不参与卸载）。
 
 注册表根目录的 `providers.json` 记「某个加载器类包的某段版本能跑哪段游戏版本」，行写成
 `loader`、`version`、`sprocket` 三个区间，`loader` 是注册表里某个加载器类包的 id；`data/environment.json`
@@ -287,20 +301,24 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 ## 文件类型与供给
 
 文件类型写成 `<加载器>:<类别>`，例如 `melonloader:core`、`melonloader:mod`、
-`melonloader:plugin`、`melonloader:userlib`、`bepinex:core`、`bepinex:plugin`、
-`bepinex:patchers`、`xunity:translation`。
+`melonloader:plugin`、`melonloader:userlib`、`melonloader:userdata`、`bepinex:core`、
+`bepinex:plugin`、`bepinex:patchers`、`bepinex:config`、`sprocket:root`、`sprocket:userdata`、
+`sprocket:blueprints`、`sprocket:streamingassets`、`xunity:translation`。
 类型也可以写成 `<加载器>:*`（例如 `melonloader:*`）：具体类型等包下载后由 DLL 的 PE 元数据
 决定。注册表构建时校验规则里的类型有人供给：具体类型要求至少一个供给者，通配类型只要求该
 名字空间下有供给者；没有规则命中的 DLL 在 `scan_dlls` 打开时按 PE 元数据归类。
 
-加载器用顶层 `supply` 声明它供给别的包哪些类型、各自装在游戏根目录（`{Sprocket}`）下的哪个目录：
+加载器用顶层 `supply` 声明它供给别的包哪些类型、各自装在哪个目录。位置写成根占位符加相对路径：
+`{Sprocket}` 是游戏目录，`{Documents}` 是用户的 Documents 目录（`My Games/Sprocket` 这类存档位置
+不在游戏目录里）：
 
 ```json
 "supply": {
   "melonloader:core": "{Sprocket}/MelonLoader",
   "melonloader:mod": "{Sprocket}/Mods",
   "melonloader:plugin": "{Sprocket}/Plugins",
-  "melonloader:userlib": "{Sprocket}/UserLibs"
+  "melonloader:userlib": "{Sprocket}/UserLibs",
+  "melonloader:userdata": "{Sprocket}/UserData"
 }
 ```
 
@@ -379,8 +397,8 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 }
 ```
 
-`payload[].target` 是游戏目录里的一处位置，写法与 `supply` 的值相同（`{Sprocket}`、
-`{Sprocket}/BepInEx/core`）。目标路径 = `target` 目录 + 可选的 `subpath` + （`layout` 为
+`payload[].target` 是一处位置，写法与 `supply` 的值相同（`{Sprocket}`、
+`{Sprocket}/BepInEx/core`、`{Documents}/My Games/Sprocket`）。目标路径 = `target` 目录 + 可选的 `subpath` + （`layout` 为
 `file` 或省略时取文件名，为 `tree` 时取压缩包内相对路径）。用 `install.files` 时按类型安装，
 目标目录由该类型的供给者决定。
 
@@ -395,7 +413,8 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
     "melonloader:core": "{Sprocket}/MelonLoader",
     "melonloader:mod": "{Sprocket}/Mods",
     "melonloader:plugin": "{Sprocket}/Plugins",
-    "melonloader:userlib": "{Sprocket}/UserLibs"
+    "melonloader:userlib": "{Sprocket}/UserLibs",
+    "melonloader:userdata": "{Sprocket}/UserData"
   },
   "install": {
     "payload": [
@@ -510,6 +529,7 @@ Releases。外部来源没有可以查询的 API，因此这样的条目必须�
 - 仓库中存在源码/工程文件，而不是仅保存 DLL；
 - Release tag 可解析并至少包含一个可扫描资产；
 - 每个依赖 id 都是已注册的包或一个能力，真实包之间无环；每个伴随 id 都是已注册的包；
+- `game.json` 存在、带可用的供给表，且每个安装类型都有供给者（`sprocket:*` 由游戏自己供给）；
 - 每个静态声明的安装类型都有供给者，供给目录与 `subpath` 不越出游戏目录。
 
 验证过程不能构建或执行第三方代码。公开源码不能证明 Release 二进制一定来自该

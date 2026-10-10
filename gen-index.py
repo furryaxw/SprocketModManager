@@ -12,7 +12,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -75,7 +75,9 @@ FILE_TYPE_RE = re.compile(
     r"^[a-z0-9]+(?:[.-][a-z0-9]+)*:[a-z0-9]+(?:[.-][a-z0-9]+)*$"
 )
 FILE_TYPE_WILDCARD_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*:\*$")
-SUPPLY_TARGET_RE = re.compile(r"^\{Sprocket\}(?:/[A-Za-z0-9._-]+)*$")
+SUPPLY_TARGET_RE = re.compile(
+    r"^(?:\{Sprocket\}|\{Documents\})(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._ -]+)*$"
+)
 SUBPATH_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 # 带预发布段的三段版本（`6.0.0-be.785`）：供给表里允许，数值区间写法放不下。
 PRERELEASE_VERSION_RE = re.compile(r"\d+\.\d+\.\d+-[0-9A-Za-z]")
@@ -89,6 +91,10 @@ DIAGNOSIS_FILE = Path(__file__).resolve().parent / DIAGNOSIS_FILE_NAME
 # 兼容声明覆盖表：上游模组的 release 正文里没有 `sp-compat` 块时，用它补上区间。
 OVERRIDE_FILE_NAME = "override.json"
 OVERRIDE_FILE = Path(__file__).resolve().parent / OVERRIDE_FILE_NAME
+# 游戏自身的身份与供给表：游戏不是可安装的包，它供给的位置（游戏根、Documents 下的存档目录、
+# 蓝图与 StreamingAssets）是平台事实，与 `providers.json` 同类，构建时写进索引供双方读取。
+GAME_FILE_NAME = "game.json"
+GAME_FILE = Path(__file__).resolve().parent / GAME_FILE_NAME
 # 索引目录里的三份文件：包列表、游戏与加载器环境、诊断规则包。
 # 诊断那份与规则源文件同名，但落在输出目录里。
 PACKAGES_FILE_NAME = "packages.json"
@@ -137,12 +143,15 @@ def migrate_release_dependencies(releases: list[dict[str, Any]]) -> list[dict[st
     return releases
 
 
-def compat_capabilities(packages: dict[str, dict]) -> dict[str, int]:
+def compat_capabilities(
+    packages: dict[str, dict],
+    game_id: str = GAME_CAPABILITY_ID,
+) -> dict[str, int]:
     """能力 id -> 版本段数：`sp-compat` 块按它判断通配与精确写法够不够段数。
 
     游戏能力是 4 段；加载器提供的能力按 3 段。
     """
-    parts: dict[str, int] = {GAME_CAPABILITY_ID: GAME_VERSION_SEGMENTS}
+    parts: dict[str, int] = {game_id: GAME_VERSION_SEGMENTS}
     for package in packages.values():
         for capability_id in declared_capabilities(package):
             parts.setdefault(capability_id, LOADER_VERSION_SEGMENTS)
@@ -1278,19 +1287,23 @@ def find_dependency_cycle(packages: dict[str, dict]) -> list[str] | None:
     return None
 
 
-def validate_install_types(packages: dict[str, dict]) -> None:
+def validate_install_types(
+    packages: dict[str, dict],
+    game_supply: Iterable[str] = (),
+) -> None:
     """模组静态声明的安装类型必须有人供给。
 
     一个类型可以由多个加载器供给（例如原生加载器和把目录重新安家的桥接加载器），所以这里
     只要求「至少有一个供给者」；具体用哪一个由客户端按目标目录里已安装的加载器决定。
     通配类型 `<ns>:*` 只要有该名字空间下的供给者就算有着落 —— 具体类别由 DLL 的 PE 元数据定。
+    游戏自己供给的位置（`game.json` 的 `supply`）同样算供给者：它始终在场。
     类型写法与供给位置由 `validate_meta` 校验。
     """
     suppliers: set[str] = {
         file_type
         for package in packages.values()
         for file_type in (package.get("supply") or {})
-    }
+    } | {str(file_type) for file_type in game_supply}
     namespaces = {file_type.split(":", 1)[0] for file_type in suppliers}
     for package_id, package in packages.items():
         install = package.get("install")
@@ -1309,9 +1322,18 @@ def validate_install_types(packages: dict[str, dict]) -> None:
                 )
 
 
-def scan_mods(mods_dir: Path) -> list[dict]:
+def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dict]:
+    """读 `mods/` 下的全部条目并校验它们之间的关系。
+
+    `game` 给出游戏自身的身份与供给（`game.json`）；不给时用内在身份、供给为空。
+    """
     if not mods_dir.is_dir():
         raise RegistryError(f"mods directory does not exist: {mods_dir}")
+    game = game if game is not None else {
+        "id": GAME_CAPABILITY_ID,
+        "name": GAME_NAME,
+        "supply": {},
+    }
 
     packages: dict[str, dict] = {}
     for author_dir in sorted(path for path in mods_dir.iterdir() if path.is_dir()):
@@ -1328,7 +1350,7 @@ def scan_mods(mods_dir: Path) -> list[dict]:
             package["meta_url"] = f"mods/{author_dir.name}/{meta_path.name}"
             packages[package["id"]] = package
 
-    capabilities = set(compat_capabilities(packages))
+    capabilities = set(compat_capabilities(packages, str(game["id"])))
     for package in packages.values():
         for dependency in package.get("dependencies", []):
             dependency_id = dependency["id"]
@@ -1347,7 +1369,7 @@ def scan_mods(mods_dir: Path) -> list[dict]:
                     f"{package['id']}: companion is not registered: {companion['id']}"
                 )
 
-    validate_install_types(packages)
+    validate_install_types(packages, game.get("supply") or {})
 
     cycle = find_dependency_cycle(packages)
     if cycle:
@@ -1418,6 +1440,56 @@ def _normalized_provider_version(text: str) -> str | None:
         except ValueError:
             return None
         return value
+
+
+def load_game_file(path: Path) -> tuple[dict[str, Any], list[str]]:
+    """读游戏自身的身份与供给表（`game.json`）。
+
+    游戏不是可安装的包，没人能替它装，所以它的供给不写在条目里：这份文件是它唯一的来源，
+    构建时随索引下发。文件缺失或游戏那一段写坏时退回内在身份、供给留空，并留下告警 ——
+    供给空着时用到 `sprocket:*` 的安装规则会在 `validate_install_types` 那里被拒。
+    """
+    default: dict[str, Any] = {"id": GAME_CAPABILITY_ID, "name": GAME_NAME, "supply": {}}
+    warnings: list[str] = []
+    if not path.is_file():
+        warnings.append(f"{path.name}: 文件不存在")
+        return default, warnings
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        warnings.append(f"{path.name}: 无法读取（{exc}）")
+        return default, warnings
+    if not isinstance(raw, dict):
+        warnings.append(f"{path.name}: 顶层必须是对象")
+        return default, warnings
+    unknown = sorted(set(raw) - {"schema_version", "game"})
+    if unknown:
+        warnings.append(f"{path.name}: 忽略了未知键 {', '.join(unknown)}")
+    game = raw.get("game")
+    if not isinstance(game, dict):
+        warnings.append(f"{path.name}: game 必须是对象")
+        return default, warnings
+
+    game_id = str(game.get("id") or "")
+    if not ID_RE.fullmatch(game_id):
+        warnings.append(f"{path.name}: 无法使用的游戏 id {game.get('id')!r}")
+        game_id = GAME_CAPABILITY_ID
+    name = str(game.get("name") or "").strip() or GAME_NAME
+
+    raw_supply = game.get("supply")
+    supply: dict[str, str] = {}
+    if not isinstance(raw_supply, dict) or not raw_supply:
+        warnings.append(f"{path.name}: supply 必须是非空对象")
+    else:
+        for file_type, target in raw_supply.items():
+            if not isinstance(file_type, str) or not FILE_TYPE_RE.fullmatch(file_type):
+                warnings.append(f"{path.name}: 忽略了非法的供给类型 {file_type!r}")
+                continue
+            if not isinstance(target, str) or not SUPPLY_TARGET_RE.fullmatch(target):
+                warnings.append(f"{path.name}: {file_type} 的供给位置无法使用：{target!r}")
+                continue
+            supply[file_type] = target
+    return {"id": game_id, "name": name, "supply": supply}, warnings
 
 
 def load_providers_table(
@@ -1683,11 +1755,15 @@ def generate_index(
     providers_file: Path | None = None,
     diagnosis_file: Path | None = None,
     override_file: Path | None = None,
+    game_file: Path | None = None,
     refresh: bool = False,
 ) -> dict:
-    packages = scan_mods(mods_dir)
+    game, game_warnings = load_game_file(game_file if game_file is not None else GAME_FILE)
+    for warning in game_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    packages = scan_mods(mods_dir, game=game)
     by_id = {package["id"]: package for package in packages}
-    capabilities = compat_capabilities(by_id)
+    capabilities = compat_capabilities(by_id, str(game["id"]))
     overrides, override_warnings = load_compat_overrides(
         override_file if override_file is not None else OVERRIDE_FILE,
         set(by_id),
@@ -1786,7 +1862,7 @@ def generate_index(
 
     index = {
         "schema_version": 1,
-        "game": {"id": GAME_CAPABILITY_ID, "name": GAME_NAME},
+        "game": dict(game),
         "providers": providers,
         "providers_warnings": providers_warnings,
         "diagnosis": diagnosis,
@@ -1845,6 +1921,11 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--game",
+        default="",
+        help=f"the game's identity and supply table (default: {GAME_FILE_NAME} in the repository root)",
+    )
+    parser.add_argument(
         "--fallback-index-url",
         default=FALLBACK_INDEX_URL,
         help="packages URL used when no previous packages file is available",
@@ -1873,6 +1954,7 @@ def main() -> int:
             providers_file=Path(args.providers) if args.providers else None,
             diagnosis_file=Path(args.diagnosis) if args.diagnosis else None,
             override_file=Path(args.override) if args.override else None,
+            game_file=Path(args.game) if args.game else None,
             refresh=args.refresh,
         )
     except RegistryError as exc:

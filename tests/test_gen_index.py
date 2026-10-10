@@ -866,6 +866,18 @@ class CompatibleIndexTests(unittest.TestCase):
                 "bepinex.bepinex-be",
                 "hans21223.sprocket-mod-loader",
             )
+            game_file = Path(directory) / "game.json"
+            game_file.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "game": {
+                        "id": "hamish.sprocket",
+                        "name": "Sprocket",
+                        "supply": {"sprocket:root": "{Sprocket}"},
+                    },
+                }),
+                encoding="utf-8",
+            )
             recorded = {
                 "id": 1, "tag": "v0.1.2", "version": "0.1.2", "prerelease": False,
                 "published_at": "", "page_url": "", "assets": [],
@@ -876,11 +888,16 @@ class CompatibleIndexTests(unittest.TestCase):
                 mods_dir,
                 Path(directory) / "registry",
                 release_loader=lambda _package, _known, _capabilities: [dict(recorded)],
+                game_file=game_file,
             )
 
         self.assertEqual(
             index["game"],
-            {"id": GEN_INDEX.GAME_CAPABILITY_ID, "name": GEN_INDEX.GAME_NAME},
+            {
+                "id": GEN_INDEX.GAME_CAPABILITY_ID,
+                "name": GEN_INDEX.GAME_NAME,
+                "supply": {"sprocket:root": "{Sprocket}"},
+            },
         )
         warnings = next(
             package["compatibility_warnings"]
@@ -1042,6 +1059,71 @@ class ProvidersTableTests(unittest.TestCase):
         self.assertGreaterEqual(len(table["entries"]), 1)
         for entry in table["entries"]:
             self.assertEqual(set(entry), {"loader", "version", "sprocket"})
+
+
+class GameFileTests(unittest.TestCase):
+    """`game.json`：游戏不是可安装的包，这份文件是它身份与供给的唯一来源。"""
+
+    def write(self, directory: str, payload) -> Path:
+        path = Path(directory) / GEN_INDEX.GAME_FILE_NAME
+        path.write_text(
+            payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_the_shipped_file_carries_the_identity_and_the_game_folders(self) -> None:
+        game, warnings = GEN_INDEX.load_game_file(GEN_INDEX.GAME_FILE)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(game["id"], GEN_INDEX.GAME_CAPABILITY_ID)
+        self.assertEqual(game["name"], GEN_INDEX.GAME_NAME)
+        self.assertEqual(
+            sorted(game["supply"]),
+            [
+                "sprocket:blueprints",
+                "sprocket:root",
+                "sprocket:streamingassets",
+                "sprocket:userdata",
+            ],
+        )
+        self.assertEqual(game["supply"]["sprocket:userdata"], "{Documents}/My Games/Sprocket")
+
+    def test_a_missing_file_falls_back_to_the_built_in_identity(self) -> None:
+        game, warnings = GEN_INDEX.load_game_file(Path("nowhere") / GEN_INDEX.GAME_FILE_NAME)
+
+        self.assertEqual(
+            game,
+            {
+                "id": GEN_INDEX.GAME_CAPABILITY_ID,
+                "name": GEN_INDEX.GAME_NAME,
+                "supply": {},
+            },
+        )
+        self.assertEqual(len(warnings), 1)
+
+    def test_a_broken_supply_entry_is_reported_and_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(
+                directory,
+                {
+                    "schema_version": 1,
+                    "game": {
+                        "id": GEN_INDEX.GAME_CAPABILITY_ID,
+                        "name": GEN_INDEX.GAME_NAME,
+                        "supply": {
+                            "sprocket:root": "{Sprocket}",
+                            "sprocket:userdata": "{Sprocket}/../escape",
+                            "NotAType": "{Sprocket}/x",
+                        },
+                    },
+                },
+            )
+
+            game, warnings = GEN_INDEX.load_game_file(path)
+
+        self.assertEqual(list(game["supply"]), ["sprocket:root"])
+        self.assertEqual(len(warnings), 2)
 
 
 def rule(**overrides) -> dict:

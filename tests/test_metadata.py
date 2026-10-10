@@ -449,6 +449,31 @@ class InstallTypeValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
             INDEX.validate_install_types(packages)
 
+    def test_the_game_supplies_its_own_folders(self):
+        """游戏不是可安装的包，它供给的位置只从 `game.json` 来。"""
+        packages = {
+            "example.mod": {
+                "install": {"files": [{"match": "**", "type": "sprocket:userdata"}]},
+            }
+        }
+
+        with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
+            INDEX.validate_install_types(packages)
+
+        INDEX.validate_install_types(packages, {"sprocket:userdata": "{Documents}/My Games/Sprocket"})
+        INDEX.validate_install_types(packages, ("sprocket:userdata",))
+
+    def test_a_supply_target_may_point_outside_the_game_directory(self):
+        meta = self.schema_two()
+        meta["kind"] = "modloader"
+        meta["supply"] = {"sprocket:userdata": "{Documents}/My Games/Sprocket"}
+
+        INDEX.validate_meta(meta, "example.mod")
+
+        meta["supply"] = {"sprocket:userdata": "{UserProfile}/Documents/Sprocket"}
+        with self.assertRaisesRegex(INDEX.RegistryError, "invalid supply target"):
+            INDEX.validate_meta(meta, "example.mod")
+
     def test_only_a_modloader_may_declare_an_external_source(self):
         meta = metadata()
         meta["release"]["source"] = {"type": "external", "hosts": ["example.org"]}

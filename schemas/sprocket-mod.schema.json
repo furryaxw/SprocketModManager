@@ -273,8 +273,9 @@
       "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*:[a-z0-9]+(?:[.-][a-z0-9]+)*$"
     },
     "supply_target": {
+      "description": "An install location written as a root token plus a relative path. `{Sprocket}` is the game directory, `{Documents}` the user's Documents folder.",
       "type": "string",
-      "pattern": "^\\{Sprocket\\}(?:/[A-Za-z0-9._-]+)*$"
+      "pattern": "^(?:\\{Sprocket\\}|\\{Documents\\})(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._ -]+)*$"
     },
     "install": {
       "type": "object",

@@ -34,7 +34,8 @@
         "melonloader:core": "{Sprocket}/MelonLoader",
         "melonloader:mod": "{Sprocket}/Mods",
         "melonloader:plugin": "{Sprocket}/Plugins",
-        "melonloader:userlib": "{Sprocket}/UserLibs"
+        "melonloader:userlib": "{Sprocket}/UserLibs",
+        "melonloader:userdata": "{Sprocket}/UserData"
     },
     "install": {
         "payload": [

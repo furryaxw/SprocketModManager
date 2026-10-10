@@ -67,7 +67,8 @@
     "supply": {
         "bepinex:core": "{Sprocket}/BepInEx/core",
         "bepinex:plugin": "{Sprocket}/BepInEx/plugins",
-        "bepinex:patchers": "{Sprocket}/BepInEx/patchers"
+        "bepinex:patchers": "{Sprocket}/BepInEx/patchers",
+        "bepinex:config": "{Sprocket}/BepInEx/config"
     },
     "install": {
         "payload": [

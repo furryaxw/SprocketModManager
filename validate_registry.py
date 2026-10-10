@@ -170,6 +170,19 @@ def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
     return errors
 
 
+def validate_game(index_module) -> list[str]:
+    """The game's own identity and supply table: a mod may install into the game's folders, so a
+    missing or unusable one would leave those install rules without a supplier."""
+    path = index_module.GAME_FILE
+    if not path.is_file():
+        return [f"{path.name} is missing"]
+    game, warnings = index_module.load_game_file(path)
+    errors = list(warnings)
+    if not game.get("supply"):
+        errors.append(f"{path.name} has no usable supply entry")
+    return errors
+
+
 def validate_providers(index_module, loader_ids) -> list[str]:
     """The loader-package/game compatibility table: a platform fact, so a bad entry fails here
     instead of silently narrowing what the client can filter."""
@@ -216,12 +229,16 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true", help="skip public GitHub checks")
     args = parser.parse_args()
     index_module = load_index_module()
+    game, _game_warnings = index_module.load_game_file(index_module.GAME_FILE)
     try:
-        packages = index_module.scan_mods(Path(args.mods_dir))
+        packages = index_module.scan_mods(Path(args.mods_dir), game=game)
     except Exception as exc:
         print(f"registry error: {exc}", file=sys.stderr)
         return 1
     failures: list[str] = [
+        f"game: {error}" for error in validate_game(index_module)
+    ]
+    failures.extend(
         f"providers: {error}"
         for error in validate_providers(
             index_module,
@@ -231,7 +248,7 @@ def main() -> int:
                 if index_module.is_loader_kind(package.get("kind"))
             },
         )
-    ]
+    )
     failures.extend(
         f"diagnosis: {error}"
         for error in validate_diagnosis(index_module, {package["id"] for package in packages})

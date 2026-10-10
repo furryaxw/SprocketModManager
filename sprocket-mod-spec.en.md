@@ -234,13 +234,30 @@ bounds may omit trailing segments (`<0.2.54`). A release without a usable declar
 inherits the range of the nearest older release that has one; a malformed declaration
 leaves that release undeclared.
 
-The index writes the game capability through a top-level `game`:
+The index writes the game capability, and the locations the game itself supplies, through a
+top-level `game`:
 
 ```json
 {
-  "game": { "id": "hamish.sprocket", "name": "Sprocket" }
+  "game": {
+    "id": "hamish.sprocket",
+    "name": "Sprocket",
+    "supply": {
+      "sprocket:root": "{Sprocket}",
+      "sprocket:userdata": "{Documents}/My Games/Sprocket",
+      "sprocket:blueprints": "{Documents}/My Games/Sprocket/Factions/Default/Blueprints",
+      "sprocket:streamingassets": "{Sprocket}/Sprocket_Data/StreamingAssets"
+    }
+  }
 }
 ```
+
+The game is not an installable package and nobody can install it on its behalf, so its
+identity and supply come from `game.json` in the Registry root and are copied into
+`data/environment.json` as they are; a missing or broken `game.json` falls back to the
+built-in identity with an empty supply and a warning. An install rule using `sprocket:*`
+therefore needs that file: the client treats the game as a supplier that is always present,
+and not as a package - it produces no dependency edge and takes no part in removal.
 
 `providers.json` in the Registry root records which game range each version range of a
 loader-kind package supports, with rows written as the `loader`, `version`, and
@@ -332,8 +349,10 @@ prompt, selects, or installs the mod.
 ## File Types and Supply
 
 A file type is written `<loader>:<kind>`, for example `melonloader:core`,
-`melonloader:mod`, `melonloader:plugin`, `melonloader:userlib`, `bepinex:core`,
-`bepinex:plugin`, `bepinex:patchers`, or `xunity:translation`. A type may also be written `<loader>:*` (for example
+`melonloader:mod`, `melonloader:plugin`, `melonloader:userlib`, `melonloader:userdata`,
+`bepinex:core`, `bepinex:plugin`, `bepinex:patchers`, `bepinex:config`, `sprocket:root`,
+`sprocket:userdata`, `sprocket:blueprints`, `sprocket:streamingassets`, or
+`xunity:translation`. A type may also be written `<loader>:*` (for example
 `melonloader:*`): its concrete type comes from the DLL's PE metadata once the package is
 downloaded. The registry build validates that a rule's type has a supplier: a concrete
 type needs at least one supply entry, while a wildcard only needs a supplier somewhere in
@@ -341,14 +360,17 @@ its namespace. A DLL matching no rule is classified from its PE metadata while
 `scan_dlls` is on.
 
 A loader declares through the top-level `supply` which types it provides to other
-packages and where each is installed under the game root (`{Sprocket}`):
+packages and where each one is installed. A location is a root token plus a relative path:
+`{Sprocket}` is the game directory and `{Documents}` the user's Documents folder, where
+locations such as `My Games/Sprocket` live outside the game directory:
 
 ```json
 "supply": {
   "melonloader:core": "{Sprocket}/MelonLoader",
   "melonloader:mod": "{Sprocket}/Mods",
   "melonloader:plugin": "{Sprocket}/Plugins",
-  "melonloader:userlib": "{Sprocket}/UserLibs"
+  "melonloader:userlib": "{Sprocket}/UserLibs",
+  "melonloader:userdata": "{Sprocket}/UserData"
 }
 ```
 
@@ -439,7 +461,7 @@ types; a package uses one line or the other, never both. A `payload` line is wri
 }
 ```
 
-`payload[].target` is a location in the game directory, written like a `supply` value
+`payload[].target` is a location, written like a `supply` value
 (`{Sprocket}`, `{Sprocket}/BepInEx/core`). The target path is the `target` directory
 plus an optional `subpath` plus either the file name (`layout` `file` or absent) or the
 archive-relative path (`tree`). With `install.files` the loader installs by type, and the
@@ -458,7 +480,8 @@ capabilities:
     "melonloader:core": "{Sprocket}/MelonLoader",
     "melonloader:mod": "{Sprocket}/Mods",
     "melonloader:plugin": "{Sprocket}/Plugins",
-    "melonloader:userlib": "{Sprocket}/UserLibs"
+    "melonloader:userlib": "{Sprocket}/UserLibs",
+    "melonloader:userdata": "{Sprocket}/UserData"
   },
   "install": {
     "payload": [
@@ -593,6 +616,7 @@ least that:
 - the repository contains source or project files rather than DLLs only;
 - a Release tag is parseable and at least one scannable asset exists;
 - every dependency id is a registered package or a capability, and real packages contain no cycles; every companion id is a registered package;
+- `game.json` is present with a usable supply table, and every install type has a supplier (`sprocket:*` comes from the game itself);
 - every statically declared install type has a supplier, and supplied directories and
   `subpath` values stay inside the game directory.
 
