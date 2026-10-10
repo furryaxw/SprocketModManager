@@ -95,9 +95,6 @@ PACKAGES_FILE_NAME = "packages.json"
 ENVIRONMENT_FILE_NAME = "environment.json"
 # 站点把这三份放在固定的 `data/` 下：客户端拿站点根（或站点根目录）拼出它们的地址。
 INDEX_DATA_DIR = "data"
-# 兼容层：只读单文件的老客户端按站点根的 `index.json` 取注册表，条目声明 v2。
-LEGACY_INDEX_FILE_NAME = "index.json"
-LEGACY_ENTRY_SCHEMA_VERSION = 2
 DIAGNOSIS_ENTRY_KEYS = frozenset(
     {"id", "bucket", "level", "title", "explain", "evidence", "tutorial", "go_to", "check", "match"}
 )
@@ -1652,29 +1649,8 @@ def load_diagnosis_pack(
     return pack, warnings
 
 
-def legacy_index(index: dict[str, Any]) -> dict[str, Any]:
-    """单文件索引：`data/` 下那三份合并回一份，条目声明 v2。
-
-    只读单文件的老客户端从站点根的 `index.json` 取这份。条目内容与 `data/` 同源，
-    只把 `schema_version` 降到 2 —— 完整写出的条目在 v2 规则下同样合法。
-    """
-    return {
-        "schema_version": index["schema_version"],
-        "generated_at": index.get("generated_at", ""),
-        "game": index.get("game") or {},
-        "providers": index.get("providers") or {},
-        "providers_warnings": index.get("providers_warnings") or [],
-        "diagnosis": index.get("diagnosis") or {},
-        "diagnosis_warnings": index.get("diagnosis_warnings") or [],
-        "packages": [
-            {**package, "schema_version": LEGACY_ENTRY_SCHEMA_VERSION}
-            for package in index.get("packages") or []
-        ],
-    }
-
-
 def write_index_files(index: dict[str, Any], output_dir: Path) -> None:
-    """把索引写进输出目录：`data/` 下三份，站点根下一份兼容用的单文件。"""
+    """把索引写进输出目录的 `data/`：包列表、环境、诊断规则包三份。"""
     directory = output_dir / INDEX_DATA_DIR
     directory.mkdir(parents=True, exist_ok=True)
     files = {
@@ -1695,9 +1671,6 @@ def write_index_files(index: dict[str, Any], output_dir: Path) -> None:
         (directory / name).write_text(
             json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
-    (output_dir / LEGACY_INDEX_FILE_NAME).write_text(
-        json.dumps(legacy_index(index), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
 
 
 def generate_index(
