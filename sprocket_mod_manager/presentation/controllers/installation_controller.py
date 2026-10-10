@@ -181,6 +181,7 @@ class InstallationController(ApiController):
                 for file_type, target in package.supply.items()
             ],
             "dependencies": [dict(item) for item in package.dependencies],
+            "companions": [dict(item) for item in package.companions],
             "recommendations": list(package.recommendations),
             "files": len(files),
         }

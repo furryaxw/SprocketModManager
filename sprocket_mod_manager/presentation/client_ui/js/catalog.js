@@ -447,6 +447,12 @@ function renderDetail() {
         appendFact(block, item.id, item.version);
     }
 
+    appendGroupLabel(block, tr("companions").toUpperCase(), pkg.companions?.length ? "" : tr("none"));
+    for (const item of pkg.companions || []) {
+        const companion = state.packages.find((candidate) => candidate.id === item.id);
+        appendFact(block, companion ? packageLabel(companion) : item.id, item.version);
+    }
+
     appendGroupLabel(block, tr("recommendations").toUpperCase(), pkg.recommendations?.length ? "" : tr("none"));
     for (const packageId of pkg.recommendations || []) {
         const recommended = state.packages.find((candidate) => candidate.id === packageId);

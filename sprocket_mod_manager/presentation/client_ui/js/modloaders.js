@@ -274,6 +274,8 @@ function renderModloaderCard(item) {
                     ? `${dependency.version} · ${dependency.when}`
                     : dependency.version,
             ))),
+        modloaderSection("companions", (item.companions || []).map((companion) =>
+            dependencyLine(packageOrLoaderLabel(companion.id), companion.version))),
         modloaderSection("recommendations", (item.recommendations || []).map((packageId) =>
             dependencyLine(packageOrLoaderLabel(packageId), ""))),
     );

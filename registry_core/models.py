@@ -88,6 +88,9 @@ class RegistryPackage:
     install: dict[str, Any]
     category: str
     tags: tuple[str, ...]
+    # 伴随包：一起装、一起卸的包。条目只要一边点名，客户端按双向闭包算，所以卸载从哪边发起
+    # 都会把一对一起卸掉。
+    companions: tuple[dict[str, str], ...] = ()
     recommendations: tuple[str, ...] = ()
     featured: bool = False
     meta_url: str = ""
@@ -199,6 +202,18 @@ class RegistryPackage:
             raise TypeError("recommendations must contain package ids")
         if len(raw_recommendations) != len(set(raw_recommendations)):
             raise ValueError("recommendations must not contain duplicates")
+        raw_companions = data.get("companions", ())
+        if not isinstance(raw_companions, (list, tuple)):
+            raise TypeError("companions must be a list")
+        for item in raw_companions:
+            if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("id"), str)
+                    or not item["id"]
+                    or not isinstance(item.get("version"), str)
+                    or not item["version"]
+            ):
+                raise TypeError("companions must name a package and a version")
         raw_featured = data.get("featured", False)
         if not isinstance(raw_featured, bool):
             raise TypeError("featured must be a boolean")
@@ -251,6 +266,9 @@ class RegistryPackage:
             description=dict(data.get("description", {})),
             release=release_rules,
             dependencies=tuple(dict(item) for item in data.get("dependencies", ())),
+            companions=tuple(
+                {"id": item["id"], "version": item["version"]} for item in raw_companions
+            ),
             install=install_rules,
             category=data.get("category", "other"),
             tags=tuple(data.get("tags", ())),
@@ -476,6 +494,9 @@ class ResolvedPackage:
     package: RegistryPackage
     release: ReleaseInfo
     dependency_ids: tuple[str, ...]
+    # 伴随包：和这个包一起装、一起卸的那些。与 `dependency_ids` 分开记 —— 伴随边不决定安装顺序，
+    # 也不参与环检测与「谁还要它」的卸载判定。
+    companion_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

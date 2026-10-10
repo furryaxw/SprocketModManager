@@ -338,6 +338,7 @@ def _plan_for(service: ModManagerService, plan: ResolutionPlan) -> dict:
                 "version": str(item.release.version),
                 "tag": item.release.tag,
                 "dependencies": list(item.dependency_ids),
+                "companions": list(item.companion_ids),
                 "assets": [
                     {
                         "id": asset.id,

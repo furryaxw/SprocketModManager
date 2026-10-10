@@ -217,6 +217,19 @@ class DependencySolver:
             f"keep only one of {ids}"
         )
 
+    def _companions_for(self, package: RegistryPackage) -> tuple[dict[str, str], ...]:
+        """声明的伴随包。
+
+        伴随边和依赖一样把对方拉进同一个计划、一样参与版本约束，但不进依赖图：一对互相需要的包
+        本来就是一个环，安装顺序与环检测只看 `dependencies`（见 `resolve` 的排序）。
+        没注册的伴随 id 不跟 —— Registry CI 会拦下它，客户端不该为一条坏数据崩掉整个解析。
+        """
+        return tuple(
+            dict(companion)
+            for companion in package.companions
+            if self.registry.has_package(str(companion.get("id", "")))
+        )
+
     def _dependencies_for(self, package: RegistryPackage, release: ReleaseInfo) -> tuple[dict[str, str], ...]:
         """声明的依赖 + 从静态安装类型推导出的加载器依赖。
 
@@ -342,7 +355,7 @@ class DependencySolver:
                 next_dependencies = dict(current_dependencies)
                 next_dependencies[package_id] = tuple(item["id"] for item in active_dependencies)
                 valid = True
-                for dependency in active_dependencies:
+                for dependency in active_dependencies + self._companions_for(package):
                     dependency_id = dependency["id"]
                     next_constraints.setdefault(dependency_id, []).append(dependency["version"])
                     assigned = next_assignments.get(dependency_id)
@@ -376,13 +389,49 @@ class DependencySolver:
             visiting.remove(package_id)
             ordered_ids.append(package_id)
 
-        visit(root.id)
+        # 只跟 `dependencies`（含安装类型推出的隐含依赖）排序：伴随边不参与，环也只会从它那里过。
+        # 计划里每个成员都要排到 —— 只靠伴随边进来的包从根上走不到，所以遍历计划本身而不是从根
+        # 出发。`assignments` 按发现顺序插入，根在最前，同层之间因此是稳定的。
+        for package_id in assignments:
+            visit(package_id)
+        companion_ids = self._companion_closure(assignments)
         packages = tuple(
             ResolvedPackage(
                 package=self.registry.get(package_id),
                 release=assignments[package_id],
                 dependency_ids=dependencies.get(package_id, ()),
+                companion_ids=companion_ids.get(package_id, ()),
             )
             for package_id in ordered_ids
         )
         return ResolutionPlan(root.id, packages)
+
+    def _companion_closure(
+            self,
+            assignments: dict[str, ReleaseInfo],
+    ) -> dict[str, tuple[str, ...]]:
+        """计划里每个包的伴随包：自己点名的 + 点名了自己的，都限定在计划内。
+
+        条目只要一边点名就够（另一边通常写成普通依赖），双向闭包让「一起卸」不取决于从哪里发起。
+        指向计划外的伴随包不会出现 —— 求解时它们已经被拉进来了。
+        """
+        declared = {
+            package_id: {
+                str(companion.get("id")) for companion in self.registry.get(package_id).companions
+            }
+            for package_id in assignments
+        }
+        members = set(assignments)
+        return {
+            package_id: tuple(
+                sorted(
+                    (declared[package_id] & members)
+                    | {
+                        other
+                        for other, ids in declared.items()
+                        if package_id in ids
+                    }
+                )
+            )
+            for package_id in assignments
+        }

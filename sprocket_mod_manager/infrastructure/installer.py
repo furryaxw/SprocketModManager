@@ -535,6 +535,7 @@ class Installer:
                 "requested": bool(old.get("requested")) or resolved.package.id == root_id,
                 "install_mode": resolved.package.install.get("mode", "standard"),
                 "dependencies": list(resolved.dependency_ids),
+                "companions": list(resolved.companion_ids),
                 "files": sorted({file.target for file in package.files}),
                 "assets": [
                     {
@@ -799,11 +800,32 @@ class Installer:
         modloader_ids = {str(item) for item in modloaders}
         supply = {str(key): tuple(str(item) for item in value) for key, value in (loader_supply or {}).items()}
         reverse = self._reverse_dependencies(state)
-        required_by = sorted(reverse.get(package_id, set()))
-        if required_by:
-            raise InstallError(f"{package_id} is required by: {', '.join(required_by)}")
 
         removing = {package_id}
+        # 伴随包一起卸：一对包卸掉任一个就带走另一个。基础运行时是例外 —— 它的卸载把供给目录整棵
+        # 搬进备份区，落在里面的东西跟着走，不再另行处理伴随包；伴随包因此也不算「还有人要它」，
+        # 否则卸载加载器会被自己的伴随包挡死。
+        is_modloader = _is_modloader_record(state["packages"][package_id]) or package_id in modloader_ids
+        root_companions = (
+            {str(item) for item in state["packages"][package_id].get("companions", ())}
+            if is_modloader
+            else set()
+        )
+        if not is_modloader:
+            changed = True
+            while changed:
+                changed = False
+                for current in list(removing):
+                    for companion in state["packages"][current].get("companions", ()):
+                        if companion in state["packages"] and companion not in removing:
+                            removing.add(companion)
+                            changed = True
+        # 只有计划外还有人要的包才挡住这次卸载：主包自己先报，答案与逐包卸载时一致。
+        for current in [package_id, *sorted(removing - {package_id})]:
+            required_by = sorted(reverse.get(current, set()) - removing - root_companions)
+            if required_by:
+                raise InstallError(f"{current} is required by: {', '.join(required_by)}")
+
         changed = True
         while changed:
             changed = False
@@ -811,7 +833,8 @@ class Installer:
             still_required = {
                 dependency
                 for owner in remaining
-                for dependency in state["packages"][owner].get("dependencies", ())
+                for key in ("dependencies", "companions")
+                for dependency in state["packages"][owner].get(key, ())
             }
             for current in list(removing):
                 for dependency in state["packages"][current].get("dependencies", ()):
@@ -1060,10 +1083,12 @@ class Installer:
         remaining = set(state["packages"])
         orphans: set[str] = set()
         while True:
+            # 伴随对互为「还有人要」：一对里只要有一个是点名装的，另一个就不是孤儿。
             required = {
                 dependency
                 for package_id in remaining
-                for dependency in state["packages"][package_id].get("dependencies", ())
+                for key in ("dependencies", "companions")
+                for dependency in state["packages"][package_id].get(key, ())
                 if dependency in remaining
             }
             found = {

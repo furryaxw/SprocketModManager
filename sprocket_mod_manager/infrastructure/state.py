@@ -131,6 +131,7 @@ def _to_view(raw: dict[str, Any], *, modloaders: Iterable[str] = ()) -> dict[str
             raise InstallError("installed state is malformed")
         normalized_package = {key: value for key, value in package.items() if key != "files"}
         normalized_package["dependencies"] = _string_list(package.get("dependencies", []))
+        normalized_package["companions"] = _string_list(package.get("companions", []))
         if str(package.get("kind") or "") == MODLOADER_KIND or package_id in modloader_ids:
             # 基础运行时只记版本与目录：清单里的路径不归任何包，也不进文件表。
             normalized_package["kind"] = MODLOADER_KIND
@@ -211,6 +212,9 @@ def _to_storage(view: dict[str, Any]) -> dict[str, Any]:
             "requested": bool(package.get("requested")),
             "install_mode": package.get("install_mode", "standard"),
             "dependencies": _string_list(package.get("dependencies", [])),
+            # 伴随包：卸载时一起带走的那些。和 `dependencies` 分开存 —— 卸载判定的「还有谁要它」
+            # 只认 `dependencies`，记录里分开才不会被当成硬依赖。
+            "companions": _string_list(package.get("companions", [])),
             # 包记录的目录：普通包记安装时**新建的目录**（卸载自深到浅删空目录），基础运行时记
             # `install.payload` 落地的目录（卸载整树交还）。白名单式存储必须显式列出，
             # 否则这个字段会在落盘时被静默丢掉。

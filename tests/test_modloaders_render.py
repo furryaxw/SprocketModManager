@@ -47,6 +47,7 @@ def modloader(
             {"type": "melonloader:mod", "directory": "{Sprocket}/Mods"},
         ],
         "dependencies": [{"id": "furryaxw.sprocket-mod-api", "version": ">=0.4.0", "when": "*"}],
+        "companions": [{"id": "hans21223.sprocket-mod-loader", "version": "*"}],
         "recommendations": ["furryaxw.cannon-sound-pool-fix"],
         "files": files,
     }
@@ -164,6 +165,8 @@ class ModloadersRenderHarnessTests(unittest.TestCase):
         self.assertIsNotNone(dependencies)
         self.assertIn("furryaxw.sprocket-mod-api", " ".join(texts(card)))
         self.assertIn(">=0.4.0", " ".join(texts(card)))
+        self.assertIsNotNone(find(card, lambda node: node["text"] == "COMPANIONS"))
+        self.assertIn("hans21223.sprocket-mod-loader", " ".join(texts(card)))
         self.assertIsNotNone(find(card, lambda node: node["text"] == "RECOMMENDED MODS"))
         self.assertIn("furryaxw.cannon-sound-pool-fix", " ".join(texts(card)))
 

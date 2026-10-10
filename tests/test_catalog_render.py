@@ -419,6 +419,7 @@ class CatalogRenderHarnessTests(unittest.TestCase):
     def test_the_detail_block_carries_fact_dependency_and_compatibility_rows(self) -> None:
         source = package("test.source", [("1.0.0", "compatible")], sprocket_range="0.2.53.x")
         source["dependencies"] = [{"id": "test.dep", "version": ">=1.0.0"}]
+        source["companions"] = [{"id": "test.dep", "version": ">=1.0.0"}]
         source["recommendations"] = ["test.dep"]
         result = self._render(
             packages=[source, package("test.dep", [("1.0.0", "compatible")])],
@@ -439,7 +440,11 @@ class CatalogRenderHarnessTests(unittest.TestCase):
             for group in _walk(block)
             if group["className"] == "detail-group"
         ]
-        self.assertEqual(groups, ["DEPENDENCIES", "RECOMMENDED MODS", "COMPATIBILITY"], "三段的标签都在块里")
+        self.assertEqual(
+            groups,
+            ["DEPENDENCIES", "COMPANIONS", "RECOMMENDED MODS", "COMPATIBILITY"],
+            "四段的标签都在块里",
+        )
 
     def test_a_capability_axis_is_named_after_the_package_that_supplies_it(self) -> None:
         """`bepinex.bepinex` 不是包 id，是 `bepinex.bepinex-be` 供给的能力：轴名借供给者的 `name`。"""

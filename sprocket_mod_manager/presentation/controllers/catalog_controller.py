@@ -208,6 +208,7 @@ class CatalogController(ApiController):
             "category": package.category,
             "tags": list(package.tags),
             "dependencies": [dict(item) for item in package.dependencies],
+            "companions": [dict(item) for item in package.companions],
             "recommendations": list(package.recommendations),
             "featured": package.featured,
             # 兼容性那一行的轴名要按供给关系反查：能力 id 常常不是包 id（`bepinex.bepinex`
@@ -236,6 +237,7 @@ class CatalogController(ApiController):
             "category": package.category,
             "tags": list(package.tags),
             "dependencies": [dict(item) for item in package.dependencies],
+            "companions": [],
             "recommendations": [],
             "featured": False,
             "provides": {},
@@ -326,6 +328,7 @@ class CatalogController(ApiController):
             "version": str(info.get("version", "")),
             "requested": bool(info.get("requested")),
             "dependencies": list(info.get("dependencies", ())),
+            "companions": [str(item) for item in (info.get("companions") or ())],
             # `corrupted` 每次刷新现场算出来（磁盘 hash vs 发布版本 hash）；
             # `integrity` 给出更细的状态（release/local/unreadable/...）。
             "corrupted": bool(info.get("corrupted")),

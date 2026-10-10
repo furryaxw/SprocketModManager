@@ -943,10 +943,16 @@ function renderLegacyModRow(item) {
 }
 
 async function confirmRemove(pkg) {
+    const companions = (pkg.companions || []).map(packageOrLoaderLabel);
     const confirmed = await showModal({
         kicker: tr("removePackage"),
         title: tr("confirmRemove"),
-        body: tr("removeMessage", {name: packageLabel(pkg)}),
+        body: companions.length
+            ? tr("removeWithCompanionsMessage", {
+                name: packageLabel(pkg),
+                companions: companions.join(", "),
+            })
+            : tr("removeMessage", {name: packageLabel(pkg)}),
         confirmText: tr("remove"),
         destructive: true,
     });
