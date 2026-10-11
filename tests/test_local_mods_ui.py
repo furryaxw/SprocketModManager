@@ -23,14 +23,33 @@ class LocalModsClientUiTests(unittest.TestCase):
         # 这一份读数由数据层推来、页面只读镜像（不在页面上从接口返回值另存一份）。
         self.assertIn("localMods: () => dataValue(\"installed\")?.local_mods || []", self.data)
         self.assertIn("const scanned = (state.localMods || []).map", self.installs)
+        # 一个包一行：记录各成一行，扫描到的文件按 `installed_package_id` 挂到它名下，没有归属的各自一行。
+        self.assertIn("const byPackage = new Map();", self.installs)
+        self.assertIn("installedPackageRow(record, byPackage.get(String(record.id)) || [])", self.installs)
+        self.assertIn("if (!mod.installed_package_id) rows.push(mod);", self.installs)
+        self.assertIn(
+            "container.append(installedRowRecord(item) ? renderPackageRow(item) : renderScannedModRow(item));",
+            self.installs,
+        )
+        self.assertIn("function renderPackageRow(item)", self.installs)
         self.assertIn("function renderScannedModRow(mod)", self.installs)
-        self.assertIn("function renderLegacyModRow(item)", self.installs)
+        # 名字取扫描结果那份：包行先看它名下第一个文件，无归属的行就是它自己。
         self.assertIn("local?.display_name", self.installs)
         self.assertIn("mod.display_name", self.installs)
         self.assertIn("mod.disabled", self.installs)
+        # 记录带来的字段同样要落在行上：损坏芯片、可重装、文件清单（行左侧箭头展开）。
+        self.assertIn("appendIntegrityChip(actions, record)", self.installs)
+        self.assertIn("Boolean(record.corrupted)", self.installs)
+        self.assertIn("const expander = rowExpander(item, key);", self.installs)
+        self.assertIn("list.hidden = !expandedRows().has(key);", self.installs)
+        self.assertIn('expander.addEventListener("click", (event) => {', self.installs)
 
     def test_recognized_mods_use_the_cached_registry_localization(self) -> None:
+        # 两种行都先问缓存里的注册表条目：包行按包 id，无归属的行按扫描时匹配到的 id。
+        self.assertIn('registryPackageLabel(mod.registry_id || mod.declared_id)', self.installs)
+        self.assertIn("registryPackageLabel(item.id)", self.installs)
         self.assertIn('localized(mod.registry_display_name, "")', self.installs)
+        self.assertIn('localized(local?.registry_display_name, "")', self.installs)
 
     def test_adoption_never_blocks_the_list(self) -> None:
         # 认领必须在 renderInstalled() 之后异步触发，而不是等它返回再渲染。
@@ -48,6 +67,7 @@ class LocalModsClientUiTests(unittest.TestCase):
         self.assertIn('callApi("toggle_mod", path, Boolean(enabled))', self.installs)
         self.assertIn("function toggleLocalMod(path, enabled)", self.installs)
         self.assertIn('toggle.addEventListener("click", () => toggleLocalMod(local.path, local.disabled))', self.installs)
+        self.assertIn('toggle.addEventListener("click", () => toggleLocalMod(mod.path, Boolean(mod.disabled)))', self.installs)
         self.assertIn('toast(tr(enabled ? "modEnabledRestart" : "modDisabledRestart", {name: result.toggled}))', self.installs)
         self.assertIn('setStatus("", "ready")', self.installs, "状态栏只更新健康状态，话已经由 toast 说过")
 

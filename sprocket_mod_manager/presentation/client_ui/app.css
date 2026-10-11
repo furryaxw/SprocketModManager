@@ -1006,10 +1006,28 @@ select option {
     background: var(--surface);
 }
 
-/* 已安装页的每行都带选择框：多出的一列只在这种行上出现，其它列表保持两列。 */
+/* 已安装页的每行都带选择框：多出的一列只在这种行上出现，其它列表保持两列。
+   四个部件连行号一起写死：只写列号时，DOM 里排在最后的箭头会被自动放置挤到第二行
+   （自动放置的游标只往前）。没有箭头的行第一列是 0 宽，选择框仍然对齐。 */
 .data-row.selectable {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     cursor: pointer;
+}
+
+.data-row.selectable > .row-expander {
+    grid-area: 1 / 1;
+}
+
+.data-row.selectable > .package-check {
+    grid-area: 1 / 2;
+}
+
+.data-row.selectable > .row-title {
+    grid-area: 1 / 3;
+}
+
+.data-row.selectable > .row-actions {
+    grid-area: 1 / 4;
 }
 
 .data-row.selected {
@@ -1107,6 +1125,27 @@ select option {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+/* 展开箭头：第一列，排在行最左边。 */
+.row-expander {
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.6875rem;
+    line-height: 1;
+}
+
+.row-expander.expanded {
+    transform: rotate(90deg);
+}
+
+/* 包行的文件清单：展开后横跨整行 —— 网格行里它不能挤进标题那一列。 */
+.data-row > .row-files {
+    grid-column: 1 / -1;
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font: 0.6875rem/0.9375rem "Cascadia Mono", Consolas, monospace;
 }
 
 .queue-state {

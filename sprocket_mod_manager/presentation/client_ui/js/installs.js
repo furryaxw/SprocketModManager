@@ -1,5 +1,12 @@
 "use strict";
 
+// 基础运行时的包种类：它在加载器页与左下角环境区，不进已安装页的行集合。
+const MODLOADER_KIND = "modloader";
+
+// 行单击展开文件清单要等一拍：双击是「跳目录 / 定位文件」，不能顺手把清单也展开。
+const ROW_CLICK_DELAY = 240;
+let rowClickTimer = null;
+
 /**
  * 解析不了的包也要有自己的框：标题、原因与版本选择器都在框里，它才不会被换成一句报错。
  *
@@ -178,14 +185,26 @@ async function refreshInstalled() {
         resultError({message: String(error)});
         return;
     }
-    pendingVerify = true;
-    void verifyInstalled();
+    scheduleVerifyInstalled();
     // 认领要访问 GitHub Release，放到渲染之后异步跑，绝不挡住列表。
     void claimExistingMods();
 }
 
 let verifyInFlight = false;
 let pendingVerify = false;
+// 全量校验要把每个受管文件重算一遍 SHA-256：进页面就跑会和首屏读数抢磁盘，延后到首屏之后。
+const VERIFY_DELAY = 2000;
+let verifyScheduled = false;
+
+/** 一个会话里只排一次全量校验。 */
+function scheduleVerifyInstalled() {
+    if (verifyScheduled) return;
+    verifyScheduled = true;
+    setTimeout(() => {
+        pendingVerify = true;
+        void verifyInstalled();
+    }, VERIFY_DELAY);
+}
 
 /**
  * 逐文件校验 SHA-256。
@@ -234,12 +253,6 @@ async function claimExistingMods() {
     }
 }
 
-/** 找到与列表条目对应的本地 DLL 记录（静态元数据 + 禁用状态 + 真实路径）。 */
-function localModFor(item) {
-    const mods = state.localMods || [];
-    return mods.find((mod) => mod.installed_package_id && mod.installed_package_id === item.id) || null;
-}
-
 async function toggleLocalMod(path, enabled) {
     const row = installedItems().find((item) => installedRowPath(item) === path);
     const dependents = !enabled && row ? enabledDependentsClosure([row]) : [];
@@ -281,55 +294,89 @@ function appendIntegrityChip(actions, record) {
     actions.append(corrupted);
 }
 
-/** 行的选择键：扫描行按磁盘路径，兜底行按包 id。 */
+/** 行的选择键：包行是主文件路径，没有主文件的包退回包 id。 */
+/** 行的选择键：包行按包 id（两个包共享同一个文件时也不会撞），磁盘上没有归属的文件按它的路径。 */
 function installedRowKey(item) {
-    return String(item.path || item.id || "");
+    return String(item.id || item.path || "");
 }
 
-/** 该行在磁盘上的路径（扫描行自带；兜底行从本地 DLL 记录里找回）。 */
+/** 该行在磁盘上的主文件路径：包行是它名下被扫描到的第一个文件（见 `installedPackageRow`）。 */
 function installedRowPath(item) {
-    return String(item.path || localModFor(item)?.path || "");
+    return String(item.path || "");
 }
 
-/** 定位用的路径：再兜一层安装记录里的文件名，免得只有记录、没有本地扫描的行点不动。 */
-function installedRowRevealPath(item) {
-    return String(installedRowPath(item) || (item.files || [])[0] || "");
+/** 该行的安装记录：包行自带，磁盘上没有归属的文件没有记录 —— 那种行既不能更新也不能卸载。 */
+function installedRowRecord(item) {
+    return item.record || null;
 }
 
-/** 该行是否已被禁用。 */
+/** 该行名下被扫描到的模组：包行靠它们拿到路径、开关与依赖信息，纯本地行就是它自己。 */
+function installedRowMods(item) {
+    return item.record ? (item.mods || []) : [item];
+}
+
+/** 该行的主扫描结果：包行的主文件与依赖闭包都按它算。 */
+function installedRowMod(item) {
+    return installedRowMods(item)[0] || null;
+}
+
+/** 该行是否已被禁用：开关作用在主文件上（后端按包一起处理它的可切换文件）。 */
 function installedRowDisabled(item) {
-    return item.fromScan ? Boolean(item.disabled) : Boolean(localModFor(item)?.disabled);
+    return Boolean(installedRowMod(item)?.disabled);
 }
 
-/** 能不能就地改名：由依赖链当场解析，不落库。
- *
- * 行是扫描来的（只走加载器供给的模组目录），所以只剩三条：不是加载器自己的文件、
- * 自身不是库、没有别的行依赖它 —— 改掉被依赖的库会连累依赖者。
- */
-/** 能不能就地改名：只要磁盘上有这个文件就给开关。
+/** 能不能就地改名：磁盘上有这个文件就给开关，能不能真的改由后端按目录声明的类型判断。
  *
  * 唯一拦人的是依赖链，而且拦的不是"按钮"：还开着的依赖者要先一起处理（见 `toggleLocalMod`）。
  */
 function installedRowToggleable(item) {
-    const mod = item.fromScan ? item : localModFor(item);
-    return Boolean(mod?.path);
+    return Boolean(installedRowMod(item)?.path);
 }
 
-/** 提示文案里的行名：显示名优先，退回文件名。 */
+/** 该行在注册表里的身份：包行是它的包 id，磁盘文件用扫描时匹配到的 id 兜底。 */
+function installedRowIdentity(item) {
+    return String(installedRowPackageId(item) || item.registry_id || item.declared_id || "");
+}
+
+/** 提示文案与可读标签里的行名：显示名优先，其次包名，最后退回主文件路径。 */
 function installedRowLabel(item) {
-    const mod = item.fromScan ? item : localModFor(item);
-    return String(mod?.display_name || mod?.name || installedRowPath(item) || "");
+    const mod = installedRowMod(item);
+    return String(
+        mod?.display_name
+        || mod?.name
+        || installedRowRecord(item)?.name
+        || installedRowPath(item)
+        || "",
+    );
+}
+
+/** 该行名下所有扫描结果里某个数组字段的并集：一个包有好几个文件时，依赖是它们加起来的。 */
+function installedRowList(item, field) {
+    const values = [];
+    for (const mod of installedRowMods(item)) {
+        for (const value of mod[field] || []) {
+            if (!values.includes(value)) values.push(value);
+        }
+    }
+    return values;
+}
+
+/** 该行的程序集名：依赖闭包按它找依赖者。 */
+function installedRowAssembly(item) {
+    return String(installedRowMod(item)?.assembly_name || "");
 }
 
 /** 还开着、并且依赖这个文件的模组行：动它之前要先把这些一起处理掉，否则它们会坏。 */
 function enabledDependentsOf(item) {
-    const mod = item.fromScan ? item : localModFor(item);
-    const name = String(mod?.assembly_name || "").toLowerCase();
+    const name = installedRowAssembly(item).toLowerCase();
     if (!name) return [];
+    const ownKey = installedRowKey(item);
     return installedItems().filter(
-        (other) => other !== mod
+        (other) => installedRowKey(other) !== ownKey
             && !installedRowDisabled(other)
-            && (other.required_dependencies || []).some((dep) => String(dep).toLowerCase() === name),
+            && installedRowList(other, "required_dependencies").some(
+                (dep) => String(dep).toLowerCase() === name,
+            ),
     );
 }
 
@@ -366,18 +413,14 @@ function orderedForDisable(rows) {
     return [...ordered, ...pending];
 }
 
-/** 该行对应的包 id：没有安装记录归属的纯本地模组为空（既不能更新也不能卸载）。 */
+/** 该行对应的包 id：包行是安装记录里的 id；磁盘上没有归属的文件没有包（既不能更新也不能卸载）。 */
 function installedRowPackageId(item) {
-    if (item.fromScan) return String(item.installed_package_id || "");
-    return String(item.id || "");
+    return String(installedRowRecord(item)?.id || "");
 }
 
-/** 重装要用哪个包：安装记录的归属优先，其次扫描时匹配到的注册表条目。 */
+/** 重装要用哪个包：包行就是它的记录，磁盘文件用扫描时匹配到的注册表条目。 */
 function installedRowReinstallId(item) {
-    if (item.fromScan) {
-        return String(item.installed_package_id || item.registry_id || "");
-    }
-    return String(item.id || "");
+    return installedRowPackageId(item) || String(item.registry_id || "");
 }
 
 /** 重装按钮只给找得到来源的行：注册表（含私有服务器目录）里没有这个包就没得重装。 */
@@ -387,13 +430,6 @@ function installedRowReinstallSource(item) {
     return (state.packages || []).some((candidate) => candidate.id === id) ? id : "";
 }
 
-/** 这个目录行对应的安装记录；没有归属、或没登记过就是 null。 */
-function installedRecord(item) {
-    const id = installedRowPackageId(item);
-    if (!id) return null;
-    return (state.installed || []).find((entry) => entry.id === id) || null;
-}
-
 /** 比安装记录更新的最新发布，没有就返回 null。**环境拦下来的也算** —— 它只负责行上那枚感叹号。
  *
  * 版本比较归后端（索引是它生成的，`domain/semver` 只有一份口径），算好的结果记在安装记录上，
@@ -401,7 +437,7 @@ function installedRecord(item) {
  * `1.6.2.0` 这种 4 段式，拿它比会把所有库都误判成有新版本。
  */
 function newerRelease(item) {
-    return installedRecord(item)?.newer || null;
+    return installedRowRecord(item)?.newer || null;
 }
 
 /**
@@ -411,7 +447,7 @@ function newerRelease(item) {
  * 只在行上留一枚感叹号说明为什么没有更新可装。判定未知（没声明）的照常算更新。
  */
 function installableUpdate(item) {
-    return installedRecord(item)?.update || null;
+    return installedRowRecord(item)?.update || null;
 }
 
 /** 已装那个版本自己的判定：拿不到（比如纯本地的手工 DLL）就算没这回事。 */
@@ -421,28 +457,43 @@ function installedVersionVerdict(record) {
 }
 
 /**
- * 列表数据源：磁盘扫描结果，加上扫描看不到的补丁包。
+ * 已安装页的一张列表：**一个包一行**。
  *
- * 模组按加载器供给的目录扫描（`Mods`、`BepInEx/plugins` …），但补丁落在 `BepInEx/core` 这类
- * 不是模组目录的位置：那些包只能按安装记录补一行，否则装完在页面上没有入口。基础运行时
- * （`modloader`）不在这里 —— 它们在加载器页与左下角环境区。
- */
-/**
- * 已安装页的一张列表：**一个模组一行**。
- *
- * 两件事合成它 —— 磁盘扫描（每个 DLL 一行，身份由注册表自动匹配）与安装记录里扫描看不到的
- * 条目（例如补丁包接管的那棵树，它不逐文件登记）。记录里的信息并进那一行当标签，**不另开一行**；
- * 同一个模组只许出现一次。
+ * 安装记录各占一行，包名下被扫描到的文件挂在这一行上（记录里扫描看不到的条目，例如补丁包接管的
+ * 那棵树，也因此有入口）；磁盘上没有归属的文件各自一行，用扫描结果自己的字段。基础运行时
+ * （`modloader`）不在列表里 —— 它们在加载器页与左下角环境区。
  */
 function installedItems() {
-    const scanned = (state.localMods || []).map((mod) => ({...mod, fromScan: true}));
-    const covered = new Set(
-        scanned.map((mod) => mod.installed_package_id).filter(Boolean),
-    );
-    const records = (state.installed || [])
-        .filter((record) => record.kind === "patch" && !covered.has(record.id))
-        .map((record) => ({...record, fromScan: false}));
-    return [...scanned, ...records];
+    const scanned = (state.localMods || []).map((mod) => ({...mod}));
+    const byPackage = new Map();
+    for (const mod of scanned) {
+        const id = String(mod.installed_package_id || "");
+        if (!id) continue;
+        if (!byPackage.has(id)) byPackage.set(id, []);
+        byPackage.get(id).push(mod);
+    }
+    const rows = (state.installed || [])
+        .filter((record) => String(record.kind || "") !== MODLOADER_KIND)
+        .map((record) => installedPackageRow(record, byPackage.get(String(record.id)) || []));
+    for (const mod of scanned) {
+        if (!mod.installed_package_id) rows.push(mod);
+    }
+    return rows;
+}
+
+/** 一个包一行：记录带来芯片与更新判定，挂上来的扫描结果带来路径、开关与依赖信息。
+ *
+ * 主文件路径取扫描到的第一个文件；扫描看不到这个包（补丁落在不是模组目录的位置）时取记录里的
+ * 第一个文件，行才点得动、也才找得到重装与卸载的入口。
+ */
+function installedPackageRow(record, mods) {
+    const files = record.files || [];
+    return {
+        ...record,
+        record,
+        mods,
+        path: String(mods[0]?.path || files[0] || ""),
+    };
 }
 
 /** 多选集合：键是行键，列表刷新后由 `pruneInstalledSelection` 对齐。 */
@@ -521,9 +572,7 @@ const INSTALLED_FILTERS = {
  * 与行上那两枚不兼容标记一一对应（版本芯片、更新那枚感叹号）——筛选出来的行都说得清为什么。
  */
 function installedRowIncompatible(item) {
-    const record = item.fromScan
-        ? (state.installed || []).find((entry) => entry.id && entry.id === item.installed_package_id)
-        : item;
+    const record = installedRowRecord(item);
     if (!record?.id) return false;
     if (installedVersionVerdict(record) === VERDICT_INCOMPATIBLE) return true;
     return newerRelease(item)?.verdict === VERDICT_INCOMPATIBLE;
@@ -573,7 +622,7 @@ function selectionCheckbox(item, key) {
     checkbox.type = "checkbox";
     checkbox.className = "package-check";
     checkbox.checked = installedSelection().has(key);
-    checkbox.setAttribute("aria-label", `${tr("selectRow")}: ${item.display_name || item.name || key}`);
+    checkbox.setAttribute("aria-label", `${tr("selectRow")}: ${installedRowLabel(item) || key}`);
     checkbox.addEventListener("change", () => setRowSelected(key, checkbox.checked));
     return checkbox;
 }
@@ -581,17 +630,37 @@ function selectionCheckbox(item, key) {
 /**
  * 行上的两种点击：双击跳到模组目录里这个包的位置，右键做多选（与目录页同一套习惯）。
  *
- * 单击不做事 —— 跳页会丢掉当前视野，得双击才够明确。点在按钮、选择框、链接上时不接管。
+ * 单击不做事 —— 跳页会丢掉当前视野，得双击才够明确。点在按钮、选择框、链接与文件清单的展开
+ * 开关上时不接管：那些位置有自己的动作。
  */
+/** 撤掉还没到点的展开：双击与右键都不该顺手把文件清单展开。 */
+function cancelRowClick() {
+    if (rowClickTimer === null) return;
+    clearTimeout(rowClickTimer);
+    rowClickTimer = null;
+}
+
 function wireInstalledRow(row, item, key) {
+    row.addEventListener("click", (event) => {
+        if (event?.target?.closest?.("button, input, a, label, summary, .row-expander")) return;
+        if (!installedRowFiles(item).length) return;
+        // 等一拍再展开：这一行也可能是双击（跳目录 / 定位文件）的头一下。
+        cancelRowClick();
+        rowClickTimer = setTimeout(() => {
+            rowClickTimer = null;
+            setRowExpanded(item, key, !expandedRows().has(key));
+        }, ROW_CLICK_DELAY);
+    });
     row.addEventListener("dblclick", (event) => {
-        if (event?.target?.closest?.("button, input, a, label")) return;
+        cancelRowClick();
+        if (event?.target?.closest?.("button, input, a, label, summary")) return;
         void openInstalledRow(item);
     });
     row.addEventListener("contextmenu", (event) => {
         // 先挡掉 WebView 自带的右键菜单，再把这一行翻过来。
         event.preventDefault();
-        if (event?.target?.closest?.("button, input, a, label")) return;
+        cancelRowClick();
+        if (event?.target?.closest?.("button, input, a, label, summary")) return;
         setRowSelected(key, !installedSelection().has(key));
     });
 }
@@ -611,7 +680,7 @@ async function openInstalledRow(item) {
 
 /** 目录里查无此包时的兜底：在资源管理器里定位该行的文件。 */
 async function openModLocation(item) {
-    const path = installedRowRevealPath(item);
+    const path = installedRowPath(item);
     if (!path) {
         toast(tr("modLocationUnknown"));
         return;
@@ -659,7 +728,9 @@ function renderInstalled() {
     const items = installedItems();
     const visible = filteredInstalledItems();
     pruneInstalledSelection(visible);
-    $("#installed-count").textContent = countLabel(items.length, state.localSummary);
+    // 读数还没到的空页和"磁盘上真的没有模组"是两回事：前者不该下结论。
+    const known = dataValue("installed") !== undefined;
+    $("#installed-count").textContent = known ? countLabel(items.length, state.localSummary) : "";
     container.replaceChildren();
     renderInstalledFilters(items);
     renderInstalledToolbar(visible);
@@ -667,13 +738,14 @@ function renderInstalled() {
         const empty = document.createElement("div");
         empty.className = "empty-list";
         const title = document.createElement("strong");
-        title.textContent = items.length ? tr("noFilteredMods") : tr("noInstalled");
+        if (items.length) title.textContent = tr("noFilteredMods");
+        else title.textContent = known ? tr("noInstalled") : tr("readingInstalled");
         empty.append(title);
         container.append(empty);
         return;
     }
     for (const item of visible) {
-        container.append(item.fromScan ? renderScannedModRow(item) : renderLegacyModRow(item));
+        container.append(installedRowRecord(item) ? renderPackageRow(item) : renderScannedModRow(item));
     }
 }
 
@@ -780,38 +852,34 @@ function compatibilityChip(verdict) {
     return chip;
 }
 
-/** 扫描行：一条 = 磁盘上的一个 DLL（或 .dll.disable），身份来自静态元数据。 */
+/**
+ * 文件行：磁盘上的一个 DLL（或 `.dll.disable`），它不归任何已安装的包 —— 那种文件没有记录，
+ * 也就没有更新、卸载与文件清单可言。
+ */
 function renderScannedModRow(mod) {
     const row = document.createElement("article");
     const key = installedRowKey(mod);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
     row.dataset.rowKey = key;
-    row.dataset.package = mod.installed_package_id || mod.registry_id || mod.declared_id || "";
+    row.dataset.package = installedRowIdentity(mod);
     const title = document.createElement("div");
     title.className = "row-title";
 
     const name = document.createElement("strong");
-    // 名字从数据层的注册表条目取；包 id 依次看安装记录、扫描时的注册表匹配、DLL 自己声明的 id。
-    // 扫描结果自带的那份多语言名只在注册表还没到时补位，最后才回退到 DLL 的英文元数据。
-    name.textContent = registryPackageLabel(
-        mod.installed_package_id || mod.registry_id || mod.declared_id
-    )
+    // 名字从数据层的注册表条目取：扫描时匹配到的 id 优先，其次 DLL 自己声明的 id。扫描结果自带的那份
+    // 多语言名只在注册表还没到时补位，最后才回退到 DLL 的英文元数据。
+    name.textContent = registryPackageLabel(mod.registry_id || mod.declared_id)
         || localized(mod.registry_display_name, "")
         || mod.display_name
         || mod.name
         || mod.path;
 
-    const record = (state.installed || []).find((item) => item.id && item.id === mod.installed_package_id);
-    // 来源标签：有记录就照记录（用户装的 / 依赖带进来的）；没有记录但身份对上了注册表，
-    // 按「用户装的」算 —— 是用户自己放进目录的东西，只是没走管理器的安装流程。
-    // 只有连身份都认不出来的才算「仅本地」。
-    const source = record
-        ? (record.requested ? tr("requested") : tr("dependency"))
-        : mod.registry_id ? tr("requested") : tr("localOnly");
+    // 来源标签：身份对上了注册表就按「用户装的」算 —— 是用户自己放进目录的东西，只是没走管理器的
+    // 安装流程；连身份都认不出来的才算「仅本地」。
     const parts = [mod.registry_id || mod.declared_id || mod.assembly_name || mod.path];
     if (mod.version) parts.push(`v${mod.version}`);
-    parts.push(source);
+    parts.push(mod.registry_id ? tr("requested") : tr("localOnly"));
     const requires = (mod.required_dependencies || []).join(", ");
     if (requires) parts.push(`${tr("requiresLabel")}: ${requires}`);
     // 缺失依赖同样来自 DLL 元数据（MelonAdditionalDependencies 对比磁盘上的程序集）。
@@ -827,21 +895,14 @@ function renderScannedModRow(mod) {
 
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    // 先状态、后形态：避免"形态"落在按钮后面看起来像补充说明。
-    // 禁用状态由按钮的反向动作（显示"启用"）表达。
-    appendIntegrityChip(actions, record);
-    const installedVerdict = installedVersionVerdict(record);
-    if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
-    actions.append(...updateChips(mod));
+    // 形态：这个文件落在哪个目录。禁用状态由按钮的反向动作（显示"启用"）表达。
     if (mod.kind) {
         const kind = document.createElement("span");
         kind.className = "state-chip";
         kind.textContent = mod.kind;
         actions.append(kind);
     }
-
-    const toggleable = installedRowToggleable(mod);
-    if (toggleable) {
+    if (mod.path) {
         const toggle = document.createElement("button");
         toggle.className = mod.disabled ? "secondary-button" : "danger-button";
         toggle.type = "button";
@@ -850,69 +911,73 @@ function renderScannedModRow(mod) {
         toggle.addEventListener("click", () => toggleLocalMod(mod.path, Boolean(mod.disabled)));
         actions.append(toggle);
     }
-
     const reinstallId = installedRowReinstallSource(mod);
-    if (reinstallId) {
-        actions.append(reinstallButton(reinstallId, Boolean(record?.corrupted)));
-    }
-
-    if (record) {
-        const removablePackage = state.packages.find((candidate) => candidate.id === record.id)
-            || {
-                id: record.id,
-                name: record.name || record.id,
-                display_name: {en: record.name || record.id, zh: record.name || record.id},
-            };
-        const remove = document.createElement("button");
-        remove.className = "danger-button";
-        remove.type = "button";
-        remove.textContent = tr("remove");
-        remove.disabled = queueActive();
-        remove.addEventListener("click", () => confirmRemove(removablePackage));
-        actions.append(remove);
-    }
+    if (reinstallId) actions.append(reinstallButton(reinstallId, false));
 
     row.append(selectionCheckbox(mod, key), title, actions);
     wireInstalledRow(row, mod, key);
     return row;
 }
 
-/** 记录行：没有磁盘条目的包（补丁）。 */
-function renderLegacyModRow(item) {
-    const pkg = state.packages.find((candidate) => candidate.id === item.id);
-    const local = localModFor(item);
+/**
+ * 包行：一个包一行 —— 安装记录给它芯片、更新判定与卸载入口，这行名下被扫描到的文件带来路径、
+ * 开关与依赖，记录里的规范路径收在行尾折叠起来的清单里。
+ *
+ * `local` 是这个包被扫描到的第一个文件；补丁落在不是模组目录的位置时扫描看不到它，那些信息就缺省。
+ */
+function renderPackageRow(item) {
+    const record = installedRowRecord(item);
+    const local = installedRowMod(item);
     const row = document.createElement("article");
     const key = installedRowKey(item);
     const selected = installedSelection().has(key);
     row.className = selected ? "data-row selectable selected" : "data-row selectable";
     row.dataset.rowKey = key;
-    row.dataset.package = item.id;
+    row.dataset.package = installedRowIdentity(item);
     const title = document.createElement("div");
     title.className = "row-title";
     const name = document.createElement("strong");
-    name.textContent = local?.display_name
-        || (pkg ? packageLabel(pkg) : item.name || item.id);
+    // 名字从数据层的注册表条目取（包 id），其次这个包在磁盘上的名字，最后才回退到记录里的名字。
+    name.textContent = registryPackageLabel(item.id)
+        || localized(local?.registry_display_name, "")
+        || local?.display_name
+        || local?.name
+        || record.name
+        || item.id;
+
+    // 来源标签照记录：用户装的，还是跟着依赖带进来的。
+    const parts = [item.id];
+    const version = String(record.version || local?.version || "");
+    if (version) parts.push(`v${version}`);
+    parts.push(record.requested ? tr("requested") : tr("dependency"));
+    const requires = installedRowList(item, "required_dependencies").join(", ");
+    if (requires) parts.push(`${tr("requiresLabel")}: ${requires}`);
+    const missing = installedRowList(item, "missing_dependencies").join(", ");
+    if (missing) parts.push(`${tr("missingLabel")}: ${missing}`);
+    const incompatible = installedRowList(item, "incompatible_assemblies").join(", ");
+    if (incompatible) parts.push(`${tr("incompatibleLabel")}: ${incompatible}`);
+    if (local?.error) parts.push(local.error);
+
     const metadata = document.createElement("span");
-    const requires = (local?.required_dependencies || []).join(", ");
-    const source = item.requested ? tr("requested") : tr("dependency");
-    const version = local?.version || item.version || "-";
-    metadata.textContent = `${item.id}  |  ${version}  |  ${source}${requires ? `  |  ${tr("requiresLabel")}: ${requires}` : ""}`;
+    metadata.textContent = parts.join("  |  ");
     title.append(name, metadata);
+
     const actions = document.createElement("div");
     actions.className = "row-actions";
-    // 没有磁盘条目的行（补丁）拿安装记录里的种类：那是数据层给出的事实，界面不猜。
-    const kindLabel = local?.kind || item.kind || "";
+    // 先状态、后形态：避免"形态"落在按钮后面看起来像补充说明。
+    appendIntegrityChip(actions, record);
+    const installedVerdict = installedVersionVerdict(record);
+    if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
+    actions.append(...updateChips(item));
+    // 形态优先用扫描到的目录名（文件落在哪），扫描看不到这个包时才用记录里的种类。
+    const kindLabel = String(local?.kind || record.kind || "");
     if (kindLabel) {
         const kind = document.createElement("span");
         kind.className = "state-chip";
         kind.textContent = kindLabel;
         actions.append(kind);
     }
-    appendIntegrityChip(actions, item);
-    const installedVerdict = installedVersionVerdict(item);
-    if (verdictNeedsChip(installedVerdict)) actions.append(compatibilityChip(installedVerdict));
-    actions.append(...updateChips(item));
-    if (installedRowToggleable(item)) {
+    if (local?.path) {
         const toggle = document.createElement("button");
         toggle.className = local.disabled ? "secondary-button" : "danger-button";
         toggle.type = "button";
@@ -921,25 +986,111 @@ function renderLegacyModRow(item) {
         toggle.addEventListener("click", () => toggleLocalMod(local.path, local.disabled));
         actions.append(toggle);
     }
-    const removablePackage = pkg || (item.id.includes(":") ? {
-        id: item.id,
-        name: item.name || item.id,
-        display_name: {en: item.name || item.id, zh: item.name || item.id},
-    } : null);
     const reinstallId = installedRowReinstallSource(item);
-    if (reinstallId) {
-        actions.append(reinstallButton(reinstallId, Boolean(item.corrupted)));
-    }
+    if (reinstallId) actions.append(reinstallButton(reinstallId, Boolean(record.corrupted)));
+
     const remove = document.createElement("button");
     remove.className = "danger-button";
     remove.type = "button";
     remove.textContent = tr("remove");
-    remove.disabled = !removablePackage || queueActive();
-    remove.addEventListener("click", () => removablePackage && confirmRemove(removablePackage));
+    remove.disabled = queueActive();
+    remove.addEventListener("click", () => confirmRemove(removablePackage(record)));
     actions.append(remove);
+
     row.append(selectionCheckbox(item, key), title, actions);
+    const expander = rowExpander(item, key);
+    if (expander) row.append(expander);
+    const files = installedRowFiles(item);
+    if (files.length) {
+        const list = installedFilesList(files);
+        list.hidden = !expandedRows().has(key);
+        row.append(list);
+    }
     wireInstalledRow(row, item, key);
     return row;
+}
+
+/** 卸载确认框要的那个包：目录里有它就用目录的读数，没有（私有来源掉线、条目下架）就按记录拼一个。 */
+function removablePackage(record) {
+    const label = record.name || record.id;
+    return state.packages.find((candidate) => candidate.id === record.id)
+        || {id: record.id, name: label, display_name: {en: label, zh: label}};
+}
+
+/**
+ * 展开着文件清单的行键。
+ *
+ * 状态挂在这里而不是 DOM 上：列表刷新（队列、环境、加载器读数变了都会重画）之后，用户点开的东西
+ * 不该被收回去。
+ */
+function expandedRows() {
+    if (!state.installedExpanded) state.installedExpanded = new Set();
+    return state.installedExpanded;
+}
+
+/** 该行的文件清单：包行是安装记录里的规范路径，磁盘上没有归属的文件行没有可展开的东西。 */
+function installedRowFiles(item) {
+    const record = installedRowRecord(item);
+    return record ? (record.files || []) : [];
+}
+
+/** 行左侧的展开箭头：只有带文件清单的包行才有；展开状态写在 `aria-expanded` 上。 */
+function rowExpander(item, key) {
+    const files = installedRowFiles(item);
+    if (!files.length) return null;
+    const expanded = expandedRows().has(key);
+    const expander = document.createElement("span");
+    expander.className = expanded ? "row-expander expanded" : "row-expander";
+    expander.setAttribute("role", "button");
+    expander.setAttribute("aria-expanded", expanded ? "true" : "false");
+    expander.title = tr("installedFiles", {count: files.length});
+    expander.textContent = "▸";
+    expander.addEventListener("click", (event) => {
+        event?.stopPropagation?.();
+        setRowExpanded(item, key, !expandedRows().has(key));
+    });
+    return expander;
+}
+
+/** 展开后的文件清单：记录里的规范路径逐个列出。 */
+function installedFilesList(files) {
+    const list = document.createElement("ul");
+    list.className = "row-files";
+    for (const file of files) {
+        const entry = document.createElement("li");
+        entry.textContent = file;
+        list.append(entry);
+    }
+    return list;
+}
+
+/**
+ * 就地改这一行的展开状态：箭头、`aria-expanded` 与清单的显隐都只动这一行。
+ *
+ * 整份重画等于把滚动容器交给浏览器重新排版，位置就不再由这里说了算。
+ */
+function setRowExpanded(item, key, expanded) {
+    if (expanded) expandedRows().add(key);
+    else expandedRows().delete(key);
+    const row = rowElementFor(key);
+    if (!row) return;
+    const expander = row.querySelector?.(".row-expander");
+    if (expander) {
+        expander.classList.toggle("expanded", expanded);
+        expander.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+    const list = row.querySelector?.(".row-files");
+    if (list) list.hidden = !expanded;
+    else if (expanded) row.append(installedFilesList(installedRowFiles(item)));
+}
+
+/** 该行当前的 DOM 节点（列表重画后按行键重新找）。 */
+function rowElementFor(key) {
+    const container = $("#installed-list");
+    for (const row of container?.children || []) {
+        if (row.dataset?.rowKey === String(key)) return row;
+    }
+    return null;
 }
 
 async function confirmRemove(pkg) {

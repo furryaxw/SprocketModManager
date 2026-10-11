@@ -136,11 +136,19 @@ const documentStub = {
 };
 
 const apiCalls = [];
+// 行单击展开要等一拍确认不是双击：夹具收着这一拍，派发完点击后手动放行 ——
+// 「单击展开」与「双击不展开」都能在同一次运行里看出来。
+const pendingTimers = [];
 const sandbox = {
     console,
     document: documentStub,
-    setTimeout,
-    clearTimeout,
+    setTimeout: (callback) => {
+        pendingTimers.push(callback);
+        return pendingTimers.length;
+    },
+    clearTimeout: (id) => {
+        if (id) pendingTimers[id - 1] = null;
+    },
     queueMicrotask,
     reportClientLog: (level, message) => {
         if (level === "error") apiCalls.push({kind: "client-log", message: String(message)});
@@ -179,6 +187,7 @@ const sandbox = {
             detectedMods: `${values.count} detected mods`,
             missingDepsCount: `${values.count} missing deps`,
             noInstalled: "No mods detected",
+            readingInstalled: "Reading…",
             requested: "User-installed",
             dependency: "Installed dependency",
             enableMod: "Enable",
@@ -283,10 +292,13 @@ context.focusPackage = async (packageId) => {
 };
 
 // 已安装页的读数和线上一样由**数据层推来**：这里用同一条入口写进镜像，页面只读镜像。
-vm.runInContext(
-    `dataDeliver(${JSON.stringify({key: "installed", value: payload, revision: 1})});`,
-    context,
-);
+// `pendingInstalled` 表示读数还没到：这一份不推，页面该说"正在读取"而不是"没有模组"。
+if (!payload.pendingInstalled) {
+    vm.runInContext(
+        `dataDeliver(${JSON.stringify({key: "installed", value: payload, revision: 1})});`,
+        context,
+    );
+}
 vm.runInContext(
     `dataDeliver(${JSON.stringify({key: "environment", value: payload.environment || null, revision: 1})});`,
     context,
@@ -305,7 +317,7 @@ for (const key of payload.selection || []) sandbox.state.installedSelection.add(
 // 数据层（`state.packages` / 扫描结果）来，而不是靠那两页渲染时顺手填进去。
 vm.runInContext("renderInstalled(); renderEnvironment();", context);
 
-// 行上三种事件各走一遍：单击（不做事）、双击（跳转）、右键（多选）。
+// 行上四种事件各走一遍：单击（展开文件清单，等一拍）、双击（跳转）、右键（多选）、箭头（立即展开）。
 // `target` 为空表示点在行体上；`closest` 命中表示点在行内控件上，行不该接管。
 function dispatchRow(index, type, event) {
     const row = elements["#installed-list"].children[index];
@@ -316,6 +328,11 @@ for (const index of payload.dblclickRows || []) dispatchRow(index, "dblclick", {
 for (const index of payload.dblclickRowButtons || []) {
     dispatchRow(index, "dblclick", {target: {closest: () => ({tagName: "BUTTON"})}});
 }
+for (const index of payload.expanderRows || []) {
+    const expander = elements["#installed-list"].children[index]?.querySelector?.(".row-expander");
+    for (const handler of (expander?.listeners?.click || [])) handler({stopPropagation: () => {}});
+}
+for (const callback of pendingTimers.splice(0)) callback?.();
 
 // 右键多选一行：只该改这一行的勾选与工具栏 —— 列表不重画，滚动位置因此留在原处。
 let rowSelect = null;
@@ -353,6 +370,8 @@ function serialize(element) {
         text: element.textContent,
         title: element.title || "",
         ariaLabel: element.attributes["aria-label"] || "",
+        ariaExpanded: element.attributes["aria-expanded"] || "",
+        hidden: Boolean(element.hidden),
         disabled: Boolean(element.disabled),
         checked: Boolean(element.checked),
         clickable: Object.keys(element.listeners).length > 0,

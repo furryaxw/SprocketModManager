@@ -22,6 +22,9 @@ HARNESS = Path(__file__).resolve().parent / "fixtures" / "client_ui" / "render_i
 CLIENT_UI = Path(__file__).resolve().parent.parent / "sprocket_mod_manager" / "presentation" / "client_ui"
 NODE = shutil.which("node")
 
+# 包行的选择键是包 id；磁盘上没有归属的文件行仍按路径。
+PACKAGE_KEY = "furryaxw.sprocket-laser-rangefinder"
+
 
 def install_target(pkg: dict) -> str:
     """后端按当前环境挑好的安装版本：兼容的里面最高的，一个兼容的都没有才退到最新那版。
@@ -54,6 +57,8 @@ def payload(
         filter_key: str = "",
         click_rows: list | None = None,
         dblclick_rows: list | None = None,
+        expander_rows: list | None = None,
+        pending_installed: bool = False,
         context_rows: list | None = None,
         dblclick_row_buttons: list | None = None,
         scroll_top: int = 0,
@@ -65,7 +70,7 @@ def payload(
         update: dict | None = None,
         language: str = "",
 ) -> dict:
-    """纯扫描模型的 payload：列表以 `local_mods` 为准，`installed` 只提供归属标记。
+    """后端 `get_installed` 的读数：列表以安装记录为准（一个包一行），`local_mods` 提供磁盘上的文件。
 
     `newer` / `update` 是后端跟着安装记录一起下发的更新判定（`installed` 显式给出时由调用方自理）。
     """
@@ -161,8 +166,12 @@ def payload(
         document["filter"] = filter_key
     if click_rows is not None:
         document["clickRows"] = click_rows
+    if pending_installed:
+        document["pendingInstalled"] = True
     if dblclick_rows is not None:
         document["dblclickRows"] = dblclick_rows
+    if expander_rows is not None:
+        document["expanderRows"] = expander_rows
     if context_rows is not None:
         document["contextRows"] = context_rows
     if scroll_top:
@@ -430,7 +439,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertTrue(toolbar["invertDisabled"])
 
     def test_selection_bar_appears_while_a_row_is_selected(self) -> None:
-        shown = self._render(selection=["Mods/SprocketLaserRangefinder.dll"])["toolbar"]
+        shown = self._render(selection=[PACKAGE_KEY])["toolbar"]
         self.assertFalse(shown["barHidden"])
         self.assertEqual(shown["selection"], "1 selected")
         self.assertFalse(shown["toggle"]["disabled"])
@@ -438,7 +447,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
     def test_toggle_selects_every_visible_row_then_clears_the_selection(self) -> None:
         every_row = [
-            "Mods/SprocketLaserRangefinder.dll",
+            PACKAGE_KEY,
             "Mods/CannonSoundPoolFix.dll.disable",
             "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll",
         ]
@@ -456,13 +465,13 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
     def test_invert_flips_the_visible_rows(self) -> None:
         one_of_three = self._render(
-            selection=["Mods/SprocketLaserRangefinder.dll"],
+            selection=[PACKAGE_KEY],
             action="invert-selection",
         )["toolbar"]
         self.assertEqual(one_of_three["selection"], "2 selected", "三行里选中一行，反选后剩两行")
 
         every_row = [
-            "Mods/SprocketLaserRangefinder.dll",
+            PACKAGE_KEY,
             "Mods/CannonSoundPoolFix.dll.disable",
             "UserLibs/UniverseLib.ML.IL2CPP.Interop.dll",
         ]
@@ -543,6 +552,120 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
         self.assertEqual(len(result["rows"]), 3, "还是磁盘上那三个文件")
 
+    def test_a_package_with_several_files_is_one_row_with_its_file_list(self) -> None:
+        """一个包一行：名下被扫描到的文件挂在这一行上，记录里的规范路径收进行尾的清单里。"""
+        package_id = "furryaxw.sprocket-laser-rangefinder"
+        files = [
+            PACKAGE_KEY,
+            "Mods/SprocketLaserRangefinder.Extras.dll",
+        ]
+        record = {
+            "id": package_id, "name": "SprocketLaserRangefinder", "version": "0.1.3",
+            "requested": True, "corrupted": False, "integrity": "release", "files": files,
+        }
+        owned = [dict(payload()["local_mods"][0]), dict(payload()["local_mods"][0])]
+        owned[0]["path"] = files[0]
+        owned[1]["path"] = files[1]
+        owned[1]["display_name"] = "Sprocket Laser Rangefinder Extras"
+        owned[1]["assembly_name"] = "SprocketLaserRangefinderExtras"
+        owned[1]["required_dependencies"] = ["SprocketCoreLib"]
+        owned[1]["missing_dependencies"] = ["SprocketDepth"]
+        loose = [dict(payload()["local_mods"][2])]
+
+        result = self._render(
+            installed=[record],
+            local_mods=owned + loose,
+            selection=[package_id],
+        )
+
+        self.assertEqual(len(result["rows"]), 2, "一个包一行，外加磁盘上没有归属的那个文件")
+        self.assertEqual(result["count"], "2 detected mods", "标题数的是行数，也就是包数")
+        package_row, loose_row = result["rows"]
+        self.assertIn("selected", package_row["className"], "包行的选择键是包 id")
+
+        expander = _find(package_row, lambda node: "row-expander" in node["className"])
+        self.assertIsNotNone(expander, "包行左侧挂着展开箭头")
+        self.assertEqual(expander["ariaExpanded"], "false", "默认收起")
+        listing = _find(package_row, lambda node: "row-files" in node["className"])
+        self.assertEqual(
+            [entry["text"] for entry in listing["children"]], files, "记录里的规范路径逐个列出"
+        )
+        self.assertTrue(listing["hidden"], "没展开时清单不显示")
+        self.assertIsNone(
+            _find(loose_row, lambda node: "row-expander" in node["className"]),
+            "磁盘上没有归属的文件没有清单可展开",
+        )
+
+        title = " | ".join(child["text"] for child in package_row["children"][1]["children"])
+        self.assertIn("SprocketModAPI", title, "两个文件各自声明的依赖都算在这一行上")
+        self.assertIn("SprocketCoreLib", title)
+        self.assertIn("Missing: SprocketDepth", title)
+
+        # 单击展开（夹具放行那一拍）；双击是跳目录，不该顺手把清单也展开。
+        clicked = self._render(installed=[record], local_mods=owned + loose, click_rows=[0])["rows"][0]
+        self.assertEqual(
+            _find(clicked, lambda node: "row-expander" in node["className"])["ariaExpanded"],
+            "true",
+            "单击一行之后清单展开",
+        )
+        self.assertFalse(
+            _find(clicked, lambda node: "row-files" in node["className"])["hidden"],
+            "展开后清单显示出来",
+        )
+        doubled = self._render(
+            installed=[record], local_mods=owned + loose, click_rows=[0], dblclick_rows=[0]
+        )["rows"][0]
+        self.assertEqual(
+            _find(doubled, lambda node: "row-expander" in node["className"])["ariaExpanded"],
+            "false",
+            "双击（点两下）不展开清单",
+        )
+        arrow = self._render(installed=[record], local_mods=owned + loose, expander_rows=[0])["rows"][0]
+        self.assertEqual(
+            _find(arrow, lambda node: "row-expander" in node["className"])["ariaExpanded"],
+            "true",
+            "点箭头立即展开，不用等那一拍",
+        )
+
+        disabled = self._render(
+            installed=[record],
+            local_mods=owned + loose,
+            selection=[package_id],
+            action="disable-selected",
+        )
+        self.assertEqual(
+            [entry["args"] for entry in disabled["apiCalls"] if entry["args"][0] == "toggle_mod"],
+            [["toggle_mod", files[0], False]],
+            "按包行的主文件路径发一次调用：其余文件由后端按包一起处理",
+        )
+
+    def test_a_package_the_scan_cannot_see_is_still_keyed_by_its_id(self) -> None:
+        """扫描看不到这个包（补丁落在不是模组目录的位置）时，行键仍是包 id。"""
+        record = {
+            "id": "hans21223.sprocket-mod-loader", "name": "SprocketModLoader", "version": "1.0.0",
+            "requested": True, "kind": "patch", "corrupted": False, "integrity": "release",
+            "files": ["BepInEx/core/Il2CppInterop.Runtime.dll"],
+        }
+        result = self._render(
+            local_mods=[],
+            installed=[record],
+            selection=["hans21223.sprocket-mod-loader"],
+        )
+
+        self.assertEqual(len(result["rows"]), 1)
+        self.assertIn("selected", result["rows"][0]["className"])
+        self.assertTrue(result["rows"][0]["children"][0]["checked"])
+
+    def test_the_list_says_it_is_reading_before_the_first_reading_arrives(self) -> None:
+        """读数没到就不下结论：不写「没有检测到模组」，标题也不报数。"""
+        result = self._render(pending_installed=True)
+        self.assertEqual(result["count"], "")
+        self.assertEqual(len(result["rows"]), 1)
+        self.assertEqual(
+            " | ".join(child["text"] for child in result["rows"][0]["children"]),
+            "Reading…",
+        )
+
     def test_filter_hides_rows_that_do_not_match(self) -> None:
         disabled = self._render(filter_key="disabled")
         self.assertEqual(len(disabled["rows"]), 1, "只留被禁用的那一行")
@@ -589,8 +712,8 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         )
         self.assertEqual(focus_calls(result), [])
 
-    def test_a_single_click_on_a_row_does_nothing(self) -> None:
-        """单击不做事：跳页会丢当前视野，只有双击才走。"""
+    def test_a_single_click_on_a_row_expands_its_files_without_navigating(self) -> None:
+        """单击只展开文件清单：跳页会丢当前视野，只有双击才走。"""
         result = self._render(
             packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
             click_rows=[0, 1],
@@ -667,7 +790,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         # 一个可更新、可禁用、可卸载的模组：三个按钮都该亮。
         one = self._render(
             packages=[package],
-            selection=["Mods/SprocketLaserRangefinder.dll"],
+            selection=[PACKAGE_KEY],
             update={"version": "0.2.0", "verdict": "compatible"},
         )
         self.assertEqual(one["toolbar"]["selection"], "1 selected")
@@ -817,7 +940,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
         result = self._render(
             packages=[package],
-            selection=["Mods/SprocketLaserRangefinder.dll", "Mods/CannonSoundPoolFix.dll.disable"],
+            selection=[PACKAGE_KEY, "Mods/CannonSoundPoolFix.dll.disable"],
             action="update-selected",
             update={"version": "0.2.0", "verdict": "compatible"},
         )
@@ -837,7 +960,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         }
         result = self._render(
             packages=[package],
-            selection=["Mods/SprocketLaserRangefinder.dll"],
+            selection=[PACKAGE_KEY],
             action="update-selected",
             newer={"version": "0.2.0", "verdict": "incompatible"},
         )
@@ -863,7 +986,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         }
         result = self._render(
             packages=[package],
-            selection=["Mods/SprocketLaserRangefinder.dll"],
+            selection=[PACKAGE_KEY],
             action="update-selected",
             newer={"version": "0.3.0", "verdict": "incompatible"},
             update={"version": "0.2.0", "verdict": "compatible"},
@@ -882,7 +1005,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
     def test_batch_toggle_calls_the_api_per_selected_path(self) -> None:
         result = self._render(
-            selection=["Mods/SprocketLaserRangefinder.dll", "Mods/CannonSoundPoolFix.dll.disable"],
+            selection=[PACKAGE_KEY, "Mods/CannonSoundPoolFix.dll.disable"],
             action="disable-selected",
         )
         toggles = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "toggle_mod"]
@@ -894,12 +1017,48 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
     def test_batch_remove_confirms_once_and_removes_every_selected_package(self) -> None:
         result = self._render(
-            selection=["Mods/SprocketLaserRangefinder.dll"],
+            selection=[PACKAGE_KEY],
             action="remove-selected",
         )
         removes = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "remove"]
         self.assertEqual(removes, [["remove", "furryaxw.sprocket-laser-rangefinder"]])
         self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
+
+
+class InstalledRowLayoutTests(unittest.TestCase):
+    """行内网格的列位契约：箭头 / 选择框 / 标题 / 动作各占一列。
+
+    列位写死是因为行里可能出现第四个元素（展开箭头）：靠 `order` 挪位置会让动作掉到第二行、
+    列宽也跟着错位。没有箭头的行第一列是 0 宽，选择框仍然对齐。
+    """
+
+    def setUp(self) -> None:
+        self.css = (CLIENT_UI / "app.css").read_text(encoding="utf-8")
+
+    def _rule(self, selector: str) -> str:
+        match = re.compile(rf"^{re.escape(selector)} \{{", re.MULTILINE).search(self.css)
+        self.assertIsNotNone(match, f"CSS 里没有 {selector} 规则")
+        start = match.start()
+        return self.css[start:self.css.index("}", start)]
+
+    def test_the_row_has_a_column_for_the_expander(self) -> None:
+        rule = self._rule(".data-row.selectable")
+        columns = rule.split("grid-template-columns:", 1)[1].split(";")[0].strip()
+        self.assertEqual(columns, "auto auto minmax(0, 1fr) auto")
+
+    def test_each_part_of_the_row_has_its_own_cell(self) -> None:
+        # 行号也要写死：只写列号时，DOM 里排在最后的箭头会被自动放置挤到第二行。
+        for selector, column in (
+            (".data-row.selectable > .row-expander", "1"),
+            (".data-row.selectable > .package-check", "2"),
+            (".data-row.selectable > .row-title", "3"),
+            (".data-row.selectable > .row-actions", "4"),
+        ):
+            with self.subTest(selector=selector):
+                self.assertIn(f"grid-area: 1 / {column};", self._rule(selector))
+
+    def test_the_file_list_spans_the_row(self) -> None:
+        self.assertIn("grid-column: 1 / -1;", self._rule(".data-row > .row-files"))
 
 
 class SelectionBarStyleTests(unittest.TestCase):
