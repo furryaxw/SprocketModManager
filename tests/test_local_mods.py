@@ -240,7 +240,7 @@ class LocalScanTests(unittest.TestCase):
             self.assertEqual(mods, [])
             self.assertEqual(summarize(mods)["total"], 0)
 
-    def test_scan_ignores_dlls_below_the_root(self) -> None:
+    def test_scan_takes_dlls_below_the_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._build_game_dir(Path(directory))
             nested = root / "Mods" / "Nested"
@@ -250,9 +250,9 @@ class LocalScanTests(unittest.TestCase):
 
             paths = [mod.path for mod in scan_local_mods(root, {})]
 
-            self.assertNotIn("Mods/Nested/Nested.dll", paths)
-            self.assertNotIn("Mods/Nested/Nested.dll.disable", paths)
-            self.assertEqual(len(paths), 5)
+            self.assertIn("Mods/Nested/Nested.dll", paths)
+            self.assertIn("Mods/Nested/Nested.dll.disable", paths)
+            self.assertEqual(len(paths), 7)
 
 
 class BepInExScanTests(unittest.TestCase):

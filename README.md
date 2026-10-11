@@ -94,7 +94,7 @@ installed) contain no DLL. Once any mod exists, the catalog returns to its norma
 sort. This marker never opens a prompt, selects, or installs a package.
 
 When the catalog loads or the Installed page refreshes, the client scans unmanaged DLLs
-under the active runtime identifiers' directories. It adopts a package only when the file
+under the active runtime identifiers' directories, subdirectories included. It adopts a package only when the file
 name, static install target, and GitHub Release SHA-256 all match uniquely. Unknown,
 locally modified, digest-less, or ambiguous files remain unmanaged. Adopted packages can
 be updated and removed normally; all other DLLs are marked "Local only" on the Installed
@@ -221,9 +221,10 @@ Edge installations.
   `Assembly.Load`.
 - ZIP archives are limited by entry count, per-file and total extracted size, and
   compression ratio. Absolute paths, `..`, and device paths are rejected.
-- Files can only land in a directory declared by some loader's supply table, or in a
-  loader's own `install.payload` `target`: a type may have several suppliers and the
-  installed one decides, and a `subpath` cannot escape the game directory.
+- Files can only land in a directory declared by some loader's supply table, in a location the
+  game declares (the game directory under `{Sprocket}`, or a save location under `{Documents}`),
+  or in a loader's own `install.payload` `target`: a type may have several suppliers and the
+  installed one decides, and a target cannot escape its own root.
 - The Translations category is a `patch` package: it takes over the supply directory of
   `xunity:translation`, archiving the whole directory (five newest kept) and clearing it
   before installing, and restoring the whole directory on removal.

@@ -37,10 +37,10 @@ from ...infrastructure.desktop import reveal_in_file_manager
 from ...infrastructure.dll_metadata import MELON_KIND_MODS, flush_metadata_cache
 from ...infrastructure.mod_toggle import (
     canonical_relative,
-    direct_files,
     is_disabled_path,
     is_in_roots,
     is_loadable_path,
+    nested_files,
     apply_enabled,
     resolve_mod_path,
 )
@@ -873,7 +873,7 @@ class CatalogController(ApiController):
                 continue
             if any(
                 is_loadable_path(path) or is_disabled_path(path)
-                for path in direct_files(game_path / directory.path)
+                for path in nested_files(game_path / directory.path)
             ):
                 return True
         return False

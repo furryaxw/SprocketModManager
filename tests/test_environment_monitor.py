@@ -56,7 +56,7 @@ class FingerprintTests(unittest.TestCase):
     def test_an_unconfigured_game_path_has_an_empty_fingerprint(self) -> None:
         self.assertEqual(game_environment_fingerprint(None), ())
 
-    def test_the_fingerprint_notices_files_and_first_level_entries(self) -> None:
+    def test_the_fingerprint_notices_files_in_the_mod_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             game = Path(directory) / "game"
             (game / "Sprocket_Data").mkdir(parents=True)
@@ -71,6 +71,20 @@ class FingerprintTests(unittest.TestCase):
 
     def test_a_missing_directory_is_not_an_error(self) -> None:
         self.assertEqual(mod_directory_signature(Path("nowhere")), ())
+
+    def test_a_file_below_a_mod_directory_moves_the_fingerprint(self) -> None:
+        """模组住在子目录里（`BepInEx/plugins/<Mod>/<Mod>.dll`）时，改它也要动指纹。"""
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory) / "game"
+            nested = game / "Mods" / "SprocketDepth"
+            nested.mkdir(parents=True)
+            (nested / "SprocketDepth.dll").write_bytes(b"x" * 8)
+            before = mod_directory_signature(game / "Mods")
+
+            (nested / "SprocketDepth.dll").write_bytes(b"y" * 16)
+            after = mod_directory_signature(game / "Mods")
+
+        self.assertNotEqual(before, after)
 
     def test_a_bridge_mod_appearing_changes_the_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

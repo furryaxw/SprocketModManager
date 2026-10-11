@@ -244,7 +244,7 @@ class ExistingModsAdoptionTests(unittest.TestCase):
             self.assertEqual(service.adopt_existing(game), ())
             self.assertEqual(service.installed(game), {})
 
-    def test_dll_below_the_root_is_left_unmanaged(self):
+    def test_a_dll_the_rules_would_not_place_there_is_left_unmanaged(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             game = self.game(root)
@@ -426,6 +426,22 @@ class BridgeAdoptionTests(unittest.TestCase):
             game = self.game(root)
             (game / "MLLoader" / "Mods" / "FixtureMod.dll").write_bytes(FIXTURE_MOD.read_bytes())
             (game / "Mods" / "Legacy.dll").write_bytes(b"legacy")
+
+            found = list(
+                ExistingModsAdopter._local_dlls(
+                    Registry([bridge_package()]), game, set(), (BRIDGE_ID,)
+                )
+            )
+
+            self.assertEqual([path.name for path in found], ["FixtureMod.dll"])
+
+    def test_bridge_subdirectories_are_scanned_for_local_dlls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = self.game(root)
+            nested = game / "MLLoader" / "Mods" / "Nested" / "FixtureMod.dll"
+            nested.parent.mkdir()
+            nested.write_bytes(FIXTURE_MOD.read_bytes())
 
             found = list(
                 ExistingModsAdopter._local_dlls(

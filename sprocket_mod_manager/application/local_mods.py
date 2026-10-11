@@ -15,9 +15,9 @@ from ..domain.models import RegistryPackage
 from ..infrastructure.dll_metadata import clear_metadata_cache, flush_metadata_cache, read_cached_metadata
 from ..infrastructure.mod_toggle import (
     canonical_relative,
-    direct_files,
     is_disabled_path,
     is_loadable_path,
+    nested_files,
 )
 from ..utilities.checksums import sha256_file
 from .adoption import match_package_by_metadata
@@ -115,9 +115,9 @@ def scan_local_mods(
     时，扫描跟着走），没有已装供给者时用检测到的布局；`roots` 显式给出时按那份名单扫，
     此时目录没有供给类型，类别退回 DLL 自己的分类。
 
-    每个目录只扫 **1 层**（直接子文件），子目录里的 DLL 不算模组。顺序见 :func:`_sort_key`：
-    按目录分组，组内禁用项最后、再按显示名。条目的 `kind` 是所在目录的类型；目录没有类型时
-    用 DLL 的分类兜底。
+    每个目录扫**整棵子树**：子目录里的 DLL 也算模组。顺序见 :func:`_sort_key`：
+    扫描根按扫描顺序、子树里的目录排在最后，再按禁用项与显示名。条目的 `kind` 是所在目录的类型；
+    目录没有类型时用 DLL 的分类兜底。
 
     ``managed_paths`` 是「相对路径（小写、正斜杠）→ package id」的映射，来自安装记录。
     任何单个文件的解析失败都降级成 ``error`` 字段，不影响其他条目。
@@ -292,7 +292,7 @@ def apply_dependency_graph(mods: list[LocalMod]) -> list[LocalMod]:
 def _iter_candidates(root: Path) -> list[Path]:
     candidates = [
         path
-        for path in direct_files(root)
+        for path in nested_files(root)
         if is_loadable_path(path) or is_disabled_path(path)
     ]
     return sorted(candidates, key=lambda item: str(item).casefold())

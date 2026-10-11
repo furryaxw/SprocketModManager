@@ -14,7 +14,7 @@ from ..domain.semver import Version
 from ..infrastructure.dll_metadata import DllMetadata, flush_metadata_cache, read_cached_metadata
 from ..infrastructure.github import GitHubClient
 from ..infrastructure.installer import Installer
-from ..infrastructure.mod_toggle import direct_files
+from ..infrastructure.mod_toggle import nested_files
 from ..infrastructure.release_checksums import release_asset_sha256
 from ..infrastructure.scanner import PackageScanner
 from ..utilities.checksums import sha256_file
@@ -518,14 +518,14 @@ class ExistingModsAdopter:
             installed_ids: tuple[str, ...],
             targets: tuple[tuple[ModIdentifier, ModDirectory], ...] | None = None,
     ) -> Iterator[Path]:
-        """活跃标识符的目录下 **1 层** 内、不在安装记录里的真实 DLL（符号链接不算）。"""
+        """活跃标识符的目录下（含子目录）、不在安装记录里的真实 DLL（符号链接不算）。"""
         if targets is None:
             targets = scan_targets(game_dir, registry.packages, installed_ids)
         for _identifier, directory in targets:
             root = game_dir / directory.path
             if not root.is_dir():
                 continue
-            for path in direct_files(root):
+            for path in nested_files(root):
                 try:
                     if (
                             path.is_symlink()

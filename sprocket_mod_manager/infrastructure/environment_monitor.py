@@ -8,12 +8,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .manager_paths import state_file_path
+from .mod_toggle import nested_files
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,17 +33,19 @@ def _stat_signature(path: Path) -> tuple[str, int | None, int | None]:
 
 
 def mod_directory_signature(directory: Path) -> tuple[Any, ...]:
-    """目录**第 1 层**的（名字, mtime, 大小）：和「只扫 1 层」的规则一致，不递归。"""
-    try:
-        with os.scandir(directory) as entries:
-            return tuple(
-                sorted(
-                    (entry.name, _stat_signature(Path(entry.path))[1], _stat_signature(Path(entry.path))[2])
-                    for entry in entries
-                )
-            )
-    except OSError:
-        return ()
+    """目录**整棵子树**里的（相对路径, mtime, 大小）：和模组扫描看到的是同一批文件。
+
+    模组可以住在子目录里（`BepInEx/plugins/<Mod>/<Mod>.dll`），只看第 1 层就漏掉它们的变化。
+    """
+    signature: list[tuple[str, Any, Any]] = []
+    for path in sorted(nested_files(directory), key=lambda item: str(item).casefold()):
+        _name, mtime, size = _stat_signature(path)
+        try:
+            relative = path.relative_to(directory).as_posix()
+        except ValueError:
+            relative = path.name
+        signature.append((relative, mtime, size))
+    return tuple(signature)
 
 
 def game_environment_fingerprint(

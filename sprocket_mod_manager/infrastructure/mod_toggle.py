@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -53,28 +54,21 @@ def canonical_relative(relative: str) -> str:
     return text
 
 
-def direct_files(directory: Path) -> list[Path]:
-    """目录 **1 层** 内的文件与符号链接（不进入子目录）；目录不存在或不可读时返回空列表。
+def nested_files(directory: Path) -> list[Path]:
+    """目录下**任意深度**的文件与符号链接；目录不存在或不可读时返回空列表。
 
-    模组扫描只认受管根目录的直接子文件：子目录里的 DLL 不进清单、不被认领、
-    也不出现在禁用列表里，否则会出现「扫描看不到、记录里却有」的两份事实。
+    模组文件可以放在受管目录的子目录里（`BepInEx/plugins/<Mod>/<Mod>.dll`），所以模组扫描与
+    认领都按这个口径走。符号链接目录不跟进去，免得绕成环。
     """
     if not directory.is_dir():
         return []
-    try:
-        return [
-            path
-            for path in directory.iterdir()
-            if path.is_file() or path.is_symlink()
-        ]
-    except OSError:
-        return []
-
-
-def find_disabled_dlls(directory: Path) -> list[Path]:
-    """列出目录 **1 层** 内的 ``*.dll.disable``。"""
-    found = [path for path in direct_files(directory) if is_disabled_path(path)]
-    return sorted(found, key=lambda item: str(item).casefold())
+    found: list[Path] = []
+    for current, _directories, names in os.walk(directory, onerror=lambda _error: None):
+        for name in names:
+            path = Path(current) / name
+            if path.is_file() or path.is_symlink():
+                found.append(path)
+    return found
 
 
 def directory_prefix(relative: str) -> tuple[str, ...]:

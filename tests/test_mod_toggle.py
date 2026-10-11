@@ -8,7 +8,6 @@ from sprocket_mod_manager.domain.errors import ModToggleError
 from sprocket_mod_manager.infrastructure.mod_toggle import (
     disabled_path_for,
     enabled_path_for,
-    find_disabled_dlls,
     is_disabled_path,
     is_loadable_path,
     resolve_mod_path,
@@ -77,22 +76,6 @@ class SetEnabledTests(unittest.TestCase):
 
             self.assertTrue(mod.is_file())
             self.assertEqual((Path(directory) / "Example.dll.disable").read_bytes(), b"other")
-
-    def test_find_disabled_dlls_takes_one_level(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "nested").mkdir()
-            (root / "a.dll.disable").write_bytes(b"a")
-            (root / "nested" / "b.dll.disable").write_bytes(b"b")
-            (root / "c.dll").write_bytes(b"c")
-
-            found = find_disabled_dlls(root)
-            self.assertEqual([path.name for path in found], ["a.dll.disable"])
-
-    def test_find_disabled_dlls_missing_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            self.assertEqual(find_disabled_dlls(Path(directory) / "nope"), [])
-
 
 class ResolveModPathTests(unittest.TestCase):
     GAME = Path(r"C:\Game")
