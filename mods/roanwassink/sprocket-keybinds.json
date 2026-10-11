@@ -23,7 +23,9 @@
             "include": [
                 "SprocketKeybinds-v*.zip"
             ],
-            "exclude": []
+            "exclude": [
+                "*-source.zip"
+            ]
         }
     },
     "dependencies": [],

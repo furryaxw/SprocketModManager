@@ -24,7 +24,8 @@
                 "SprocketHydropneumatic-v*.zip"
             ],
             "exclude": [
-                "*-manual.zip"
+                "*-manual.zip",
+                "*-source.zip"
             ]
         }
     },

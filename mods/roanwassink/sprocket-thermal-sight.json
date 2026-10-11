@@ -24,7 +24,8 @@
                 "SprocketThermalSight-v*.zip"
             ],
             "exclude": [
-                "*-customization-kit.zip"
+                "*-customization-kit.zip",
+                "*-source.zip"
             ]
         }
     },
