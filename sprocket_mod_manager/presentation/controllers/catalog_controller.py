@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import webbrowser
 from pathlib import Path
 from typing import Any, Sequence
@@ -44,12 +45,23 @@ from ...infrastructure.mod_toggle import (
     apply_enabled,
     resolve_mod_path,
 )
+from ...infrastructure.registry_source import DOCUMENT_NAMES, PACKAGES_NAME
 from ...utilities.package_paths import validate_relative_path
 
 LOGGER = logging.getLogger(__name__)
 
 
+def _is_remote_source(source: str | Path) -> bool:
+    """索引在远端（走 HTTP）还是本地目录 —— 只有远端值得拆成两次读。"""
+    if isinstance(source, Path):
+        return False
+    return urlparse(str(source)).scheme in {"http", "https"}
+
+
 class CatalogController(ApiController):
+    # 「包列表之外的索引文件」后台补取：同一时刻只跑一条。
+    _deferred_documents_running = False
+
     def catalog_payload(self, refresh: bool = False) -> dict[str, Any]:
         """重算目录读数：注册表里的包（每条 release 带判定）+ 索引来源。
 
@@ -75,15 +87,20 @@ class CatalogController(ApiController):
         self.data.publish(KEY_CATALOG, payload)
         return self._success(source=payload["source"], count=len(payload["packages"]))
 
-    def _build_catalog(self, refresh: bool) -> dict[str, Any]:
+    def _build_catalog(self, refresh: bool, *, deferred: bool = False) -> dict[str, Any]:
         self.config = self.config_store.load()
         service = self._service_factory(self.config_store.app_dir)
         self._configure_service_network(service)
         service.environment = self.current_environment()
+        source = _source_from_config(self.config)
+        # 远端索引先只等包列表：目录与加载器清单都在里面，环境与诊断随后在后台补齐。
+        # 本地目录三份都读 —— 读盘没有往返，拆开只会让读数多出现一次。
+        documents = DOCUMENT_NAMES if (deferred or not _is_remote_source(source)) else (PACKAGES_NAME,)
         service, latest = load_catalog(
             service,
-            _source_from_config(self.config),
+            source,
             refresh=bool(refresh),
+            documents=documents,
         )
         self.attach_private_source(service)
         self._adopt_existing(service)
@@ -95,10 +112,38 @@ class CatalogController(ApiController):
         self._environment_monitor.invalidate()
         self.data_changed(KEY_ENVIRONMENT, KEY_LOADERS, KEY_INSTALLED)
         snapshot = self._snapshot(service)
-        return {
+        payload = {
             "packages": self._catalog_data(service, latest, installed=snapshot["installed"]),
             "source": effective_index_url(self.config),
         }
+        if len(documents) < len(DOCUMENT_NAMES):
+            self._schedule_deferred_documents(bool(refresh))
+        return payload
+
+    def _schedule_deferred_documents(self, refresh: bool) -> None:
+        """包列表之外的索引文件在后台补取：补齐后自己再发一次目录读数，页面不等它们。"""
+        with self._state_lock:
+            if self._deferred_documents_running:
+                return
+            self._deferred_documents_running = True
+        threading.Thread(
+            target=self._finish_deferred_documents,
+            args=(refresh,),
+            name="sprocket-registry-documents",
+            daemon=True,
+        ).start()
+
+    def _finish_deferred_documents(self, refresh: bool) -> None:
+        try:
+            payload = self._build_catalog(refresh, deferred=True)
+        except (ModManagerError, OSError, ValueError) as exc:
+            LOGGER.warning("deferred registry documents failed: %s", exc)
+            return
+        finally:
+            with self._state_lock:
+                self._deferred_documents_running = False
+        self.data.publish(KEY_CATALOG, payload)
+        LOGGER.info("deferred registry documents merged")
 
     def _catalog_data(
             self,

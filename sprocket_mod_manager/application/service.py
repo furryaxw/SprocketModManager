@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from .adoption import AdoptionRecord, ExistingModsAdopter
 from .identifiers import detected_capabilities, runtime_states
@@ -27,7 +27,7 @@ from ..infrastructure.profiles import InstallerProfiles
 from ..infrastructure.file_metadata import FileMetadataStore
 from ..infrastructure.manager_paths import STATE_FILE_NAME, file_metadata_path, manager_state_dir, state_file_path
 from ..infrastructure.state import StateStore
-from ..infrastructure.registry_source import RegistrySourceLoader
+from ..infrastructure.registry_source import DOCUMENT_NAMES, RegistrySourceLoader
 from ..utilities.package_paths import validate_supply_target
 
 LOGGER = logging.getLogger(__name__)
@@ -70,9 +70,15 @@ class ModManagerService:
         self._configure_cache_for(game_dir)
         return self._profiles.installer_for(game_dir)
 
-    def load_registry(self, source: str | Path, *, refresh: bool = False) -> Registry:
-        LOGGER.info("loading registry source=%s refresh=%s", source, refresh)
-        registry = self._registry_loader.load(source, refresh=refresh)
+    def load_registry(
+            self,
+            source: str | Path,
+            *,
+            refresh: bool = False,
+            documents: Sequence[str] = DOCUMENT_NAMES,
+    ) -> Registry:
+        LOGGER.info("loading registry source=%s refresh=%s documents=%s", source, refresh, tuple(documents))
+        registry = self._registry_loader.load(source, refresh=refresh, documents=documents)
         # 供给表只从注册表来：拿到就缓存，下次启动还没拉索引时先用缓存那份。诊断规则包同理：
         # 它靠发索引在线更新，缓存是索引还没拉下来时的那一份。这两份缓存都只装索引里的事实 ——
         # 私有包随服务器会话在变，下次启动可能一台都连不上，缓存里留着它们只会让读数对不上。

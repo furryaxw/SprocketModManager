@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 from .service import ModManagerService
 from ..domain.errors import DownloadError, RegistryError
 from ..domain.models import RegistryPackage, ReleaseInfo
+from ..infrastructure.registry_source import DOCUMENT_NAMES
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,10 +18,11 @@ def load_catalog(
         source: str | Path,
         *,
         refresh: bool,
+        documents: Sequence[str] = DOCUMENT_NAMES,
         on_registry_loaded: Callable[[ModManagerService], None] | None = None,
         on_release_loaded: Callable[[str, ReleaseInfo | None], None] | None = None,
 ) -> tuple[ModManagerService, dict[str, ReleaseInfo | None]]:
-    registry = service.load_registry(source, refresh=refresh)
+    registry = service.load_registry(source, refresh=refresh, documents=documents)
     if on_registry_loaded:
         on_registry_loaded(service)
 
