@@ -1,0 +1,47 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.madi-lib",
+    "name": "MadiLib",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "MadiLib"
+    },
+    "description": {
+        "en": "Shared library for madisavage's plugins: rebindable keybinds, a MadiLib tab in the Settings screen, and HUD panels."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "MadiLib.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "library",
+    "tags": [
+        "api",
+        "keybindings",
+        "settings",
+        "hud"
+    ]
+}
