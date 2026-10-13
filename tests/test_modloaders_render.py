@@ -185,7 +185,8 @@ class ModloadersRenderHarnessTests(unittest.TestCase):
         self.assertEqual(chip["text"], "Installed")
         self.assertEqual([button["text"] for button in result["buttons"][0]], ["Repository", "Reinstall", "Remove"])
 
-    def test_install_hands_the_loader_to_the_shared_install_flow(self) -> None:
+    def test_install_hands_the_loader_to_the_queue_without_the_plan_page(self) -> None:
+        """加载器自成一路：确认之后直接入队，不进模组那张计划页。"""
         result = self._render(
             modloaders=[modloader(installed=True, installed_version="0.7.2", update_available=True)],
             click_primary=0,
@@ -193,14 +194,15 @@ class ModloadersRenderHarnessTests(unittest.TestCase):
 
         calls = [entry["args"] for entry in result["apiCalls"] if entry.get("kind") == "call"]
         self.assertIn(
-            ["beginInstall", "lavagang.melonloader"],
+            ["enqueue_install", "lavagang.melonloader", False, {}, True],
             calls,
-            "加载器安装走模组那条路：解析 → 安装确认 → 入队，页面不自己调安装接口",
+            "加载器安装只报包 id：版本由后端解，互斥与游戏版本兼容在加载器页上说清",
         )
+        self.assertNotIn("plan_changes", [entry[0] for entry in calls])
         self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
 
-    def test_reinstalling_a_loader_asks_for_a_plan_with_the_installed_version_included(self) -> None:
-        """只有一个可安装版本的加载器（BepInEx）也要能重装：确认框不能被「版本多于一个」挡住。"""
+    def test_reinstalling_a_loader_keeps_the_installed_version(self) -> None:
+        """只有一个可安装版本的加载器（BepInEx）也要能重装：入队时带上「已装同一版也给」。"""
         result = self._render(
             modloaders=[
                 modloader(
@@ -216,11 +218,11 @@ class ModloadersRenderHarnessTests(unittest.TestCase):
         entries = [
             entry
             for entry in result["apiCalls"]
-            if entry.get("kind") == "call" and entry["args"][:1] == ["beginInstall"]
+            if entry.get("kind") == "call" and entry["args"][:1] == ["enqueue_install"]
         ]
         self.assertEqual(len(entries), 1)
         self.assertTrue(
-            entries[0]["includeInstalled"],
+            entries[0]["args"][4],
             "页面点安装时就要带 include_installed，后端才不会把「已装同一版」跳过",
         )
 

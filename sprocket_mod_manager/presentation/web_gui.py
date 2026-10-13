@@ -616,14 +616,14 @@ class ClientApi:
     def remove_modloader(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.remove_modloader(*args, **kwargs)
 
-    def plan_install(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._installation_controller.plan_install(*args, **kwargs)
+    def plan_changes(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.plan_changes(*args, **kwargs)
+
+    def apply_changes(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._installation_controller.apply_changes(*args, **kwargs)
 
     def enqueue_install(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.enqueue_install(*args, **kwargs)
-
-    def update_all(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._installation_controller.update_all(*args, **kwargs)
 
     def remove(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._installation_controller.remove(*args, **kwargs)

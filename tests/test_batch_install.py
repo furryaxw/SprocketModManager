@@ -50,11 +50,8 @@ class BatchInstallTests(unittest.TestCase):
         service.registry = Registry(packages)
         return ClientApi("test", app_dir=app_dir, service_factory=lambda _app_dir: service)
 
-    def test_planning_a_version_that_is_already_installed_can_be_asked_for_anyway(self) -> None:
-        """解析出来＝装着的那版时默认「跳过」；界面要开版本选择器时会再要一次计划。
-
-        没有这一手，「已经装了当前能装的那版、但索引里还有个不兼容的新版」就没地方去强行装。
-        """
+    def test_planning_an_installed_version_still_opens_the_plan_page(self) -> None:
+        """装着的这一版照样给计划：计划页是换版本、重装的唯一入口，不能被「同版本」挡掉。"""
         item = package("test.mod", "TestMod.dll", b"content", versions=("1.0.0",))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -62,18 +59,18 @@ class BatchInstallTests(unittest.TestCase):
             (root / "game" / "Mods" / "TestMod.dll").write_bytes(b"content")
             try:
                 api.adopt_existing()
-                skipped = api.plan_install(["test.mod"], {"test.mod": "1.0.0"})
-                reopened = api.plan_install(["test.mod"], {"test.mod": "1.0.0"}, True)
+                planned = api.plan_changes(["test.mod"], {"test.mod": "1.0.0"})
+                reinstalled = api.plan_changes(["test.mod"], {"test.mod": "1.0.0"}, reinstall=True)
             finally:
                 api.install_queue.close()
 
-        self.assertEqual(skipped["plans"], [], "装着的这一版没必要再装一遍")
-        self.assertEqual(skipped["skipped"], ["test.mod"])
-        self.assertTrue(reopened["ok"], reopened)
-        self.assertEqual(reopened["plans"][0]["packages"][0]["version"], "1.0.0")
-        self.assertEqual(reopened["skipped"], [], "要了就给，不再跳过")
+        self.assertTrue(planned["ok"], planned)
+        self.assertEqual(planned["install"], {"test.mod": "1.0.0"})
+        self.assertEqual([line["action"] for line in planned["lines"]], ["install"])
+        self.assertTrue(reinstalled["ok"], reinstalled)
+        self.assertTrue(reinstalled["lines"][0]["reinstall"], "重装这个标记落在那一行上")
 
-    def test_plan_skips_the_broken_mod_and_keeps_the_rest(self) -> None:
+    def test_plan_marks_the_broken_mod_red_and_keeps_the_rest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api = self._api(Path(directory), [
                 package("test.good", "Good.dll", b"good"),
@@ -81,42 +78,46 @@ class BatchInstallTests(unittest.TestCase):
                 package("test.lib", "Lib.dll", b"lib", versions=("1.0.0",)),
             ])
             try:
-                result = api.plan_install(["test.broken", "test.good"])
+                result = api.plan_changes(["test.broken", "test.good"])
             finally:
                 api.install_queue.close()
 
             self.assertTrue(result["ok"], result)
-            self.assertEqual([plan["id"] for plan in result["plans"]], ["test.good"])
-            self.assertEqual([item["id"] for item in result["failed"]], ["test.broken"])
-            self.assertIn("test.lib >=9.9.9", result["failed"][0]["message"])
-            self.assertIn("1.0.0", result["failed"][0]["message"], "顺带说出这个包实际有哪些版本")
+            self.assertEqual(result["install"], {"test.good": "1.0.0"})
+            lines = {line["id"]: line for line in result["lines"]}
+            self.assertEqual(lines["test.good"]["action"], "install")
+            self.assertEqual(lines["test.broken"]["action"], "skip", "解不出来的那个标红出局")
+            problem = lines["test.broken"]["problems"][0]
+            self.assertEqual(problem["kind"], "missing-dependency")
+            self.assertIn("test.lib >=9.9.9", problem["text"], "红行里写清缺的是哪条依赖")
 
-    def test_plan_still_fails_when_nothing_can_be_installed(self) -> None:
+    def test_a_batch_that_has_nothing_to_install_is_still_a_plan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api = self._api(Path(directory), [
                 unresolvable_package(),
                 package("test.lib", "Lib.dll", b"lib", versions=("1.0.0",)),
             ])
             try:
-                result = api.plan_install(["test.broken"])
+                result = api.plan_changes(["test.broken"])
             finally:
                 api.install_queue.close()
 
-            self.assertFalse(result["ok"], result)
-            self.assertEqual(result["code"], "install_plan_failed")
-            # 单条失败不带壳：界面直接看到解析器给的诊断。
-            self.assertIn("test.lib >=9.9.9", result["message"])
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["install"], {}, "一个都装不了就是空安装列表")
+            self.assertEqual(result["remove"], [])
+            self.assertEqual([line["action"] for line in result["lines"]], ["skip"])
 
-    def test_plan_reports_a_dependency_that_is_not_in_the_registry(self) -> None:
+    def test_plan_names_a_dependency_that_is_not_in_the_registry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api = self._api(Path(directory), [unresolvable_package()])
             try:
-                result = api.plan_install(["test.broken"])
+                result = api.plan_changes(["test.broken"])
             finally:
                 api.install_queue.close()
 
-            self.assertFalse(result["ok"], result)
-            self.assertIn("test.lib", result["message"])
+            self.assertTrue(result["ok"], result)
+            problem = result["lines"][0]["problems"][0]
+            self.assertIn("test.lib", problem["text"])
 
     def test_enqueue_hands_over_only_the_installable_packages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -155,7 +156,7 @@ class BatchInstallTests(unittest.TestCase):
 
 
 class BatchInstallUiTests(unittest.TestCase):
-    """客户端必须真的把 `failed` 用起来：失败的模组也留着自己的框，原因写在框里。"""
+    """客户端必须真的把计划里的红行用起来：每一行都有自己的框，理由写在框里。"""
 
     def setUp(self) -> None:
         self.client_ui = (
@@ -163,39 +164,39 @@ class BatchInstallUiTests(unittest.TestCase):
         )
 
     def test_plan_body_writes_the_reason_inside_the_mod_box(self) -> None:
-        catalog = (self.client_ui / "js" / "catalog.js").read_text(encoding="utf-8")
-        self.assertIn("function createPlanBody(planState, onVersionChange = async () => {})", catalog)
-        self.assertIn('group.className = failure ? "plan-group skipped" : "plan-group"', catalog)
-        self.assertIn('mark.textContent = tr("skipped")', catalog)
-        self.assertIn('`${tr("skippedReason")}: ${failure.message}`', catalog)
-
-    def test_a_failed_package_keeps_its_box_and_stays_out_of_the_queue(self) -> None:
         installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
-        self.assertIn("createPlanBody(planState, selectPlanVersion)", installs)
+        self.assertIn("function planLineBox(line, onChoice)", installs)
         self.assertIn(
-            "planBoxes(result.plans, result.failed, versions, packageIds)",
+            'group.className = line.problems?.length ? "plan-group skipped" : "plan-group"',
             installs,
-            "解析不了的包也要有自己的框",
         )
         self.assertIn(
-            "installablePlans(planState).map((plan) => plan.id)",
+            'reason.textContent = `${tr("skippedReason")}: ${planProblemText(problem, line.id)}`',
             installs,
-            "失败的那个留着框只是为了让用户换一版，不该进队列",
         )
+        self.assertIn('return tr("planConflictReason", {others})', installs, "冲突的话由界面按语言写")
 
-    def test_install_flows_report_the_skipped_count_after_queueing(self) -> None:
+    def test_every_planned_package_keeps_its_box(self) -> None:
         installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
-        self.assertEqual(
-            installs.count('tr("skippedMods", {count: queued.failed.length})'),
-            1,
-            "批量安装的完成提示要带上跳过的数量",
+        self.assertIn(
+            "for (const line of planState.plan?.lines || [])",
+            installs,
+            "计划里的每一行都有框，出局的那些也在",
         )
-        self.assertIn('tr("skippedMods", {count: result.failed.length})', installs,
-                      "批量更新的完成提示同样要带上跳过的数量")
+        self.assertIn("body.append(planLineBox(line, onChoice))", installs)
+
+    def test_the_plan_page_reports_what_it_did(self) -> None:
+        installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
+        self.assertIn('toast(tr("queued", {count: applied.count}))', installs)
+        self.assertIn(
+            'tr("removed", {names: (applied.removed || []).join(", ")})',
+            installs,
+            "卸载的完成提示要报出真卸掉的那几个",
+        )
 
     def test_the_new_words_exist_in_both_languages(self) -> None:
         text = (self.client_ui / "js" / "i18n.js").read_text(encoding="utf-8")
-        for key in ("skippedMods", "skipped", "skippedReason"):
+        for key in ("skippedReason", "planSkipOption", "planRemoveOption", "planReinstall"):
             self.assertEqual(text.count(f"{key}:"), 2, f"{key} 的 zh 与 en 都要有")
 
 

@@ -39,16 +39,6 @@ function packageVerdict(pkg) {
     return pkg?.release?.verdict || releases[0]?.verdict || VERDICT_UNKNOWN;
 }
 
-/** 「点安装会装的那个版本」的判定：列表里那个版本号用它上色。 */
-function targetVerdict(pkg) {
-    // 包整体一个兼容版本都没有时，装哪版都一样跑不起来 —— 跟着包判，别让那一版自己的「未知」把话说软。
-    if (packageVerdict(pkg) === VERDICT_INCOMPATIBLE) return VERDICT_INCOMPATIBLE;
-    const target = installTarget(pkg);
-    if (!target) return VERDICT_UNKNOWN;
-    const release = packageReleases(pkg).find((entry) => entry.version === target);
-    return release?.verdict || packageVerdict(pkg);
-}
-
 /**
  * 这条读数自身有没有问题（后端读不出来或校验不过）。
  *
@@ -63,15 +53,6 @@ function packageHidden(pkg) {
     if (packageUnavailable(pkg)) return false;
     if (!packageReleases(pkg).length) return false;
     return packageVerdict(pkg) === VERDICT_INCOMPATIBLE;
-}
-
-/**
- * 默认要装的版本：后端按当前环境挑好的那个（兼容的里面最高的；没有兼容的就最新那版）。
- *
- * 挑哪一版是判定，归后端 —— 前端拿到的 `install_target` 就是答案，不再自己按判定列表挑。
- */
-function installTarget(pkg) {
-    return String(pkg?.install_target || "");
 }
 
 function verdictClass(verdict) {
@@ -120,17 +101,4 @@ function versionWithSource(pkg, version) {
     const text = String(version || "");
     if (!text || text === "-") return text;
     return releaseCompatibility(pkg, text)?.source === "inherited" ? `${text}*` : text;
-}
-
-/**
- * 「点安装实际会装哪个」：兼容的里面最高的，一个都不兼容才退到最新。
- *
- * 列表和详情页显示的版本号都是它 —— 直接写「最新版」会让人以为点下去装的就是那一版。
- * 它跟最新版不一致时前面缀一个 `↓`（详情页另外把最新版划掉）。
- */
-function installTargetVersion(pkg) {
-    const target = installTarget(pkg);
-    const newest = String(pkg?.release?.version || "");
-    const text = versionWithSource(pkg, target);
-    return target && newest && target !== newest ? `↓ ${text}` : text;
 }

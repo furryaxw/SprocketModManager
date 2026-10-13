@@ -190,18 +190,6 @@ class CatalogVerdictTests(unittest.TestCase):
         for key in ("packages", "installed", "local_mods", "local_summary", "has_any_mods"):
             self.assertNotIn(key, payload, f"目录读数不该再带 {key}")
 
-    def test_the_catalog_carries_the_version_it_would_install(self) -> None:
-        """界面上「点安装会装哪版」是后端挑好的：1.1.0 不兼容，所以是 1.0.0。"""
-        with tempfile.TemporaryDirectory() as directory:
-            api = self._api(Path(directory))
-            try:
-                api.load_catalog()
-                package = catalog_packages(api)[0]
-            finally:
-                self._close(api)
-
-        self.assertEqual(package["install_target"], "1.0.0")
-
     def test_the_catalog_lists_the_newest_release_first(self) -> None:
         """目录次序就是版本次序：界面「按版本」排序照它摆，不再自己比版本。"""
         entries = [
@@ -427,25 +415,24 @@ class CatalogVerdictTests(unittest.TestCase):
             api = self._api(Path(directory))
             try:
                 api.load_catalog()
-                plan = api.plan_install(["test.mod"])
+                plan = api.plan_changes(["test.mod"])
             finally:
                 self._close(api)
 
         self.assertTrue(plan["ok"], plan)
-        root = plan["plans"][0]["packages"][0]
-        self.assertEqual(root["version"], "1.0.0", "1.1.0 不兼容就该退到 1.0.0")
+        self.assertEqual(plan["install"], {"test.mod": "1.0.0"}, "1.1.0 不兼容就该退到 1.0.0")
 
     def test_an_explicitly_requested_version_wins(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api = self._api(Path(directory))
             try:
                 api.load_catalog()
-                plan = api.plan_install(["test.mod"], {"test.mod": "1.1.0"})
+                plan = api.plan_changes(["test.mod"], {"test.mod": "1.1.0"})
             finally:
                 self._close(api)
 
         self.assertTrue(plan["ok"], plan)
-        self.assertEqual(plan["plans"][0]["packages"][0]["version"], "1.1.0")
+        self.assertEqual(plan["install"], {"test.mod": "1.1.0"})
 
 
 class EnvironmentChainTests(unittest.TestCase):
@@ -487,7 +474,7 @@ class EnvironmentChainTests(unittest.TestCase):
         self.assertEqual(entry["release"]["verdict"], "not_applicable")
         self.assertEqual([item["verdict"] for item in entry["releases"]], ["not_applicable"])
 
-    def test_a_dependency_that_needs_another_game_version_fails_the_plan(self) -> None:
+    def test_a_dependency_that_needs_another_game_version_marks_the_row_red(self) -> None:
         packages = [
             embedded(
                 "test.root",
@@ -501,16 +488,19 @@ class EnvironmentChainTests(unittest.TestCase):
             api = self._api(Path(directory), packages)
             try:
                 api.load_catalog()
-                plan = api.plan_install(["test.root"])
+                plan = api.plan_changes(["test.root"])
             finally:
                 api._environment_monitor.stop()
                 api.install_queue.close()
 
-        self.assertFalse(plan["ok"], plan)
-        message = plan["message"]
-        self.assertIn("test.dep", message)
-        self.assertIn("2.0.0 requires another environment", message)
-        self.assertIn("Sprocket 0.2.53.2", message)
+        self.assertTrue(plan["ok"], plan)
+        self.assertEqual(plan["install"], {"test.root": "1.0.0"}, "依赖跑不起来，这一版照装")
+        line = plan["lines"][0]
+        self.assertEqual(line["action"], "install")
+        problem = line["problems"][0]
+        self.assertEqual(problem["kind"], "missing-dependency")
+        self.assertIn("test.dep", problem["text"])
+        self.assertIn("test.dep", line["ignored"], "执行时不再去拉这条依赖")
 
     def test_the_same_chain_resolves_when_the_dependency_fits(self) -> None:
         packages = [
@@ -526,14 +516,13 @@ class EnvironmentChainTests(unittest.TestCase):
             api = self._api(Path(directory), packages)
             try:
                 api.load_catalog()
-                plan = api.plan_install(["test.root"])
+                plan = api.plan_changes(["test.root"])
             finally:
                 api._environment_monitor.stop()
                 api.install_queue.close()
 
         self.assertTrue(plan["ok"], plan)
-        versions = {item["id"]: item["version"] for item in plan["plans"][0]["packages"]}
-        self.assertEqual(versions, {"test.root": "1.0.0", "test.dep": "2.0.0"})
+        self.assertEqual(plan["install"], {"test.root": "1.0.0", "test.dep": "2.0.0"})
 
     def test_an_explicitly_picked_version_still_installs_when_it_is_red(self) -> None:
         # 界面上红色版本也允许选（只是不阻止），所以点名安装时不能在解析阶段被环境拦掉。
@@ -550,14 +539,13 @@ class EnvironmentChainTests(unittest.TestCase):
             api = self._api(Path(directory), packages)
             try:
                 api.load_catalog()
-                plan = api.plan_install(["test.root"], {"test.root": "1.0.0"})
+                plan = api.plan_changes(["test.root"], {"test.root": "1.0.0"})
             finally:
                 api._environment_monitor.stop()
                 api.install_queue.close()
 
         self.assertTrue(plan["ok"], plan)
-        versions = {item["id"]: item["version"] for item in plan["plans"][0]["packages"]}
-        self.assertEqual(versions, {"test.root": "1.0.0", "test.dep": "2.0.0"})
+        self.assertEqual(plan["install"], {"test.root": "1.0.0", "test.dep": "2.0.0"})
 
 
 def versioned_release(package_id: str, version: str, sprocket_range: str, release_id: int) -> dict:
@@ -646,9 +634,9 @@ class PinnedVersionDependencyTreeTests(unittest.TestCase):
         api.data.close()
 
     def _tree(self, api: ClientApi, version: str) -> dict:
-        plan = api.plan_install(["test.two-lines"], {"test.two-lines": version})
+        plan = api.plan_changes(["test.two-lines"], {"test.two-lines": version})
         self.assertTrue(plan["ok"], plan)
-        return {item["id"]: item["version"] for item in plan["plans"][0]["packages"]}
+        return dict(plan["install"])
 
     def test_the_modern_line_pulls_in_its_own_dependency_and_loader(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

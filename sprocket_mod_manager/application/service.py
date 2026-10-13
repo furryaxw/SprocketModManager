@@ -109,30 +109,64 @@ class ModManagerService:
             version_range: str = "*",
             *,
             pinned: bool = False,
-            installed: Iterable[str] = (),
+            installed: Mapping[str, str] | None = None,
+            constrain_world: bool = True,
+            ignore_edges: Iterable[tuple[str, str]] = (),
+            excluded: Iterable[str] = (),
     ) -> ResolutionPlan:
-        """解一个包的依赖。
+        return self.resolve_all(
+            {identifier: version_range},
+            pinned=(identifier,) if pinned else (),
+            installed=installed,
+            constrain_world=constrain_world,
+            ignore_edges=ignore_edges,
+            excluded=excluded,
+        )
 
-        `pinned` 表示这个版本范围是调用方（界面）点名定下的：那个根包不再按环境淘汰
-        （用户有权装一个不兼容的版本），但它的依赖仍然按环境筛。
+    def resolve_all(
+            self,
+            roots: Mapping[str, str],
+            *,
+            pinned: Iterable[str] = (),
+            installed: Mapping[str, str] | None = None,
+            constrain_world: bool = True,
+            ignore_edges: Iterable[tuple[str, str]] = (),
+            excluded: Iterable[str] = (),
+    ) -> ResolutionPlan:
+        """解这批根的依赖，同时保住世界的现状。
 
-        `installed` 是目标游戏目录里已经装上的包 id：一个类型有多个供给者时，只有已安装的
-        那个能决定安装目录；没有已安装的那一个就直接报错，绝不挑一个猜的。
+        `pinned` 是那些不再按环境淘汰的根：界面点名了某一版时只有它们豁免，自动挑的那些照筛。
+        依赖永远按环境筛。
+
+        `installed` 是目标游戏目录里已经装上的包（id -> 版本）：它们一起参与求解 —— 一个类型
+        有多个供给者时只有已安装的那个能决定安装目录，而且已装包的需求也要继续满足，否则
+        装一个新包就会把已装包的依赖降级掉。`constrain_world=False` 时它们只作偏好与供给者
+        选择：执行已经确认过的那一行时用，冲突不在这里再拦一次。
+
+        `ignore_edges` 与 `excluded` 是那条已确认的行留给执行的形状：计划里标成缺口的依赖
+        不许在落盘时再被拉回来（`ignore_edges`），标了「不安装」的包连当依赖都不算（`excluded`）。
         """
-        LOGGER.debug("resolving package identifier=%s range=%s pinned=%s", identifier, version_range, pinned)
+        LOGGER.debug(
+            "resolving roots=%s pinned=%s installed=%d",
+            sorted(roots),
+            sorted(pinned),
+            len(installed or {}),
+        )
         registry = self._require_registry()
-        package = registry.resolve_identifier(identifier)
         plan = DependencySolver(
             registry,
             self.github,
             environment=self.environment,
-            pinned=frozenset({package.id}) if pinned else frozenset(),
-            installed=frozenset(installed),
-        ).resolve(package.id, version_range)
-        LOGGER.info("resolved package=%s packages=%d", package.id, len(plan.packages))
+            pinned=frozenset(registry.resolve_identifier(item).id for item in pinned),
+            installed=installed,
+            constrain_world=constrain_world,
+        ).resolve_all(roots, ignore_edges=ignore_edges, excluded=excluded)
+        LOGGER.info(
+            "resolved roots=%s packages=%d", list(plan.named_roots()), len(plan.packages)
+        )
         return plan
 
-    def _modloader_ids(self) -> frozenset[str]:
+    def modloader_ids(self) -> frozenset[str]:
         """注册表里的基础运行时包 id：既有记录缺 `kind` 时靠它归一。"""
         if self.registry is None:
             return frozenset()
@@ -150,6 +184,15 @@ class ModManagerService:
     def _installed_ids(self, game_dir: Path) -> frozenset[str]:
         """安装记录里的包 id；一个类型有多个供给者时由它决定用哪个安装目录。"""
         return frozenset(self._installed_packages(game_dir))
+
+    @staticmethod
+    def installed_versions(records: Mapping[str, Any]) -> dict[str, str]:
+        """安装记录 -> 已装包版本：求解时拿它当世界的现状。版本读不出来的记空串（那就不动它）。"""
+        return {
+            str(package_id): str(info.get("version") or "")
+            for package_id, info in records.items()
+            if isinstance(info, dict)
+        }
 
     def prepare(
             self,
@@ -172,15 +215,31 @@ class ModManagerService:
             version_range: str = "*",
             progress: ProgressCallback | None = None,
             force_conflicts: bool = False,
+            constrain_world: bool = True,
+            ignore_edges: Iterable[tuple[str, str]] = (),
+            excluded: Iterable[str] = (),
     ) -> tuple[ResolutionPlan, list[str]]:
-        LOGGER.info("install requested identifier=%s game_dir=%s", identifier, game_dir)
+        """把点名的那个包（或那一版）装上去。
+
+        `constrain_world=False` 是「执行一行已经确认过的计划」：世界只作偏好与供给者选择，
+        不因为与已装包冲突再拦一次 —— 那件事在计划那一步已经由用户拍板了。`ignore_edges`
+        与 `excluded` 是那一行在计划里的缺口形状，落盘时照它执行。"""
+        LOGGER.info(
+            "install requested identifier=%s game_dir=%s constrain_world=%s",
+            identifier,
+            game_dir,
+            constrain_world,
+        )
         # 入队时就把版本钉死了，所以这里按点名处理：队列不再因为环境变化改主意。
         records = self._installed_packages(game_dir)
         plan = self.resolve(
             identifier,
             version_range,
             pinned=True,
-            installed=frozenset(records),
+            installed=self.installed_versions(records),
+            constrain_world=constrain_world,
+            ignore_edges=ignore_edges,
+            excluded=excluded,
         )
         # 已经装着同一个版本的依赖不重取也不重铺：计划照旧供它供给的目录，落盘却没有它。
         prepared = self.prepare(plan, progress, satisfied=satisfied_versions(records))
@@ -254,19 +313,33 @@ class ModManagerService:
         return displaced
 
     def remove(self, identifier: str, game_dir: Path) -> tuple[list[str], list[str]]:
-        LOGGER.info("remove requested identifier=%s game_dir=%s", identifier, game_dir)
+        return self.remove_many([identifier], game_dir)
+
+    def remove_many(
+            self,
+            identifiers: Sequence[str],
+            game_dir: Path,
+    ) -> tuple[list[str], list[str]]:
+        """一次卸掉这几个包：卸载计划里「为了卸 A 连 B 一起卸」就是靠它才不会被彼此挡住。"""
+        LOGGER.info("remove requested identifiers=%s game_dir=%s", list(identifiers), game_dir)
         registry = self._require_registry()
-        package = registry.resolve_identifier(identifier)
-        if package.is_loader:
-            # 只在磁盘上的加载器也要能卸载：先按标识符登记它的顶层条目，搬进备份区才有依据。
-            self.claim_detected_loader(package.id, game_dir)
-        result = self._installer_for(game_dir).remove(
-            package.id,
+        packages = [registry.resolve_identifier(item) for item in identifiers]
+        for package in packages:
+            if package.is_loader:
+                # 只在磁盘上的加载器也要能卸载：先按标识符登记它的顶层条目，搬进备份区才有依据。
+                self.claim_detected_loader(package.id, game_dir)
+        result = self._installer_for(game_dir).remove_many(
+            [package.id for package in packages],
             game_dir,
-            modloaders=self._modloader_ids(),
+            modloaders=self.modloader_ids(),
             loader_supply=self.loader_supply(),
         )
-        LOGGER.info("remove completed package=%s removed=%d warnings=%d", package.id, len(result[0]), len(result[1]))
+        LOGGER.info(
+            "remove completed packages=%s removed=%d warnings=%d",
+            [package.id for package in packages],
+            len(result[0]),
+            len(result[1]),
+        )
         return result
 
     def loader_supply(self) -> dict[str, tuple[str, ...]]:
@@ -303,7 +376,7 @@ class ModManagerService:
         """
         installer = self._installer_for(game_dir)
         try:
-            installer.reconcile(game_dir, modloaders=self._modloader_ids())
+            installer.reconcile(game_dir, modloaders=self.modloader_ids())
         except (ModManagerError, OSError, ValueError) as exc:
             LOGGER.warning("could not reconcile install state with %s: %s", game_dir, exc)
         state = installer.state_store.load()
@@ -351,7 +424,7 @@ class ModManagerService:
         `missing` = 文件不在。三者是不同的事实，界面上应该分开表达。
         """
         installer = self._installer_for(game_dir)
-        installer.reconcile(game_dir, modloaders=self._modloader_ids())
+        installer.reconcile(game_dir, modloaders=self.modloader_ids())
         report = installer.verify(game_dir)
         state = installer.state_store.load()
         self._annotate_integrity(state, game_dir, hashes=report["hashes"])

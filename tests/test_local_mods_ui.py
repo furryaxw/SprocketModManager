@@ -116,7 +116,6 @@ class LocalModsClientUiTests(unittest.TestCase):
             "localOnly",
             "modDisabledRestart",
             "modEnabledRestart",
-            "restartRequired",
             "installedFilterIncompatible",
         ):
             self.assertGreaterEqual(

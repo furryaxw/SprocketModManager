@@ -8,9 +8,10 @@ from .base import ApiController
 from ..api_support import GamePathRequiredError
 from ...application.data_hub import KEY_ENVIRONMENT, KEY_INSTALLED, KEY_LOADERS, KEY_QUEUE
 from ...application.install_queue import ACTIVE_STATES, InstallQueueEntry
+from ...application.planning import ACTION_INSTALL, ChangePlanner, ChangeRequest
 from ...application.preparer import PlanPreparer, satisfied_versions
 from ...application.service import ModManagerService
-from ...domain.compatibility import COMPATIBLE, CapabilityEnvironment, loader_table_decision, release_verdict
+from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import ModManagerError
 from ...domain.models import RegistryPackage, ResolutionPlan
 from ...domain.semver import Version
@@ -82,28 +83,6 @@ class InstallationController(ApiController):
 
     def _current_environment(self) -> CapabilityEnvironment:
         return self.current_environment()
-
-    def preferred_version(self, service: ModManagerService, package: RegistryPackage) -> str:
-        """这个包在当前环境下最该装的版本：兼容的里面最高的；一个都不兼容才退到最新。
-
-        翻译包不参与环境判定（判定为「不适用」），于是自然退到「最新」。
-        """
-        try:
-            releases = [
-                release
-                for release in service.github.releases(package)
-                if service.github.install_assets(package, release)
-            ]
-        except (ModManagerError, OSError, RuntimeError, ValueError):
-            return ""
-        environment = self._current_environment()
-        for release in releases:
-            verdict = release_verdict(
-                environment, category=package.category, dependencies=release.dependencies
-            )
-            if verdict == COMPATIBLE:
-                return str(release.version)
-        return str(releases[0].version) if releases else ""
 
     def get_modloaders(self) -> dict[str, Any]:
         """注册表里所有加载器包：装没装、能不能更新、在当前环境下能不能跑。"""
@@ -242,7 +221,7 @@ class InstallationController(ApiController):
                 service.install(
                     package.id,
                     game_path,
-                    version_range=self._version_range(service, package, None),
+                    version_range=self._version_range(None),
                     progress=None,
                 )
             finally:
@@ -308,31 +287,30 @@ class InstallationController(ApiController):
     def _displaced_loaders(
             self,
             service: ModManagerService,
-            plan: ResolutionPlan,
+            installing: Iterable[str],
             installed: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """装这个计划会让哪些已装加载器被交还：确认框先把它们列出来。
+        """装这一批会让哪些已装加载器被交还：确认框先把它们列出来。
 
         加载器可能是被依赖带进来的（模组依赖 BepInEx，BepInEx 就顶掉官方 MelonLoader），所以看的是
-        **计划里的每个加载器**，不只是用户点的那个包。计划里的包不算：它们是这次要装的。判定与落盘前
-        那次交还用同一个口径（`capability_conflicts`），确认框里说会卸载的就是实际会卸载的。
+        **这一批里的每个加载器**，不只是用户点的那个包。这一批里的包不算：它们是这次要装的。判定与
+        落盘前那次交还用同一个口径（`capability_conflicts`），确认框里说会卸载的就是实际会卸载的。
         """
-        if service.registry is None:
+        registry = service.registry
+        if registry is None:
             return []
-        installing = {item.package.id for item in plan.packages}
+        wanted = {str(item) for item in installing}
         displaced: list[str] = []
-        for item in plan.packages:
-            if not item.package.is_loader:
+        for package_id in sorted(wanted):
+            if not registry.has_package(package_id) or not registry.get(package_id).is_loader:
                 continue
-            for package_id in service.capability_conflicts(item.package.id, installed):
-                if package_id not in installing and package_id not in displaced:
-                    displaced.append(package_id)
+            for other in service.capability_conflicts(package_id, installed):
+                if other not in wanted and other not in displaced:
+                    displaced.append(other)
         entries: list[dict[str, Any]] = []
         for package_id in displaced:
-            if package_id in installing:
-                continue
             try:
-                other = service.registry.get(package_id)
+                other = registry.get(package_id)
             except ModManagerError:
                 continue
             info = installed.get(package_id) or {}
@@ -343,36 +321,6 @@ class InstallationController(ApiController):
                 "version": str(info.get("version") or ""),
             })
         return entries
-
-    @staticmethod
-    def _plan_data(
-            service: ModManagerService,
-            package: RegistryPackage,
-            plan: ResolutionPlan,
-    ) -> dict[str, Any]:
-        return {
-            "id": package.id,
-            "display_name": dict(package.display_name),
-            "name": package.name,
-            "replaces_autotranslator": any(
-                "xunity:translation" in item.package.replace_types()
-                for item in plan.packages
-            ),
-            "packages": [
-                {
-                    "id": item.package.id,
-                    "display_name": dict(item.package.display_name),
-                    "name": item.package.name,
-                    "version": str(item.release.version),
-                    "tag": item.release.tag,
-                    "assets": [
-                        asset.name
-                        for asset in service.github.install_assets(item.package, item.release)
-                    ],
-                }
-                for item in plan.packages
-            ],
-        }
 
     @staticmethod
     def _record_failure(failed: list[dict[str, str]], package_id: str, exc: Exception) -> None:
@@ -387,102 +335,203 @@ class InstallationController(ApiController):
             return failed[0]["message"]
         return " | ".join(f"{item['id']}: {item['message']}" for item in failed)
 
-    def _version_range(
-            self,
-            service: ModManagerService,
-            package: RegistryPackage,
-            requested: str | None,
-    ) -> str:
-        """点名了就按点名的版本装，否则按当前环境挑一个（兼容里最高的）。"""
-        version = str(requested or "").strip() or self.preferred_version(service, package)
+    @staticmethod
+    def _version_range(requested: str | None) -> str:
+        """点名了就钉死那一版；没点名就给一段空区间。
+
+        空区间让求解器按环境**和世界**（已装的、同批的）自己挑版本 —— 界面默认推荐的那一版
+        由候选顺序保证优先，只有它和世界不相容时才让路。
+        """
+        version = str(requested or "").strip()
         return f"={version}" if version else "*"
 
-    def plan_install(
+    def _named_roots(
+            self,
+            service: ModManagerService,
+            package_ids: list[str],
+            requested: dict[str, str],
+            failed: list[dict[str, str]],
+    ) -> tuple[dict[str, str], list[str]]:
+        """这批要装的根：版本区间，以及点了名（因此豁免环境判定）的那些。"""
+        ranges: dict[str, str] = {}
+        pinned: list[str] = []
+        for package_id in dict.fromkeys(str(item) for item in package_ids):
+            try:
+                package = self._package(service, package_id)
+            except (ModManagerError, OSError, ValueError) as exc:
+                self._record_failure(failed, package_id, exc)
+                continue
+            ranges[package.id] = self._version_range(requested.get(package.id))
+            if ranges[package.id] != "*":
+                pinned.append(package.id)
+        return ranges, pinned
+
+    def _solve_together(
+            self,
+            service: ModManagerService,
+            roots: dict[str, str],
+            pinned: list[str],
+            installed_versions: dict[str, str],
+            failed: list[dict[str, str]],
+    ) -> tuple[ResolutionPlan | None, dict[str, str]]:
+        """把这批根和世界一起解。
+
+        一起解不出来时分两步：先逐个解，把「自己就装不上」的那些挑出来报清楚；再把剩下的
+        一起解一次。整批都过不去才整体失败 —— 报出来的原因是「哪一个装不上」，不是「整批失败」。
+        """
+        if not roots:
+            return None, roots
+        try:
+            plan = service.resolve_all(roots, pinned=pinned, installed=installed_versions)
+        except (ModManagerError, OSError, ValueError) as exc:
+            for package_id in roots:
+                try:
+                    service.resolve_all(
+                        {package_id: roots[package_id]},
+                        pinned=[package_id] if package_id in pinned else [],
+                        installed=installed_versions,
+                    )
+                except (ModManagerError, OSError, ValueError) as single:
+                    self._record_failure(failed, package_id, single)
+            broken = {item["id"] for item in failed}
+            if all(package_id in broken for package_id in roots):
+                raise ModManagerError(self._failure_message(failed)) from exc
+            remaining = {key: value for key, value in roots.items() if key not in broken}
+            plan = service.resolve_all(
+                remaining,
+                pinned=[item for item in pinned if item in remaining],
+                installed=installed_versions,
+            )
+            return plan, remaining
+        return plan, roots
+
+    def _change_request(
             self,
             package_ids: list[str],
-            versions: dict[str, str] | None = None,
-            include_installed: bool = False,
-    ) -> dict[str, Any]:
-        """`include_installed`：解析出来的版本就等于装着的那版时也把计划给我。
+            choices: dict[str, str] | None,
+            reinstall: bool,
+            force: bool,
+    ) -> tuple[ModManagerService, Path, ChangeRequest]:
+        game_path = self._valid_game_path()
+        service = self._current_service()
+        if service.registry is None:
+            raise RuntimeError("catalog is not loaded")
+        return (
+            service,
+            game_path,
+            ChangeRequest(
+                package_ids=tuple(str(item) for item in package_ids),
+                choices={str(key): str(value) for key, value in (choices or {}).items()},
+                reinstall=bool(reinstall),
+                force=bool(force),
+            ),
+        )
 
-        界面靠这份计划才能开出安装对话框 —— 对话框里的版本选择器是「强行装新版」唯一的路，
-        所以「已经装了当前能装的那版」不能把对话框整个挡掉。
+    def _change_plan(
+            self,
+            service: ModManagerService,
+            game_path: Path,
+            request: ChangeRequest,
+    ) -> dict[str, Any]:
+        plan = ChangePlanner(
+            registry=service.registry,
+            github=service.github,
+            environment=self.current_environment(),
+            state=service.installed(game_path),
+            modloaders=service.modloader_ids(),
+        ).plan(request)
+        # 这一批会让哪些已装加载器被交还：计划页先把它们摆出来（模组把 BepInEx 当依赖带进来时，
+        # 顶掉的可能是官方 MelonLoader）。
+        plan["displaces"] = self._displaced_loaders(
+            service, plan.get("install", {}), service.installed(game_path)
+        )
+        return plan
+
+    def plan_changes(
+            self,
+            package_ids: list[str],
+            choices: dict[str, str] | None = None,
+            reinstall: bool = False,
+            force: bool = False,
+    ) -> dict[str, Any]:
+        """把这批操作算成一份计划：每行的动作、版本、兼容性与红行原因。
+
+        装不上不是错误：冲突的包标红出局，结果可以是空安装列表 —— 计划页照开。只有「现在
+        根本做不了」（没配游戏路径、注册表没加载）才返回失败。
         """
         try:
-            game_path = self._valid_game_path()
-            service = self._current_service()
-            requested = {str(key): str(value) for key, value in (versions or {}).items()}
-            installed = service.installed(game_path)
-            plans: list[dict[str, Any]] = []
-            resolved_plans: list[tuple[RegistryPackage, ResolutionPlan]] = []
-            skipped: list[str] = []
-            failed: list[dict[str, str]] = []
-            for package_id in dict.fromkeys(str(item) for item in package_ids):
-                try:
-                    package = self._package(service, package_id)
-                    # 版本由界面按环境挑好（点名），所以根包不再被环境淘汰；它的依赖照筛。
-                    plan = service.resolve(
-                        package.id,
-                        self._version_range(service, package, requested.get(package_id)),
-                        pinned=True,
-                        installed=frozenset(installed),
-                    )
-                    root = plan.by_id()[package.id]
-                    if not include_installed and installed.get(package.id, {}).get("version") == str(root.release.version):
-                        skipped.append(package.id)
-                        continue
-                    data = self._plan_data(service, package, plan)
-                    data["displaces"] = self._displaced_loaders(service, plan, installed)
-                    plans.append(data)
-                    resolved_plans.append((package, plan))
-                except (ModManagerError, OSError, ValueError) as exc:
-                    self._record_failure(failed, package_id, exc)
-            covered = {
-                item.package.id
-                for _package, plan in resolved_plans
-                for item in plan.packages
-            }
-            recommendations: dict[str, dict[str, Any]] = {}
-            # 推荐来自计划里的每个包：依赖带进来的加载器也有自己的推荐（BepInEx 推荐兼容补丁），
-            # 它们和用户点的那个包一样会一起装上，所以推荐要一起给出来。
-            for _package, plan in resolved_plans:
-                for item in plan.packages:
-                    recommending = item.package
-                    for recommendation_id in recommending.recommendations:
-                        if recommendation_id in covered:
-                            continue
-                        if recommendation_id in recommendations:
-                            recommendations[recommendation_id]["recommended_by"].append(recommending.id)
-                            continue
-                        try:
-                            recommended = self._package(service, recommendation_id)
-                            recommended_plan = service.resolve(
-                                recommended.id,
-                                self._version_range(service, recommended, requested.get(recommendation_id)),
-                                pinned=True,
-                                installed=frozenset(installed),
-                            )
-                        except ModManagerError:
-                            continue
-                        root = recommended_plan.by_id()[recommended.id]
-                        if installed.get(recommended.id, {}).get("version") == str(root.release.version):
-                            continue
-                        data = self._plan_data(service, recommended, recommended_plan)
-                        data["recommended_by"] = [recommending.id]
-                        recommendations[recommended.id] = data
-            if not plans and failed:
-                raise ModManagerError(self._failure_message(failed))
-            return self._success(
-                plans=plans,
-                recommendations=list(recommendations.values()),
-                skipped=skipped,
-                failed=failed,
+            service, game_path, request = self._change_request(
+                package_ids, choices, reinstall, force
             )
+            return self._success(**self._change_plan(service, game_path, request))
         except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
             code = (
                 "game_path_required"
                 if isinstance(exc, GamePathRequiredError)
                 else "install_plan_failed"
+            )
+            return self._failure(exc, code=code)
+
+    def apply_changes(
+            self,
+            package_ids: list[str],
+            choices: dict[str, str] | None = None,
+            reinstall: bool = False,
+            force: bool = False,
+    ) -> dict[str, Any]:
+        """执行计划页确认过的那份计划。
+
+        按请求**重算一次**再执行：客户端不传版本、也不传缺口形状，装下去的就是求解器现在解出来
+        的那一版（世界与索引在这两步之间变了的话，以执行时的解为准）。卸载同步做、不进下载队列；
+        安装进队列，照那一行的缺口形状落盘。
+        """
+        try:
+            service, game_path, request = self._change_request(
+                package_ids, choices, reinstall, force
+            )
+            plan = self._change_plan(service, game_path, request)
+            if plan["no_solution"]:
+                raise ModManagerError(str(plan["message"]))
+            removing = list(plan["remove"])
+            with self._state_lock:
+                if not self._loader_idle.is_set():
+                    raise RuntimeError("wait for the modloader installation to finish")
+                if removing:
+                    # 卸载不进下载队列：它是同步的一次性动作，做完再排安装。
+                    service.remove_many(removing, game_path)
+                    self._environment_monitor.invalidate()
+                install_lines = [
+                    line for line in plan["lines"]
+                    if line["action"] == ACTION_INSTALL and line["named"]
+                ]
+                gaps = {
+                    line["id"]: (
+                        tuple((line["id"], str(item)) for item in line["ignored"]),
+                        tuple(plan["excluded"]),
+                    )
+                    for line in install_lines
+                }
+                added = self.install_queue.enqueue(
+                    [line["id"] for line in install_lines],
+                    game_path,
+                    context=service,
+                    force_conflicts=bool(force),
+                    version_ranges={
+                        line["id"]: f"={line['version']}" for line in install_lines
+                    },
+                    gaps=gaps,
+                )
+            self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_QUEUE, KEY_LOADERS)
+            return self._success(
+                added=[entry.task_id for entry in added],
+                count=len(added),
+                removed=removing,
+            )
+        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
+            code = (
+                "game_path_required"
+                if isinstance(exc, GamePathRequiredError)
+                else "install_apply_failed"
             )
             return self._failure(exc, code=code)
 
@@ -506,26 +555,24 @@ class InstallationController(ApiController):
             service = self._current_service()
             requested = {str(key): str(value) for key, value in (versions or {}).items()}
             installed = service.installed(game_path)
+            installed_versions = service.installed_versions(installed)
             explicit = bool(reinstall or force_conflicts)
+            failed: list[dict[str, str]] = []
+            roots, pinned = self._named_roots(service, package_ids, requested, failed)
             eligible: list[str] = []
             ranges: dict[str, str] = {}
-            failed: list[dict[str, str]] = []
-            for package_id in dict.fromkeys(str(item) for item in package_ids):
-                try:
-                    package = self._package(service, package_id)
-                    version_range = self._version_range(service, package, requested.get(package_id))
-                    plan = service.resolve(
-                        package.id,
-                        version_range,
-                        pinned=True,
-                        installed=frozenset(installed),
-                    )
-                    root = plan.by_id()[package.id]
-                    if explicit or installed.get(package.id, {}).get("version") != str(root.release.version):
-                        eligible.append(package.id)
-                        ranges[package.id] = version_range
-                except (ModManagerError, OSError, ValueError) as exc:
-                    self._record_failure(failed, package_id, exc)
+            if roots:
+                plan, roots = self._solve_together(
+                    service, roots, pinned, installed_versions, failed
+                )
+                by_id = plan.by_id()
+                for package_id in roots:
+                    # 入队时就把**一起解出来的那一版**钉死：队列执行时不再改主意，用户确认过的
+                    # 那一组版本就是最终装上的那一组。
+                    solved = str(by_id[package_id].release.version)
+                    if explicit or installed.get(package_id, {}).get("version") != solved:
+                        eligible.append(package_id)
+                        ranges[package_id] = f"={solved}"
             if not eligible and failed:
                 raise ModManagerError(self._failure_message(failed))
             with self._state_lock:
@@ -545,53 +592,6 @@ class InstallationController(ApiController):
                 "game_path_required"
                 if isinstance(exc, GamePathRequiredError)
                 else "install_enqueue_failed"
-            )
-            return self._failure(exc, code=code)
-
-    def update_all(self) -> dict[str, Any]:
-        try:
-            game_path = self._valid_game_path()
-            if not self._loader_idle.is_set():
-                raise RuntimeError("wait for the modloader installation to finish")
-            service = self._current_service()
-            installed = service.installed(game_path)
-            updates: list[str] = []
-            ranges: dict[str, str] = {}
-            failed: list[dict[str, str]] = []
-            public_ids = {item.id for item in service.registry.packages} if service.registry else set()
-            for package_id, info in installed.items():
-                if not info.get("requested"):
-                    continue
-                try:
-                    if package_id not in public_ids:
-                        # 记录里留着注册表已经不认的包：没有可查的发布数据，跳过。
-                        continue
-                    package = self._package(service, package_id)
-                    version_range = self._version_range(service, package, None)
-                    plan = service.resolve(
-                        package.id,
-                        version_range,
-                        pinned=True,
-                        installed=frozenset(installed),
-                    )
-                    latest = plan.by_id()[package_id].release.version
-                    if info.get("version") != str(latest):
-                        updates.append(package_id)
-                        ranges[package_id] = version_range
-                except (ModManagerError, OSError, ValueError) as exc:
-                    self._record_failure(failed, package_id, exc)
-            with self._state_lock:
-                if not self._loader_idle.is_set():
-                    raise RuntimeError("wait for the modloader installation to finish")
-                added = self.install_queue.enqueue(
-                    updates, game_path, context=service, version_ranges=ranges
-                )
-            return self._success(added=[entry.task_id for entry in added], count=len(added), failed=failed)
-        except (ModManagerError, OSError, RuntimeError, ValueError) as exc:
-            code = (
-                "game_path_required"
-                if isinstance(exc, GamePathRequiredError)
-                else "update_failed"
             )
             return self._failure(exc, code=code)
 
@@ -651,6 +651,8 @@ class InstallationController(ApiController):
         )
         with self._mutation_lock:
             try:
+                # 队列执行的是用户在计划页确认过的那一行：这里只按点名的那一版落盘，
+                # 世界只作偏好 —— 冲突已经在计划那一步摆清楚并由用户拍板了。
                 if entry.force_conflicts:
                     service.install(
                         entry.package_id,
@@ -658,6 +660,9 @@ class InstallationController(ApiController):
                         version_range=entry.version_range,
                         progress=progress,
                         force_conflicts=True,
+                        constrain_world=False,
+                        ignore_edges=entry.ignore_edges,
+                        excluded=entry.excluded,
                     )
                 else:
                     service.install(
@@ -665,6 +670,9 @@ class InstallationController(ApiController):
                         entry.game_path,
                         version_range=entry.version_range,
                         progress=progress,
+                        constrain_world=False,
+                        ignore_edges=entry.ignore_edges,
+                        excluded=entry.excluded,
                     )
             finally:
                 # 队列装的可能就是加载器：装完环境读数必须重来一次；已安装读数与队列本身也变了，

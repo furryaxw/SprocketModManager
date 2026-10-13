@@ -29,6 +29,10 @@ class InstallQueueEntry:
     error_code: str = ""
     # 入队时就定好装哪个版本：队列跑起来时环境可能已经变了，不能那时再挑一次。
     version_range: str = "*"
+    # 计划页上那一行的缺口形状：留着的依赖缺口（`ignore_edges`）与标成「不安装」的包
+    # （`excluded`）在执行时照旧成立，否则宽容安装会把冲突的依赖版本又装回去。
+    ignore_edges: tuple[tuple[str, str], ...] = ()
+    excluded: tuple[str, ...] = ()
 
 
 QueueRunner = Callable[[InstallQueueEntry, Callable[[str], None]], None]
@@ -54,8 +58,10 @@ class InstallQueue:
             context: object | None = None,
             force_conflicts: bool = False,
             version_ranges: dict[str, str] | None = None,
+            gaps: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] | None = None,
     ) -> tuple[InstallQueueEntry, ...]:
         ranges = dict(version_ranges or {})
+        gap_map = dict(gaps or {})
         added: list[InstallQueueEntry] = []
         with self._condition:
             if self._closed:
@@ -68,6 +74,7 @@ class InstallQueue:
                 if existing:
                     # 一个模组只占一行：这一条新任务取代它先前那行（等待中的、或已经跑完的）。
                     self._entries = [item for item in self._entries if item.package_id != package_id]
+                ignore_edges, excluded = gap_map.get(package_id, ((), ()))
                 entry = InstallQueueEntry(
                     uuid.uuid4().hex,
                     package_id,
@@ -75,6 +82,8 @@ class InstallQueue:
                     context=context,
                     force_conflicts=force_conflicts,
                     version_range=str(ranges.get(package_id) or "*"),
+                    ignore_edges=tuple(ignore_edges),
+                    excluded=tuple(excluded),
                 )
                 self._entries.append(entry)
                 added.append(entry)

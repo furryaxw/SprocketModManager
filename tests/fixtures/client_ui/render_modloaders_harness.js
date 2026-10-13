@@ -96,6 +96,8 @@ const elements = {
 for (const selector of [
     "#environment-sprocket", "#environment-loaders", "#environment-note",
     "#status-text", ".status-mark", "#toast-region",
+    // 装加载器会跳去下载页：真 `showPage` 要写这几个节点。
+    "#page-kicker", "#page-title", "#page-subtitle", "#header-actions",
 ]) {
     elements[selector] = new FakeElement("div");
 }
@@ -116,6 +118,13 @@ const apiCalls = [];
 const toasts = [];
 const api = {
     client_log: async () => ({ok: true}),
+    enqueue_install: async (ids, force, versions, includeInstalled) => {
+        apiCalls.push({
+            kind: "call",
+            args: ["enqueue_install", ...(ids || []), force === true, versions || {}, includeInstalled === true],
+        });
+        return {ok: true, count: (ids || []).length, added: []};
+    },
     remove_modloader: async (id) => {
         apiCalls.push({kind: "call", args: ["remove_modloader", id]});
         const item = (payload.modloaders || []).find((entry) => entry.id === id) || {};
@@ -161,15 +170,6 @@ const sandbox = {
     setTimeout,
     clearTimeout,
     queueMicrotask,
-    // 加载器安装走模组的安装路；这里记下页面是否把包交给了那条路，路由本身另有测试。
-    beginInstall: (packageIds, presetVersions, includeInstalled) => {
-        apiCalls.push({
-            kind: "call",
-            args: ["beginInstall", ...packageIds],
-            includeInstalled: Boolean(includeInstalled),
-        });
-        return Promise.resolve(true);
-    },
     // core.js 自己定义 callApi（走 window.pywebview.api），所以这里给的是一个假桥而不是同名桩。
     pywebview: {api},
     queueActive: () => Boolean(payload.queue_active),
@@ -179,6 +179,7 @@ const sandbox = {
     renderGameState: () => {},
     showModal: async () => payload.confirm !== false,
     showPage: async () => {},
+    pollQueue: async () => {},
     // 环境轮询在环境变化时会重拉目录 / 刷新已装列表；这个 harness 只测左下角，两个都当空操作。
     loadCatalog: async () => true,
     refreshInstalled: async () => {},

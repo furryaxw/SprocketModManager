@@ -7,163 +7,273 @@ const MODLOADER_KIND = "modloader";
 const ROW_CLICK_DELAY = 240;
 let rowClickTimer = null;
 
-/**
- * 解析不了的包也要有自己的框：标题、原因与版本选择器都在框里，它才不会被换成一句报错。
- *
- * 树只剩根包那一行 —— 这一版没解出来，就没有依赖树可摆；摆上一版解出来的树是另一回事。
- */
-function failedPlanBox(packageId, version) {
-    const pkg = (state.packages || []).find((item) => item.id === packageId);
-    const display = pkg?.display_name || {};
-    return {
-        id: packageId,
-        name: packageId,
-        display_name: display,
-        packages: [{
-            id: packageId,
-            name: packageId,
-            display_name: display,
-            version: String(version || ""),
-        }],
-    };
+// 版本下拉里的第三项：未装是「不安装」，已装是「卸载」；后端认这两个字面量。
+const CHOICE_SKIP = "skip";
+const CHOICE_REMOVE = "remove";
+
+/** 红行的原因：后端只说「哪一类、和谁」，话由界面按语言写；没有具体对象就用后端那句话。 */
+function planProblemText(problem, packageId) {
+    const others = (problem.others || []).join(", ");
+    // 没有可装的版本说的就是这一行自己那个包，`others` 里没有第二方。
+    if (problem.kind === "no-candidate") return tr("planNoCandidate", {id: packageId || others});
+    if (!others) return String(problem.text || "");
+    if (problem.kind === "conflict") return tr("planConflictReason", {others});
+    if (problem.kind === "blocked-by-skip") return tr("planBlockedBySkip", {id: others});
+    return tr("planMissingDependency", {id: others});
 }
 
-/**
- * 对话框里的框：解析出来的计划，加上解析不了的包各自一个框，顺序按用户点的先后。
- *
- * `failed` 的条目不一定有对应的计划 —— 后端只失败了其中几个包时就是这样，那些包没有框就
- * 只剩一句报错，等于悄悄消失。
- */
-function planBoxes(plans, failed, versions, requested) {
-    const byId = new Map((plans || []).map((plan) => [plan.id, plan]));
-    const failedIds = new Set((failed || []).map((item) => item.id));
-    const boxes = [];
-    for (const id of [...new Set([...requested, ...byId.keys()])]) {
-        if (byId.has(id)) boxes.push(byId.get(id));
-        else if (failedIds.has(id)) boxes.push(failedPlanBox(id, versions[id]));
+/** 「点名的版本凑不出有效解」那句话：按当前语言写；认不出点名项时才用后端那句话。 */
+function planNoSolutionText(result) {
+    const roots = result.roots || [];
+    if (!roots.length) return String(result.message || tr("nothingToInstall"));
+    const named = roots
+        .map((item) => `${packageRelationLabel(item.id)} ${item.range}`.trim())
+        .join(", ");
+    return tr("planNoSolution", {roots: named});
+}
+
+/** 版本下拉当前选中的值：装某版就是版本号，否则是「不安装 / 卸载」。 */
+function planChoiceValue(line) {
+    if (line.action === "remove") return CHOICE_REMOVE;
+    if (line.action === "skip") return CHOICE_SKIP;
+    return String(line.version || "");
+}
+
+/** 版本下拉：全部候选版本 + 最后一项「不安装 / 卸载」（按本地装没装显示哪个）。 */
+function planChoiceControl(line, onChoice) {
+    const select = document.createElement("select");
+    select.className = `plan-version ${verdictClass(line.verdict)}`.trim();
+    select.setAttribute("aria-label", tr("planVersion"));
+    const pkg = (state.packages || []).find((item) => item.id === line.id);
+    for (const entry of line.versions || []) {
+        const option = document.createElement("option");
+        option.value = entry.version;
+        const text = versionWithSource(pkg, entry.version);
+        const label = verdictLabel(entry.verdict);
+        option.textContent = label ? `${text} · ${label}` : text;
+        option.selected = planChoiceValue(line) === String(entry.version);
+        select.append(option);
     }
-    return boxes;
+    const choice = planChoiceValue(line);
+    const skipped = document.createElement("option");
+    skipped.value = line.installed_version ? CHOICE_REMOVE : CHOICE_SKIP;
+    skipped.textContent = line.installed_version ? tr("planRemoveOption") : tr("planSkipOption");
+    skipped.selected = choice === CHOICE_SKIP || choice === CHOICE_REMOVE;
+    select.append(skipped);
+    select.addEventListener("change", () => {
+        select.disabled = true;
+        void onChoice(line.id, select.value);
+    });
+    return select;
 }
 
-/** 框里真正能装的那些：失败的那个留着框只是为了让用户换一版，不该进队列。 */
-function installablePlans(planState) {
-    const failedIds = new Set((planState.failed || []).map((item) => item.id));
-    return (planState.plans || []).filter((plan) => !failedIds.has(plan.id));
+/** 关系行里的包名：目录里认得就写名字，认不出（例如私有服务器的包）就写 id。 */
+function packageRelationLabel(packageId) {
+    return registryPackageLabel(packageId) || String(packageId);
+}
+
+/** 计划页的一个框：标题与版本下拉同一行，下面写依赖关系与红行原因。 */
+function planLineBox(line, onChoice) {
+    const group = document.createElement("section");
+    group.className = line.problems?.length ? "plan-group skipped" : "plan-group";
+    const row = document.createElement("div");
+    row.className = "plan-line";
+    const heading = document.createElement("strong");
+    heading.textContent = localized(line.display_name, line.name || line.id);
+    row.append(heading);
+    // 标记只说「这一版是重装」：装哪版、不安装、还是卸载，由右边那个下拉自己写着，不重复一遍。
+    if (line.reinstall) {
+        const marker = document.createElement("span");
+        marker.className = "plan-skipped-mark";
+        marker.textContent = tr("planReinstall");
+        row.append(marker);
+    }
+    row.append(planChoiceControl(line, onChoice));
+    group.append(row);
+    // 已经在盘上、这一批不动的依赖不会有自己的框：它只在这一行里被点名。
+    for (const [key, ids] of [["planDependsOn", line.depends_on], ["planRequiredBy", line.required_by]]) {
+        if (!ids?.length) continue;
+        const note = document.createElement("div");
+        note.className = "plan-reason";
+        note.textContent = tr(key, {ids: ids.map(packageRelationLabel).join(", ")});
+        group.append(note);
+    }
+    for (const problem of line.problems || []) {
+        const reason = document.createElement("div");
+        reason.className = "plan-reason";
+        reason.textContent = `${tr("skippedReason")}: ${planProblemText(problem, line.id)}`;
+        group.append(reason);
+    }
+    if (line.remove_with?.length) {
+        const with_ = document.createElement("div");
+        with_.className = "plan-reason";
+        with_.textContent = tr("planRemovedWith", {ids: line.remove_with.join(", ")});
+        group.append(with_);
+    }
+    return group;
+}
+
+/** 计划页整块：逐行渲染，顶部先摆这一批的提醒。 */
+function planLinesBody(planState, onChoice) {
+    const body = document.createElement("div");
+    body.className = "modal-plan";
+    if (planState.message) {
+        const warning = document.createElement("div");
+        warning.className = "translation-replace-warning";
+        warning.textContent = planState.message;
+        body.append(warning);
+    }
+    const replacements = planState.plan?.replaced_by || [];
+    if (replacements.length) {
+        const warning = document.createElement("div");
+        warning.className = "loader-displace-warning";
+        warning.textContent = tr("planReplacements", {
+            list: replacements.map((item) => `${item.id} ${item.version}`).join(", "),
+        });
+        body.append(warning);
+    }
+    // 供给同一项能力的加载器只能有一个：装这些之前先交还那些（各自的树先进备份区）。
+    for (const gone of planState.plan?.displaces || []) {
+        const displaced = document.createElement("div");
+        displaced.className = "loader-displace-warning";
+        displaced.textContent = tr("loaderDisplaceWarning", {
+            name: localized(gone.display_name, gone.name || gone.id),
+        });
+        body.append(displaced);
+    }
+    for (const line of planState.plan?.lines || []) {
+        body.append(planLineBox(line, onChoice));
+    }
+    body.append(...planRecommendationBoxes(planState));
+    return body;
 }
 
 /**
- * 解析并展示安装计划；用户在计划里改版本时重新解析那一个包。
+ * 这一批的推荐包：列表里的每个包自己声明的推荐，勾中的跟着一起装。
  *
- * 版本选择器只给根包（用户点的那些）；依赖的版本由求解器按环境定，不给挑。
- *
- * `includeInstalled` 同时是「重装」的意思：计划照给（不看它有几个版本可挑），入队也不因为
- * 「解析出来的版本就是装着的那版」被跳过。`force` 再多给一层：连被外部改动过的文件也一并覆盖。
+ * 勾选状态放在 `planState` 里：改版本会重画这一块，别把用户勾掉的又勾回来。
  */
-async function beginInstall(packageIds, presetVersions = null, includeInstalled = false, force = false) {
-    if (!packageIds.length) return;
-    const versions = {...installVersions(packageIds), ...(presetVersions || {})};
+function planRecommendationBoxes(planState) {
+    const recommendations = planState.plan?.recommendations || [];
+    if (!recommendations.length) return [];
+    const group = document.createElement("section");
+    group.className = "plan-group recommendation-group";
+    const heading = document.createElement("strong");
+    heading.textContent = tr("recommendedMods");
+    group.append(heading);
+    for (const item of recommendations) {
+        const label = document.createElement("label");
+        label.className = "recommendation-line";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "package-check";
+        checkbox.checked = planState.recommended.has(item.id);
+        checkbox.dataset.packageId = item.id;
+        checkbox.addEventListener("change", () => {
+            if (checkbox.checked) planState.recommended.add(item.id);
+            else planState.recommended.delete(item.id);
+        });
+        const copy = document.createElement("span");
+        const name = document.createElement("strong");
+        name.textContent = localized(item.display_name, item.name || item.id);
+        const id = document.createElement("span");
+        id.textContent = item.id;
+        copy.append(name, id);
+        const version = document.createElement("span");
+        version.textContent = item.version ? String(item.version) : "-";
+        label.append(checkbox, copy, version);
+        group.append(label);
+    }
+    return [group];
+}
+
+/**
+ * 计划页：把选中的这些包送进求解器，摆出计划，确认之后按计划执行。
+ *
+ * 界面只报「选了哪些包、每一行要哪一版（或「不安装 / 卸载」）」，外加重装与强制两个标记 ——
+ * 装哪一版、谁跟谁冲突，全由后端那一处求解器说了算。任何一次点击都会打开这一页：冲突的行
+ * 标红出局，计划照样摆出来，确认照做；只有「点名的版本凑不出有效解」时留着上一次的计划。
+ *
+ * `choices` 是每一行的选择（包 id -> 版本号 / `skip` / `remove`）。`reinstall` 表示这次是重装：
+ * 目标版本与装着的那版相同时，那一行在下拉左边标「重装」。`force` 让落盘连被外部改动过的文件也覆盖。
+ */
+async function beginInstall(packageIds, presetChoices = null, reinstall = false, force = false) {
+    const ids = [...new Set(packageIds)];
+    if (!ids.length) return;
     setStatus(tr("resolving"));
-    // 点名的那一项要「版本相同也给」的计划：版本选择器是它在装好的情况下换版本、重装的唯一入口，
-    // 不看它有几个版本可挑。
-    const result = await callApi("plan_install", packageIds, versions, includeInstalled);
-    if (!result.ok) {
-        if (result.code === "game_path_required") {
-            showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
-        } else resultError(result);
-        return;
-    }
-    const skipped = result.skipped || [];
-    // 界面挑的那版就等于装着的那版时，后端把计划「跳过」了；索引里还有别的版本可挑的话，
-    // 这里得再要一份计划 —— 版本选择器是强行装新版唯一的路，不能被这一步挡掉。
-    if (!result.plans.length && skipped.some((packageId) => planVersionOptions(packageId).length > 1)) {
-        const reopened = await callApi("plan_install", skipped, versions, true);
-        if (reopened.ok) {
-            result.plans = reopened.plans || [];
-            result.failed = reopened.failed || [];
-        }
-    }
-    if (!result.plans.length) {
-        toast(tr("nothingToInstall"));
-        setStatus("", "ready");
-        state.batch.clear();
-        renderCatalog();
-        return;
-    }
-
     const planState = {
-        plans: planBoxes(result.plans, result.failed, versions, packageIds),
-        recommendations: result.recommendations || [],
-        failed: result.failed || [],
-        versions,
-        recommendedSelection: new Set(),
+        plan: null,
+        message: "",
+        choices: {...(presetChoices || {})},
+        promoted: new Set(),
+        recommended: new Set(),
     };
-    const planBody = document.createElement("div");
-    const renderPlan = () => {
-        planBody.replaceChildren(...createPlanBody(planState, selectPlanVersion).children);
-    };
-    const selectPlanVersion = async (packageId, version) => {
-        planState.versions[packageId] = version;
-        const replanned = await callApi("plan_install", [packageId], {[packageId]: version});
-        const message = replanned.ok
-            ? (replanned.failed?.[0]?.message || tr("nothingToInstall"))
-            : (replanned.message || tr("operationFailed"));
-        if (replanned.ok && replanned.plans.length) {
-            planState.plans = planState.plans.map((plan) =>
-                plan.id === packageId ? replanned.plans[0] : plan,
-            );
-            planState.failed = planState.failed.filter((item) => item.id !== packageId);
-        } else {
-            // 这个版本装不了（例如依赖跟不上）：框留在原地标红并写上原因 —— 换回能装的那一版
-            // 只有框里那个选择器这一条路。树换成解不出来的这一版（只剩根包那一行）。
-            planState.plans = planState.plans.map((plan) =>
-                plan.id === packageId ? failedPlanBox(packageId, version) : plan,
-            );
-            planState.failed = [
-                ...planState.failed.filter((item) => item.id !== packageId),
-                {id: packageId, message},
-            ];
+    // 计划里的依赖也能改版本：改过的那一行从此刻起按用户点名的包算，整批跟着重解。
+    const planIds = () => [...new Set([...ids, ...planState.promoted])];
+    const replan = async () => {
+        const result = await callApi("plan_changes", planIds(), planState.choices, reinstall, force);
+        if (!result.ok) {
+            if (result.code === "game_path_required") {
+                showMessage(tr("gamePathRequired"), tr("operationFailed"), () => showPage("settings"));
+                return false;
+            }
+            resultError(result);
+            return false;
         }
-        renderPlan();
+        if (result.no_solution) {
+            // 找不到有效解：这一个计划作废，上一次有效的那份留在原地，只把原因说清楚。
+            planState.message = planNoSolutionText(result);
+            return planState.plan !== null;
+        }
+        planState.plan = result;
+        planState.message = "";
+        return true;
     };
-    renderPlan();
+    if (!(await replan())) {
+        setStatus("", "ready");
+        return;
+    }
+    const planBody = document.createElement("div");
+    const onChoice = async (packageId, value) => {
+        planState.choices[packageId] = value;
+        planState.promoted.add(packageId);
+        if (await replan()) planBody.replaceChildren(planLinesBody(planState, onChoice));
+    };
+    planBody.append(planLinesBody(planState, onChoice));
 
     const confirmed = await showModal({
         kicker: tr("installPlan"),
-        title: installablePlans(planState).length === 1
-            ? tr("confirmInstall")
-            : tr("confirmBatchInstall"),
+        title: tr("confirm"),
         body: planBody,
-        confirmText: tr("confirm"),
     });
-    if (!confirmed) return;
-    if (!installablePlans(planState).length) {
-        toast(tr("nothingToInstall"));
+    if (!confirmed) {
         setStatus("", "ready");
         return;
     }
-    const queued = await callApi(
-        "enqueue_install",
-        [
-            ...installablePlans(planState).map((plan) => plan.id),
-            ...planState.recommendedSelection,
-        ],
+    const applied = await callApi(
+        "apply_changes",
+        [...planIds(), ...planState.recommended],
+        planState.choices,
+        reinstall,
         force,
-        planState.versions,
-        includeInstalled,
     );
-    if (!queued.ok) {
-        resultError(queued);
+    if (!applied.ok) {
+        resultError(applied);
         return;
     }
     state.batch.clear();
     renderCatalog();
-    const message = queued.failed?.length
-        ? `${tr("queued", {count: queued.count})} | ${tr("skippedMods", {count: queued.failed.length})}`
-        : tr("queued", {count: queued.count});
-    toast(message);
+    const removed = (applied.removed || []).length;
+    if (applied.count) {
+        toast(tr("queued", {count: applied.count}));
+        setStatus("", "ready");
+        await pollQueue(true);
+        await showPage("downloads");
+        return;
+    }
+    toast(removed ? tr("removed", {names: (applied.removed || []).join(", ")}) : tr("nothingToInstall"));
     setStatus("", "ready");
-    await pollQueue(true);
-    await showPage("downloads");
+    if (removed) await refreshInstalled();
 }
 
 /**
@@ -1093,30 +1203,9 @@ function rowElementFor(key) {
     return null;
 }
 
+/** 卸载也走计划页：连带卸载、替代版本与红行理由都由那一份计划摆清楚。 */
 async function confirmRemove(pkg) {
-    const companions = (pkg.companions || []).map(packageOrLoaderLabel);
-    const confirmed = await showModal({
-        kicker: tr("removePackage"),
-        title: tr("confirmRemove"),
-        body: companions.length
-            ? tr("removeWithCompanionsMessage", {
-                name: packageLabel(pkg),
-                companions: companions.join(", "),
-            })
-            : tr("removeMessage", {name: packageLabel(pkg)}),
-        confirmText: tr("remove"),
-        destructive: true,
-    });
-    if (!confirmed) return;
-    const result = await callApi("remove", pkg.id);
-    if (!result.ok) {
-        resultError(result);
-        return;
-    }
-    const message = tr("removed", {names: result.removed.join(", ")});
-    toast(result.warnings?.length ? `${message} | ${result.warnings.join("; ")}` : message);
-    setStatus("", "ready");
-    await refreshInstalled();
+    await beginInstall([pkg.id], {[pkg.id]: CHOICE_REMOVE});
 }
 
 /**
@@ -1125,43 +1214,30 @@ async function confirmRemove(pkg) {
  * 三个操作都复用单行用的端点，逐个调用并把结果汇总成一条提示，不假装整批是原子的。
  */
 
-/** 选中项里可安装的更新：包 id → 要装的那一版（去重：一个包可能对应多个 DLL）。
+/** 选中项里可安装的更新：包 id（去重：一个包可能对应多个 DLL）。
  *
  * 被环境拦下来的版本不在里面 —— 所以它既不点亮「更新」，也不会被点名装上去。
  */
-function selectedUpdateVersions() {
-    const versions = {};
+function selectedUpdateIds() {
+    const ids = [];
     for (const item of selectedInstalledItems()) {
         const id = installedRowPackageId(item);
-        if (!id || id in versions) continue;
-        const update = installableUpdate(item);
-        if (update) versions[id] = update.version;
+        if (!id || ids.includes(id)) continue;
+        if (installableUpdate(item)) ids.push(id);
     }
-    return versions;
+    return ids;
 }
 
 async function updateSelectedMods() {
     if (queueActive()) return;
-    // 把版本一起交上去：列表上写的「新版本 X」和实际会装的必须是同一版。
-    const versions = selectedUpdateVersions();
-    const ids = Object.keys(versions);
+    const ids = selectedUpdateIds();
     if (!ids.length) {
         toast(tr("noUpdates"));
         setStatus("", "ready");
         return;
     }
-    const result = await callApi("enqueue_install", ids, false, versions);
-    if (!result.ok) {
-        resultError(result);
-        return;
-    }
-    const message = result.failed?.length
-        ? `${tr("updateQueued", {count: result.count})} | ${tr("skippedMods", {count: result.failed.length})}`
-        : tr("updateQueued", {count: result.count});
-    toast(message);
-    setStatus("", "ready");
-    await pollQueue(true);
-    await showPage("downloads");
+    // 更新也走计划页：装哪一版由求解器解，界面只报选了哪些包。
+    await beginInstall(ids);
 }
 
 async function toggleSelectedMods(enabled) {
@@ -1212,33 +1288,8 @@ async function removeSelectedMods() {
         toast(tr("selectionNotApplicable"));
         return;
     }
-    const confirmed = await showModal({
-        kicker: tr("removePackage"),
-        title: tr("confirmBatchRemove"),
-        body: tr("removeSelectedMessage", {count: ids.length}),
-        confirmText: tr("remove"),
-        destructive: true,
-    });
-    if (!confirmed) return;
-    const removed = [];
-    const warnings = [];
-    const failed = [];
-    for (const id of ids) {
-        const result = await callApi("remove", id);
-        if (!result.ok) {
-            failed.push(id);
-            continue;
-        }
-        removed.push(...(result.removed || []));
-        warnings.push(...(result.warnings || []));
-    }
-    const message = tr("batchRemoved", {count: removed.length});
-    const parts = [message];
-    if (failed.length) parts.push(tr("batchPartial", {done: removed.length, failed: failed.length}));
-    if (warnings.length) parts.push(warnings.join("; "));
-    toast(parts.join(" | "), failed.length ? "error" : "normal");
-    setStatus(message, failed.length ? "error" : "ready");
-    await refreshInstalled();
+    // 批量卸载也走计划页：连带卸载与替代版本由那一份计划摆清楚，一次卸掉才不会被彼此挡住。
+    await beginInstall(ids, Object.fromEntries(ids.map((id) => [id, CHOICE_REMOVE])));
 }
 
 function queueActive() {

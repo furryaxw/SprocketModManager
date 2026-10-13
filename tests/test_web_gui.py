@@ -71,7 +71,7 @@ class BlockingService:
         self.release = threading.Event()
         self.registry = None
 
-    def install(self, _package_id, _game_path, *, version_range="*", progress=None):
+    def install(self, _package_id, _game_path, *, version_range="*", progress=None, **_kwargs):
         self.started.set()
         self.release.wait(2)
 
@@ -190,6 +190,8 @@ class WebGuiTests(unittest.TestCase):
                 context=service,
                 force_conflicts=True,
                 version_range="*",
+                ignore_edges=(),
+                excluded=(),
             )
             api = ClientApi("test", app_dir=Path(directory))
             try:
@@ -425,42 +427,6 @@ class WebGuiTests(unittest.TestCase):
         self.assertEqual(proxy_url, "http://127.0.0.1:7890")
         self.assertEqual(github_proxy_url, "https://gh-proxy.com/")
 
-    def test_install_plan_returns_optional_recommendations(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            app_dir = root / "app"
-            game = root / "game"
-            game.mkdir()
-            (game / "Sprocket.exe").touch()
-            ConfigStore(app_dir).save(
-                {"language": "en", "game_path": str(game), "index_url": ""}
-            )
-            service = ModManagerService(app_dir)
-            recommended = installable_package("test.recommended", "Recommended.dll")
-            package = installable_package(
-                "test.mod",
-                "TestMod.dll",
-                recommendations=(recommended.id,),
-            )
-            service.registry = Registry([package, recommended])
-            api = ClientApi(
-                "0.3.2",
-                app_dir=app_dir,
-                service_factory=lambda _app_dir: service,
-            )
-            try:
-                result = api.plan_install([package.id])
-            finally:
-                api.install_queue.close()
-
-        self.assertTrue(result["ok"])
-        self.assertEqual([item["id"] for item in result["plans"]], [package.id])
-        self.assertEqual(
-            [item["id"] for item in result["recommendations"]],
-            [recommended.id],
-        )
-        self.assertEqual(result["recommendations"][0]["recommended_by"], [package.id])
-
     def test_get_installed_automatically_adopts_exact_mods_release(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -639,12 +605,11 @@ class WebGuiTests(unittest.TestCase):
         )
         self.assertIn('"enqueue_install",', javascript)
         self.assertIn("function applyTextScale", javascript)
-        self.assertIn("checkbox.checked = planState.recommendedSelection.has(plan.id)", javascript)
+        self.assertIn("planLinesBody(planState, onChoice)", javascript)
         self.assertIn('className: "installed"', javascript)
         self.assertIn(".state-chip.installed", (
             root / "sprocket_mod_manager" / "presentation" / "client_ui" / "app.css"
         ).read_text(encoding="utf-8"))
-        self.assertIn("result.recommendations || []", javascript)
         self.assertIn("if (featured) return featured", javascript)
         self.assertIn('star.textContent = "★"', javascript)
         self.assertIn('tr("starterRecommended")', javascript)

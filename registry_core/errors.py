@@ -11,7 +11,15 @@ class DownloadError(ModManagerError):
 
 
 class ResolutionError(ModManagerError):
-    pass
+    """解不出一组自洽的版本。
+
+    `conflicts` 里是卡住的那个包，以及各自对它提要求的来源（包 id + 版本区间）：上层
+    （计划页）要靠它说清冲突双方，并据此决定让谁出局、让谁的需求让位。
+    """
+
+    def __init__(self, message: str, conflicts: tuple[dict, ...] = ()):
+        super().__init__(message)
+        self.conflicts = conflicts
 
 
 class ScanError(ModManagerError):

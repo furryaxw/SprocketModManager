@@ -322,11 +322,8 @@ class CatalogRenderHarnessTests(unittest.TestCase):
             child for child in result["rows"][0]["children"] if child["className"].startswith("package-version")
         )["children"][0]
         self.assertIn("incompatible", number["className"], "版本号按包判：这一版装下去也跑不起来")
-        chips = [
-            node["text"] for node in _walk(result["detail"])
-            if node["className"].startswith("state-chip")
-        ]
-        self.assertIn("Incompatible", chips)
+        detail = " ".join(self._texts(result["detail"]))
+        self.assertIn("Incompatible", detail, "详情里的判定写在兼容性那块")
 
     def test_a_package_whose_verdicts_are_unknown_and_incompatible_is_hidden(self) -> None:
         result = self._render(
@@ -525,15 +522,10 @@ class CatalogRenderHarnessTests(unittest.TestCase):
                 sprocket_range="0.2.53.x",
             )],
             selected="test.inherited",
+            version_list=True,
         )
 
-        heading = next(
-            child for child in result["detail"]["children"] if child["className"] == "detail-heading"
-        )
-        group = next(
-            child for child in heading["children"] if child["className"] == "detail-version-group"
-        )
-        self.assertEqual(group["children"][-1]["text"], "2.0.0*", "沿用更早声明就缀一个星号")
+        self.assertIn("2.0.0*", result["versionList"]["lines"], "沿用更早声明就缀一个星号")
         block = _detail_block(result)
         text = " ".join(node["text"] or "" for node in _walk(block))
         self.assertIn("reuses the older compatibility declaration", text)
@@ -543,15 +535,11 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         result = self._render(
             packages=[package("test.fine", [("2.0.0", "compatible")], sprocket_range="0.2.53.x")],
             selected="test.fine",
+            version_list=True,
         )
 
-        heading = next(
-            child for child in result["detail"]["children"] if child["className"] == "detail-heading"
-        )
-        group = next(
-            child for child in heading["children"] if child["className"] == "detail-version-group"
-        )
-        self.assertEqual(group["children"][-1]["text"], "2.0.0")
+        self.assertIn("2.0.0", result["versionList"]["lines"])
+        self.assertNotIn("2.0.0*", result["versionList"]["lines"])
 
     def test_the_selection_bar_stays_hidden_until_something_is_picked(self) -> None:
         result = self._render(packages=[package("test.fine", [("1.0.0", "compatible")])])
@@ -654,11 +642,41 @@ class CatalogRenderHarnessTests(unittest.TestCase):
             number = versions[package_id]["children"][0]
             self.assertIn(expected, number["className"], package_id)
 
-    def test_the_state_chip_stays_right_and_the_verdict_sits_left_of_the_version(self) -> None:
+    def test_the_row_reports_the_newest_compatible_version(self) -> None:
+        """列表报「最高可用版本」：最新那版跑不起来时，往下找能跑的那一版。"""
+        result = self._render(
+            packages=[
+                package("test.mod", [
+                    ("3.0.0", "incompatible"), ("2.0.0", "compatible"), ("1.0.0", "compatible"),
+                ]),
+            ],
+            show_incompatible=True,
+        )
+
+        version = next(
+            child for child in result["rows"][0]["children"] if child["className"].startswith("package-version")
+        )
+        number = version["children"][0]
+        self.assertEqual(number["text"], "↓ 2.0.0", "退下来的那一档缀一个下箭头")
+        self.assertIn("compatible", number["className"], "颜色跟着这一版的判定")
+
+    def test_the_row_has_no_downgrade_mark_when_the_newest_release_is_compatible(self) -> None:
+        result = self._render(
+            packages=[package("test.mod", [("3.0.0", "compatible"), ("2.0.0", "compatible")])],
+        )
+
+        version = next(
+            child for child in result["rows"][0]["children"] if child["className"].startswith("package-version")
+        )
+        self.assertEqual(version["children"][0]["text"], "3.0.0", "最新那版能跑就不带箭头")
+
+    def test_the_detail_heading_offers_the_version_list(self) -> None:
+        """标题行摆的是「查看版本与兼容性」按钮，版本号与判定摊在它打开的列表里。"""
         result = self._render(
             packages=[package("test.fine", [("1.0.0", "compatible")])],
             show_incompatible=True,
             selected="test.fine",
+            version_list=True,
         )
         panel = result["detail"]
         top = panel["children"][0]
@@ -673,12 +691,17 @@ class CatalogRenderHarnessTests(unittest.TestCase):
         heading = next(
             child for child in panel["children"] if child["className"] == "detail-heading"
         )
-        group = next(
-            child for child in heading["children"] if child["className"] == "detail-version-group"
+        button = next(
+            child for child in heading["children"]
+            if child["className"] == "secondary-button detail-versions-button"
         )
-        self.assertEqual([child["tag"] for child in group["children"]], ["span", "b"])
-        self.assertIn("compatible", group["children"][0]["className"], "兼容 chip 在版本号左边")
-        self.assertIn("detail-version", group["children"][1]["className"])
+        self.assertEqual(button["tag"], "button")
+        self.assertEqual(button["text"], "Versions and compatibility")
+
+        listed = result["versionList"]
+        self.assertEqual(listed["title"], "Versions and compatibility")
+        self.assertIn("1.0.0", listed["lines"])
+        self.assertIn("Compatible", listed["lines"], "每一版都带着它的判定")
 
     def test_an_unusable_game_version_explains_the_empty_catalog(self) -> None:
         result = self._render(

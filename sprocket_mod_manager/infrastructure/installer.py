@@ -440,6 +440,7 @@ class Installer:
             replaced_directories[file_type] = directory.as_posix()
         replaced_directory_list = list(replaced_directories.values())
         root_id = prepared.resolution.root_id
+        named_roots = prepared.resolution.named_roots()
         warnings: list[str] = []
         # 计划里的加载器：先把它上次卸载时搬进备份区的安装位置搬回来，记录也并回安装记录，
         # 然后这次安装再覆盖同名文件。还原在判定冲突之前做完，否则还原回来的文件会被当成
@@ -554,7 +555,7 @@ class Installer:
                 "version": str(resolved.release.version),
                 "tag": resolved.release.tag,
                 "release_id": resolved.release.id,
-                "requested": bool(old.get("requested")) or resolved.package.id == root_id,
+                "requested": bool(old.get("requested")) or resolved.package.id in named_roots,
                 "install_mode": resolved.package.install.get("mode", "standard"),
                 "dependencies": list(resolved.dependency_ids),
                 "companions": list(resolved.companion_ids),
@@ -805,50 +806,52 @@ class Installer:
         )
         return True
 
-    def remove(
-            self,
-            package_id: str,
-            game_dir: Path,
+    @staticmethod
+    def removal_closure(
+            state: dict[str, Any],
+            package_ids: Iterable[str],
             *,
             modloaders: Iterable[str] = (),
-            loader_supply: Mapping[str, Iterable[str]] | None = None,
-    ) -> tuple[list[str], list[str]]:
-        game_dir = self.validate_game_dir(game_dir)
-        LOGGER.info("removing package=%s game_dir=%s", package_id, game_dir)
-        if sprocket_is_running(game_dir):
-            raise InstallError("Sprocket is running; close the game before changing mod files")
-        state = self.state_store.load()
-        if package_id not in state["packages"]:
-            raise InstallError(f"package is not installed: {package_id}")
-        modloader_ids = {str(item) for item in modloaders}
-        supply = {str(key): tuple(str(item) for item in value) for key, value in (loader_supply or {}).items()}
-        reverse = self._reverse_dependencies(state)
+    ) -> tuple[set[str], dict[str, list[str]]]:
+        """卸掉这几个包会带走哪些包，以及被谁挡住。
 
-        removing = {package_id}
+        口径与 `remove` 完全一致，只是不抛异常：`blocked` 是「计划外还有人在要」的那些包
+        （键是被挡住的包，值是要它的包）。安装计划要先算出这份闭包 —— 被挡住时给依赖者找一个
+        不依赖它的版本，找不到就连它一起卸 —— 所以规则只能有一处。
+        """
+        modloader_ids = {str(item) for item in modloaders}
+        roots = {str(item) for item in package_ids}
+        is_modloader = {
+            item: _is_modloader_record(state["packages"][item]) or item in modloader_ids
+            for item in roots
+        }
+        removing = set(roots)
         # 伴随包一起卸：一对包卸掉任一个就带走另一个。基础运行时是例外 —— 它的卸载把供给目录整棵
         # 搬进备份区，落在里面的东西跟着走，不再另行处理伴随包；伴随包因此也不算「还有人要它」，
         # 否则卸载加载器会被自己的伴随包挡死。
-        is_modloader = _is_modloader_record(state["packages"][package_id]) or package_id in modloader_ids
-        root_companions = (
-            {str(item) for item in state["packages"][package_id].get("companions", ())}
-            if is_modloader
-            else set()
-        )
-        if not is_modloader:
-            changed = True
-            while changed:
-                changed = False
-                for current in list(removing):
-                    for companion in state["packages"][current].get("companions", ()):
-                        if companion in state["packages"] and companion not in removing:
-                            removing.add(companion)
-                            changed = True
+        root_companions = {
+            str(companion)
+            for item in roots
+            if is_modloader[item]
+            for companion in state["packages"][item].get("companions", ())
+        }
+        changed = True
+        while changed:
+            changed = False
+            for current in list(removing):
+                if is_modloader.get(current):
+                    continue
+                for companion in state["packages"][current].get("companions", ()):
+                    if companion in state["packages"] and companion not in removing:
+                        removing.add(companion)
+                        changed = True
+        reverse = Installer._reverse_dependencies(state)
         # 只有计划外还有人要的包才挡住这次卸载：主包自己先报，答案与逐包卸载时一致。
-        for current in [package_id, *sorted(removing - {package_id})]:
+        blocked: dict[str, list[str]] = {}
+        for current in [*sorted(roots), *sorted(removing - roots)]:
             required_by = sorted(reverse.get(current, set()) - removing - root_companions)
             if required_by:
-                raise InstallError(f"{current} is required by: {', '.join(required_by)}")
-
+                blocked[current] = required_by
         changed = True
         while changed:
             changed = False
@@ -866,7 +869,49 @@ class Installer:
                             "requested") and dependency not in still_required and dependency not in removing:
                         removing.add(dependency)
                         changed = True
+        return removing, blocked
 
+    def remove(
+            self,
+            package_id: str,
+            game_dir: Path,
+            *,
+            modloaders: Iterable[str] = (),
+            loader_supply: Mapping[str, Iterable[str]] | None = None,
+    ) -> tuple[list[str], list[str]]:
+        return self.remove_many(
+            [package_id], game_dir, modloaders=modloaders, loader_supply=loader_supply
+        )
+
+    def remove_many(
+            self,
+            package_ids: Iterable[str],
+            game_dir: Path,
+            *,
+            modloaders: Iterable[str] = (),
+            loader_supply: Mapping[str, Iterable[str]] | None = None,
+    ) -> tuple[list[str], list[str]]:
+        """一次卸掉这几个包。
+
+        一起卸才不会被彼此挡住：卸载计划里「为了卸 A 而连 B 一起卸」正是这个形状，逐个卸的话
+        B 会因为「A 还需要它」被拒。
+        """
+        removing_ids = [str(item) for item in package_ids]
+        game_dir = self.validate_game_dir(game_dir)
+        LOGGER.info("removing packages=%s game_dir=%s", removing_ids, game_dir)
+        if sprocket_is_running(game_dir):
+            raise InstallError("Sprocket is running; close the game before changing mod files")
+        state = self.state_store.load()
+        for package_id in removing_ids:
+            if package_id not in state["packages"]:
+                raise InstallError(f"package is not installed: {package_id}")
+        modloader_ids = {str(item) for item in modloaders}
+        supply = {str(key): tuple(str(item) for item in value) for key, value in (loader_supply or {}).items()}
+        removing, blocked = self.removal_closure(
+            state, removing_ids, modloaders=modloader_ids
+        )
+        for current, required_by in blocked.items():
+            raise InstallError(f"{current} is required by: {', '.join(required_by)}")
         next_state = copy.deepcopy(state)
         recorded_directories: set[str] = set()
         removed_roots: set[str] = set()

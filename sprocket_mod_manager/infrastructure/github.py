@@ -82,6 +82,13 @@ class GitHubClient:
         self.http = http
         self._release_cache: dict[str, tuple[ReleaseInfo, ...]] = {}
 
+    def cached_releases(self, package_id: str) -> tuple[ReleaseInfo, ...] | None:
+        """已经拿到的发布数据（条目内嵌的，或这次会话里拉过的）；没有就是 None。
+
+        调用方靠它判断「现在算这个需不需要问网络」—— 已安装读数那条路不许联网。
+        """
+        return self._release_cache.get(str(package_id))
+
     def releases(self, package: RegistryPackage, refresh: bool = False) -> tuple[ReleaseInfo, ...]:
         if package.releases is not None:
             self._release_cache[package.id] = package.releases

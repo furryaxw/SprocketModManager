@@ -110,9 +110,21 @@ const documentStub = {
 };
 
 const apiCalls = [];
+let lastInstall = {};
 let modalOptions = null;
 let resolveModal = null;
 const snapshot = (value) => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
+
+// 勾选「推荐一起装」那几个复选框：按 `dataset.packageId` 找那个 input。
+function checkboxFor(node, packageId) {
+    if (!node || node.tagName === "#text") return null;
+    if (node.tagName === "input" && node.dataset?.packageId === packageId) return node;
+    for (const child of node.children || []) {
+        const found = checkboxFor(child, packageId);
+        if (found) return found;
+    }
+    return null;
+}
 
 const sandbox = {
     console,
@@ -138,36 +150,103 @@ sandbox.globalThis = sandbox;
 sandbox.pywebview = {
     api: {
         client_log: async () => ({ok: true}),
-        plan_install: async (ids, versions, includeInstalled) => {
-            // 存快照而不是引用：`versions` 是活对象，改版本会把它一起改掉。
-            apiCalls.push({kind: "call", args: ["plan_install", snapshot(ids), snapshot(versions), includeInstalled === true]});
+        plan_changes: async (ids, choices, reinstall, force) => {
+            // 存快照而不是引用：`choices` 是活对象，改版本会把它一起改掉。
+            apiCalls.push({
+                kind: "call",
+                args: ["plan_changes", snapshot(ids), snapshot(choices), reinstall === true, force === true],
+            });
             if (payload.plan_failure) {
                 return {ok: false, code: "install_plan_failed", message: payload.plan_failure};
             }
-            const call = apiCalls.filter((entry) => entry.args[0] === "plan_install").length;
-            // `plans_sequence` 按第几次调用给计划（不够就沿用最后一个）；没给就按老规矩 first/replan。
-            const sequence = Array.isArray(payload.plans_sequence) ? payload.plans_sequence : null;
-            const plans = sequence
+            const call = apiCalls.filter((entry) => entry.args[0] === "plan_changes").length;
+            const sequence = Array.isArray(payload.lines_sequence) ? payload.lines_sequence : null;
+            const lines = sequence
                 ? (sequence[call - 1] ?? sequence[sequence.length - 1]) || []
-                : (call === 1 ? payload.plan?.plans : payload.replan?.plans) || [];
-            // 解析不了的包：`failed` 里的条目不一定有对应的计划，界面得照样给它一个框。
+                : (call === 1 ? payload.lines : payload.replan_lines) || [];
             const failures = sequence
                 ? (payload.failed_sequence?.[call - 1] ?? []) || []
-                : ((call === 1 ? payload.plan?.failed : payload.replan?.failed) || []);
-            return {
-                ok: true,
-                plans,
-                skipped: call === 1 ? payload.skipped || [] : [],
-                recommendations: payload.plan?.recommendations || [],
-                failed: failures,
-            };
+                : ((call === 1 ? payload.failed : payload.replan_failed) || []);
+            const noSolution = Array.isArray(payload.no_solution_sequence)
+                ? Boolean(payload.no_solution_sequence[call - 1])
+                : Boolean(payload.no_solution);
+            const response = planResponse(lines, failures, noSolution);
+            lastInstall = response.install;
+            return response;
         },
-        enqueue_install: async (...args) => {
-            apiCalls.push({kind: "call", args: ["enqueue_install", ...args.map(snapshot)]});
-            return {ok: true, count: 1, failed: []};
+        apply_changes: async (...args) => {
+            apiCalls.push({kind: "call", args: ["apply_changes", ...args.map(snapshot)]});
+            return {ok: true, added: [], count: 1, removed: []};
         },
     },
 };
+
+/**
+ * 一份计划：给出来的每一行就是会装的那一行，解不出来的那些另给一行（标红、说明原因）。
+ *
+ * `install` 是这一批会落到磁盘上的「包 -> 版本」：`install_extra` 用它补上依赖，好断言
+ * 「改版本之后依赖跟着换」。
+ */
+function planResponse(lines, failures, noSolution = false) {
+    // 候选版本由目录读数给：这一行只报选中了哪一版，列表是后端摆好的那一份。
+    const out = lines.map((entry) => {
+        const base = lineFor(entry.id);
+        return {...base, ...entry, versions: entry.versions?.length ? entry.versions : base.versions};
+    });
+    for (const failure of failures) {
+        const base = lineFor(failure.id);
+        out.push({
+            ...base,
+            action: "skip",
+            version: failure.version || base.version,
+            problems: [{kind: "conflict", others: [], text: failure.message || "no version found"}],
+        });
+    }
+    const install = {};
+    for (const line of out) {
+        if (line.action === "install" && line.version) install[line.id] = String(line.version);
+    }
+    const extra = {...(payload.install_extra || {}), ...(lines === payload.lines ? {} : payload.replan_install_extra || {})};
+    for (const [id, version] of Object.entries(extra)) {
+        install[id] = String(version);
+    }
+    return {
+        ok: true,
+        no_solution: Boolean(noSolution),
+        message: noSolution ? (payload.no_solution_message || "") : "",
+        roots: payload.no_solution_roots || [],
+        lines: out,
+        install,
+        remove: out.filter((line) => line.action === "remove").map((line) => line.id),
+        excluded: [],
+        recommendations: payload.recommendations || [],
+        replaced_by: payload.replaced_by || [],
+    };
+}
+
+/** 一行计划：候选版本对着目录读数取，和线上一样是后端给的。 */
+function lineFor(packageId) {
+    const pkg = (payload.packages || []).find((item) => item.id === packageId) || {};
+    return {
+        id: packageId,
+        name: packageId,
+        display_name: pkg.display_name || {},
+        installed_version: pkg.installed?.version || "",
+        named: true,
+        action: "skip",
+        version: "",
+        reinstall: false,
+        verdict: "",
+        problems: [],
+        depends_on: [],
+        required_by: [],
+        remove_with: [],
+        versions: (pkg.releases || []).map((release) => ({
+            version: String(release.version),
+            verdict: String(release.verdict || ""),
+        })),
+    };
+}
 
 const injected = {
     ready: true,
@@ -221,6 +300,14 @@ function selectElement(node) {
     return null;
 }
 
+// 弹窗里所有的下拉，按渲染顺序：`change_select` 用它挑第几个来改。
+function selectElements(node, found = []) {
+    if (!node || node.tagName === "#text") return found;
+    if (node.tagName === "select") found.push(node);
+    for (const child of node.children || []) selectElements(child, found);
+    return found;
+}
+
 function options(element) {
     return (element?.children || []).map((option) => ({
         value: option.value,
@@ -241,21 +328,48 @@ function planLines(node) {
     return found;
 }
 
-// 对话框里每个框（`.plan-group`）的结构：标题、跳过标记、原因、以及这个框自己的依赖树。
+// 计划里的每一行（`.plan-line`）。
+function planLineElements(node, found = []) {
+    if (!node || node.tagName === "#text") return found;
+    if (String(node.className || "").split(" ").includes("plan-line")) found.push(node);
+    for (const child of node.children || []) planLineElements(child, found);
+    return found;
+}
+
+// 对话框里每个框（`.plan-group`）的结构：标题行、标记、原因行、以及这个框里那行版本选择器。
 // 解析不了的包也要有自己的框 —— 它不该只剩一句报错。
 function planGroups(node) {
     const found = [];
     const klass = (element) => String(element.className || "").split(" ");
+    const markOf = (element) => (
+        flatten(element).find((item) => klass(item).includes("plan-skipped-mark"))?.text || ""
+    );
+    // 标记与下拉在同一行里谁在前：重装标记要挨着下拉左边。
+    const markBeforeSelect = (element) => {
+        const row = planLineElements(element)[0];
+        if (!row) return false;
+        const children = row.children || [];
+        const markIndex = children.findIndex((item) => klass(item).includes("plan-skipped-mark"));
+        const selectIndex = children.findIndex((item) => item.tagName === "select");
+        return markIndex >= 0 && selectIndex >= 0 && markIndex < selectIndex;
+    };
     const collect = (element) => {
         if (!element || element.tagName === "#text") return;
         if (klass(element).includes("plan-group")) {
-            const child = (name) =>
-                (element.children || []).find((item) => klass(item).includes(name));
+            const row = planLineElements(element)[0];
             found.push({
                 className: element.className,
-                heading: (element.children || []).find((item) => item.tagName === "strong")?.textContent || "",
-                mark: child("plan-skipped-mark")?.textContent || "",
-                reason: child("plan-reason")?.textContent || "",
+                heading: flatten(element).find((item) => item.tag === "strong")?.text || "",
+                titleInLine: Boolean(
+                    (row?.children || []).some((item) => item.tagName === "strong")
+                ),
+                mark: markOf(element),
+                markBeforeSelect: markBeforeSelect(element),
+                reason: (element.children || [])
+                    .find((item) => klass(item).includes("plan-reason"))?.textContent || "",
+                reasons: (element.children || [])
+                    .filter((item) => klass(item).includes("plan-reason"))
+                    .map((item) => item.textContent),
                 lines: planLines(element),
                 hasSelect: Boolean(selectElement(element)),
             });
@@ -292,7 +406,9 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function main() {
     const result = {planCalls: [], enqueue: null, first: null, after: null, toasts: []};
     const started = vm.runInContext(
-        `beginInstall(${JSON.stringify(payload.install_ids || [])}, ${JSON.stringify(payload.versions || null)});`,
+        `beginInstall(${JSON.stringify(payload.install_ids || [])}, `
+        + `${JSON.stringify(payload.choices || null)}, `
+        + `${payload.reinstall === true}, ${payload.force === true});`,
         context,
     );
     for (let attempt = 0; attempt < 10 && !modalOptions; attempt += 1) await tick();
@@ -303,7 +419,7 @@ async function main() {
         return {
             ...result,
             planCalls: apiCalls
-                .filter((entry) => entry.kind === "call" && entry.args[0] === "plan_install")
+                .filter((entry) => entry.kind === "call" && entry.args[0] === "plan_changes")
                 .map((entry) => entry.args.slice(1)),
             toasts: elements["#toast-region"].children.map((node) => node.textContent),
         };
@@ -317,18 +433,24 @@ async function main() {
         className: select ? select.className : "",
         lines: planLines(body),
         groups: planGroups(body),
+        install: lastInstall,
+        messages: flatten(body)
+            .filter((item) => item.className === "translation-replace-warning")
+            .map((item) => item.text),
         warnings: flatten(body)
             .filter((item) => item.className === "loader-displace-warning")
             .map((item) => item.text),
     };
 
     // `changes` 按顺序改几次版本（每次都在重画后的新选择器上改）；`change_to` 是它的单值写法。
+    // `change_select` 挑第几个下拉（默认第一个）—— 依赖那一行的下拉也能改。
     const steps = Array.isArray(payload.changes)
         ? payload.changes
         : (payload.change_to ? [payload.change_to] : []);
+    const selectIndex = Number(payload.change_select || 0);
     result.steps = [];
     for (const version of steps) {
-        const control = selectElement(body);
+        const control = selectElements(body)[selectIndex];
         if (!control) break;
         control.value = version;
         for (const handler of control.listeners.change || []) handler({});
@@ -338,17 +460,29 @@ async function main() {
             options: options(selectElement(body)),
             lines: planLines(body),
             groups: planGroups(body),
+            install: lastInstall,
+            messages: flatten(body)
+                .filter((item) => item.className === "translation-replace-warning")
+                .map((item) => item.text),
         });
     }
     result.after = result.steps.length ? result.steps[result.steps.length - 1] : null;
+
+    // `check_recommendations` 勾上「推荐一起装」里的那几个，然后才确认。
+    for (const packageId of payload.check_recommendations || []) {
+        const box = checkboxFor(body, packageId);
+        if (!box) continue;
+        box.checked = true;
+        for (const handler of box.listeners.change || []) handler({});
+    }
 
     resolveModal(payload.confirm !== false);
     await tick();
     await tick();
     result.planCalls = apiCalls
-        .filter((entry) => entry.kind === "call" && entry.args[0] === "plan_install")
+        .filter((entry) => entry.kind === "call" && entry.args[0] === "plan_changes")
         .map((entry) => entry.args.slice(1));
-    const queued = apiCalls.find((entry) => entry.kind === "call" && entry.args[0] === "enqueue_install");
+    const queued = apiCalls.find((entry) => entry.kind === "call" && entry.args[0] === "apply_changes");
     result.enqueue = queued ? queued.args.slice(1) : null;
     await started;
     return result;

@@ -840,6 +840,8 @@ class EnvironmentApiTests(unittest.TestCase):
                 context=service,
                 force_conflicts=False,
                 version_range="*",
+                ignore_edges=(),
+                excluded=(),
             )
             api = self._api(Path(directory), None)
             try:
@@ -863,13 +865,13 @@ class EnvironmentApiTests(unittest.TestCase):
             )
             record_installed_loader(game)
             try:
-                result = api.plan_install([BRIDGE_ID])
+                result = api.plan_changes([BRIDGE_ID])
             finally:
                 self._close(api)
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(
-            [item["id"] for item in result["plans"][0]["displaces"]],
+            [item["id"] for item in result["displaces"]],
             [LOADER_ID],
         )
 
@@ -884,13 +886,13 @@ class EnvironmentApiTests(unittest.TestCase):
             )
             record_installed_loader(game)
             try:
-                result = api.plan_install([BEPINEX_ID])
+                result = api.plan_changes([BEPINEX_ID])
             finally:
                 self._close(api)
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(
-            [item["id"] for item in result["plans"][0]["displaces"]],
+            [item["id"] for item in result["displaces"]],
             [LOADER_ID],
         )
 
@@ -1256,7 +1258,8 @@ class EnvironmentUiTests(unittest.TestCase):
 
         self.assertIn('id="catalog-notice"', self.html)
         self.assertIn("function packageHidden(pkg)", compatibility)
-        self.assertIn("function installTarget(pkg)", compatibility)
+        self.assertIn("return packageVerdict(pkg) === VERDICT_INCOMPATIBLE;", compatibility,
+                      "藏不藏只看判定，不再另算一个「会装哪版」")
         self.assertIn("state.showIncompatible", catalog)
         self.assertIn("showIncompatible: false", core, "默认隐藏")
         self.assertNotIn("showIncompatible", settings, "开关不落盘：重启回到默认")
@@ -1353,13 +1356,15 @@ class EnvironmentUiTests(unittest.TestCase):
         self.assertIn("entry.directory", modloaders)
         self.assertIn('modloaderSection("dependencies"', modloaders)
         self.assertIn('modloaderSection("recommendations"', modloaders)
-        self.assertIn("beginInstall([item.id], null, true)", modloaders, "加载器安装走模组那条安装路")
+        self.assertIn('callApi("enqueue_install", [item.id], false, {}, true)', modloaders,
+                      "加载器自成一路：版本由后端解，不进计划页")
         self.assertIn('callApi("remove_modloader", item.id)', modloaders)
         for key in (
             "modloaderSupply",
             "modloaderInstalledVersion",
             "modloaderLatestVersion",
             "modloaderRemoveMessage",
+            "modloaderInstallMessage",
         ):
             self.assertEqual(i18n.count(f"{key}:"), 2, f"{key} 要有 zh 与 en")
 

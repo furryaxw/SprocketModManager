@@ -286,10 +286,25 @@ function renderModloaderCard(item) {
     return card;
 }
 
-/** 主按钮：走模组那条安装路（解析 → 安装确认里挑版本、看依赖 → 入队）。 */
+/** 主按钮：加载器自成一路 —— 互斥与游戏版本兼容在加载器页上说清，版本也由后端解，不进计划页。 */
 async function installLoader(item) {
     if (queueActive() || state.modloadersLoading) return false;
-    await beginInstall([item.id], null, true);
+    const name = localized(item.display_name, item.name || item.id);
+    const confirmed = await showModal({
+        kicker: tr("modRuntime"),
+        title: tr("confirmInstall"),
+        body: tr("modloaderInstallMessage", {name}),
+        confirmText: tr("install"),
+    });
+    if (!confirmed) return false;
+    const result = await callApi("enqueue_install", [item.id], false, {}, true);
+    if (!result.ok) {
+        resultError(result);
+        return false;
+    }
+    toast(tr("queued", {count: result.count}));
+    await pollQueue(true);
+    await showPage("downloads");
     return true;
 }
 

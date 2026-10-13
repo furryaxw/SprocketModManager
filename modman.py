@@ -210,7 +210,11 @@ def cli_main(argv: list[str] | None = None) -> int:
                 _print_plan(service, result)
         elif args.command == "install":
             game_path = _game_path(args, config)
-            plan = service.resolve(args.package, args.range, installed=service.installed(game_path))
+            plan = service.resolve(
+                args.package,
+                args.range,
+                installed=service.installed_versions(service.installed(game_path)),
+            )
             _print_plan(service, plan)
             installed_plan, warnings = service.install(
                 args.package,
@@ -308,7 +312,9 @@ def cli_main(argv: list[str] | None = None) -> int:
                 targets = [package_id for package_id, info in installed.items() if info.get("requested")]
             changed = 0
             for package_id in targets:
-                plan = service.resolve(package_id, installed=installed)
+                plan = service.resolve(
+                    package_id, installed=service.installed_versions(installed)
+                )
                 latest = plan.by_id()[package_id].release.version
                 current = installed.get(package_id, {}).get("version")
                 if current == str(latest):

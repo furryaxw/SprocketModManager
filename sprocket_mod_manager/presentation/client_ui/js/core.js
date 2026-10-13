@@ -410,7 +410,8 @@ function packageState(pkg) {
     if (!pkg.release || !(pkg.install_assets || []).length) return {label: tr("unavailable"), className: ""};
     const installed = packageInstalled(pkg);
     if (!installed) return {label: tr("available"), className: "available"};
-    if (installed.version !== pkg.release.version) return {label: tr("updateAvailable"), className: "update"};
+    // 「有更新」看的是求解器现在会把这条装成哪一版：最新那版装不上就不算更新。
+    if (installed.update) return {label: tr("updateAvailable"), className: "update"};
     return {label: tr("installedState"), className: "installed"};
 }
 

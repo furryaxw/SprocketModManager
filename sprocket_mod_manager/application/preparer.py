@@ -125,11 +125,12 @@ class PlanPreparer:
         directories = self.install_directories(plan, game_supply)
         scanner = PackageScanner(directories)
         installed_versions = {str(key): str(value) for key, value in (satisfied or {}).items()}
+        named_roots = plan.named_roots()
         try:
             for resolved in plan.packages:
                 package = resolved.package
                 if (
-                        package.id != plan.root_id
+                        package.id not in named_roots
                         and installed_versions.get(package.id) == str(resolved.release.version)
                 ):
                     continue

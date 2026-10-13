@@ -213,13 +213,9 @@ const sandbox = {
             selectionNotApplicable: "The selection does not support this action",
             newVersionAvailable: `Version ${values.version} available`,
             noUpdates: "No updates available",
-            updateQueued: `Queued ${values.count} update task(s)`,
             batchEnabled: `Enabled ${values.count} mod(s)`,
             batchDisabled: `Disabled ${values.count} mod(s)`,
-            batchRemoved: `Removed ${values.count} mod(s)`,
             batchPartial: `${values.done} succeeded, ${values.failed} failed`,
-            confirmBatchRemove: "Confirm removal",
-            removeSelectedMessage: `Remove the ${values.count} selected mod(s)?`,
             incompatibleUpdateHead: `Update to ${values.version} is available, but it does not support your `,
             incompatibleUpdateUnknown: `Update to ${values.version} is available, but this environment cannot run it`,
             environmentAxisSprocket: `Sprocket ${values.version}`,
@@ -251,20 +247,45 @@ const sandbox = {
     callApi: async (...args) => {
         apiCalls.push({ kind: "call", args });
         if (args[0] === "toggle_mod") return { ok: true, toggled: args[1], restart_required: true };
-        // 重装按钮点下去会走真实的 `beginInstall`：给它一份能画出确认框的计划，后面的入队才看得见。
-        if (args[0] === "plan_install") {
-            return {
-                ok: true,
-                plans: (args[1] || []).map((id) => ({
+        // 重装/更新/卸载点下去都会走真实的计划页：给它一份画得出来的计划，后面的执行才看得见。
+        if (args[0] === "plan_changes") {
+            const choices = args[2] || {};
+            const lines = (args[1] || []).map((id) => {
+                const record = (payload.installed || []).find((item) => item.id === id) || {};
+                const version = String(record.version || "0.1.3");
+                const removing = String(choices[id] || "") === "remove";
+                return {
                     id,
                     name: id,
                     display_name: {en: id, zh: id},
-                    packages: [],
-                    displaces: [],
-                })),
-                recommendations: [],
-                failed: [],
+                    installed_version: record.version || "",
+                    named: true,
+                    action: removing ? "remove" : "install",
+                    version,
+                    reinstall: Boolean(args[3]),
+                    verdict: "compatible",
+                    problems: [],
+                    depends_on: [],
+                    required_by: [],
+                    remove_with: [],
+                    versions: [{version, verdict: "compatible"}],
+                };
+            });
+            return {
+                ok: true,
+                no_solution: false,
+                lines,
+                install: Object.fromEntries(
+                    lines.filter((line) => line.action === "install")
+                        .map((line) => [line.id, line.version]),
+                ),
+                remove: lines.filter((line) => line.action === "remove").map((line) => line.id),
+                excluded: [],
+                replaced_by: [],
             };
+        }
+        if (args[0] === "apply_changes") {
+            return {ok: true, added: [], count: (args[1] || []).length, removed: []};
         }
         // 刷新必须回同样的 payload，否则会掩盖"操作后列表被清空"这类问题。
         if (args[0] === "get_installed") return { ok: true, ...payload };

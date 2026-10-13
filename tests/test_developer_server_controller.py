@@ -451,7 +451,6 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.assertIsNotNone(package["release"], "没有它界面会判「无可用版本」")
         self.assertEqual(package["release"]["version"], "1.0.0")
         self.assertEqual(package["install_assets"], ["mod.zip"])
-        self.assertEqual(package["install_target"], "1.0.0")
 
     def test_a_private_entry_that_cannot_be_read_is_still_listed(self) -> None:
         """读不出来的条目也要露出来，并带上原因。
@@ -521,13 +520,13 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.connect_server_with(PRIVATE_ENTRY)
 
         self.api.servers_payload()
-        result = self.api.plan_install(["team1.private-mod"])
+        result = self.api.plan_changes(["team1.private-mod"])
 
         self.assertTrue(self.api.service.registry.has_package("team1.private-mod"))
         self.assertTrue(result["ok"], result)
         self.assertEqual(
-            [item["id"] for item in result["plans"][0]["packages"]],
-            [LOADER_ID, "team1.private-mod"],
+            sorted(result["install"]),
+            ["team1.private-mod", "test.melonloader"],
         )
 
     def test_the_public_catalog_does_not_list_private_packages(self) -> None:
@@ -563,7 +562,11 @@ class DeveloperServerControllerTests(unittest.TestCase):
             self.api.servers_payload()
 
         self.assertFalse(self.api.service.registry.has_package("team1.private-mod"))
-        self.assertFalse(self.api.plan_install(["team1.private-mod"])["ok"])
+        # 注册表里没有这个包，计划页把它标红出局，不当作错误。
+        offline_plan = self.api.plan_changes(["team1.private-mod"])
+        self.assertTrue(offline_plan["ok"], offline_plan)
+        self.assertEqual(offline_plan["install"], {})
+        self.assertEqual(offline_plan["lines"][0]["problems"][0]["kind"], "no-candidate")
 
     # ---- remove -----------------------------------------------------------
 

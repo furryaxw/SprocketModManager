@@ -197,7 +197,7 @@ class SolverProviderTests(unittest.TestCase):
     def test_an_installed_provider_is_the_only_one_added_to_the_plan(self) -> None:
         registry, _packages = contested_registry()
 
-        plan = DependencySolver(registry, github(), installed=frozenset({BRIDGE})).resolve(MOD)
+        plan = DependencySolver(registry, github(), installed={BRIDGE: ""}).resolve(MOD)
 
         self.assertEqual([item.package.id for item in plan.packages], [BRIDGE, MOD])
         self.assertEqual(plan.by_id()[MOD].dependency_ids, (BRIDGE,))
@@ -325,7 +325,7 @@ class ProviderTableTests(unittest.TestCase):
             registry,
             github(),
             environment=game_environment("0.2.53.2"),
-            installed=frozenset({BRIDGE}),
+            installed={BRIDGE: ""},
         ).resolve(MOD)
         self.assertEqual(plan.by_id()[MOD].dependency_ids, (BRIDGE,))
 
@@ -334,7 +334,7 @@ class ProviderTableTests(unittest.TestCase):
                 registry,
                 github(),
                 environment=game_environment("0.2.53.2"),
-                installed=frozenset({NATIVE, BRIDGE}),
+                installed={NATIVE: "", BRIDGE: ""},
             ).resolve(MOD)
 
         message = str(raised.exception)

@@ -22,10 +22,9 @@ from ...application.data_hub import (
 )
 from ...application.identifiers import scan_targets, toggle_directories
 from ...application.local_mods import scan_local_mods, summarize
+from ...application.releases import release_verdicts
 from ...application.service import ModManagerService
 from ...domain.compatibility import (
-    COMPATIBLE,
-    INCOMPATIBLE,
     CapabilityEnvironment,
     loader_table_decision,
     release_verdict,
@@ -259,7 +258,6 @@ class CatalogController(ApiController):
             # 兼容性那一行的轴名要按供给关系反查：能力 id 常常不是包 id（`bepinex.bepinex`
             # 由 `bepinex.bepinex-be` 供给），界面只拿到包就认不出这根轴。
             "provides": dict(package.provides),
-            "install_target": self._install_target(releases, release_data),
             "release": release_data,
             "releases": releases,
             "install_assets": [asset.name for asset in selected_assets],
@@ -286,7 +284,6 @@ class CatalogController(ApiController):
             "recommendations": [],
             "featured": False,
             "provides": {},
-            "install_target": "",
             "release": None,
             "releases": [],
             "install_assets": [],
@@ -294,71 +291,14 @@ class CatalogController(ApiController):
         }
 
     @staticmethod
-    def _install_target(
-            releases: list[dict[str, Any]],
-            release_data: dict[str, Any] | None,
-    ) -> str:
-        """默认要装的版本：兼容的里面最高的；一个兼容的都没有才退到最新那版。
-
-        列表和详情页上写的那个版本号就是它，点「安装」装下去的也是它 —— 所以这个口径只有这一处。
-        """
-        for entry in releases:
-            if entry["verdict"] == COMPATIBLE:
-                return str(entry["version"])
-        if releases:
-            return str(releases[0]["version"])
-        return str((release_data or {}).get("version", ""))
-
-    @staticmethod
     def _release_verdicts(
             service: ModManagerService,
             package: RegistryPackage,
             environment: CapabilityEnvironment,
     ) -> list[dict[str, Any]]:
-        """该包每个可安装版本的三色判定（新到旧）：界面拿它决定隐藏、颜色和默认选中。
-
-        加载器按「加载器包 ↔ 游戏」表判：哪一行覆盖本机游戏版本，那一行的版本区间就是它该处的范围。
-        加载器自己不写能力声明，按声明判只会得到"未知"。
-        """
-        if package.releases is not None:
-            releases = package.releases
-        else:
-            try:
-                releases = service.github.releases(package)
-            except (ModManagerError, OSError, ValueError):
-                return []
-        registry = service.registry
-        table = registry.provider_table if registry is not None else {}
-        game_capability = environment.game_id
-        game_version = environment.capability_version(game_capability)
-        verdicts: list[dict[str, Any]] = []
-        for release in releases:
-            if not service.github.install_assets(package, release):
-                continue
-            decision = (
-                loader_table_decision(
-                    table, package.id, game_capability, game_version, str(release.version)
-                )
-                if package.is_loader
-                else None
-            )
-            if decision is None:
-                dependencies = release.dependencies
-                verdict = release_verdict(
-                    environment, category=package.category, dependencies=dependencies
-                )
-            else:
-                verdict, dependencies = decision
-            verdicts.append({
-                "tag": release.tag,
-                "version": str(release.version),
-                "verdict": verdict,
-                "compatibility": dict(release.compatibility) if release.compatibility else None,
-                # 声明的原始区间与逐轴结果：详情页照着摆，不再自己解析一遍。
-                "dependencies": [dict(item) for item in dependencies],
-                "axes": environment.axes(dependencies),
-            })
-        return verdicts
+        return release_verdicts(
+            package, registry=service.registry, github=service.github, environment=environment
+        )
 
     def _environment(self) -> CapabilityEnvironment:
         """判定用的环境：与左下角显示的是同一份（同一个监听缓存）。"""
@@ -413,7 +353,7 @@ class CatalogController(ApiController):
             entry: dict[str, Any] = {"id": package_id, **(self._installed_entry(info) or {})}
             try:
                 entry.update(self._package_shape(target, package_id, info))
-                entry.update(self._update_info(target, package_id, info, environment))
+                entry.update(self._update_info(target, package_id, info, environment, records))
                 entry["issues"] = []
             except Exception as exc:  # 一条记录的任何毛病都不许废掉整页已安装读数
                 LOGGER.warning("installed entry failed package=%s error=%s", package_id, exc)
@@ -428,14 +368,16 @@ class CatalogController(ApiController):
             package_id: str,
             info: dict[str, Any] | None,
             environment: CapabilityEnvironment,
+            installed: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """这条记录相对注册表还能更新到哪版；没有就不给。
 
         更新判定挂在这份读数上，不挂在目录读数上 —— 安装记录一变它就要重算，而目录读数不会跟着
-        安装动作刷新。只用条目内嵌的发布数据（`get_installed` 不联网），版本比较归 `domain.semver`。
+        安装动作刷新。只用条目内嵌的发布数据（`get_installed` 不联网）。
 
         `newer` 是比装着的这版新的**最新**那版，兼容与否都算：行上那枚「为什么不是最新」的感叹号
-        要它。`update` 是其中本机跑得起来、真能装上去的最高那版。
+        要它。`update` 是**求解器现在会把这条装成哪一版** —— 界面不再自己拿最新版说「有更新」，
+        只有求解器解得出来、而且比装着的新，才给更新。
         """
         empty: dict[str, Any] = {"newer": None, "update": None}
         try:
@@ -444,7 +386,6 @@ class CatalogController(ApiController):
             return empty
 
         newer: dict[str, Any] | None = None
-        update: dict[str, Any] | None = None
         for entry in self._update_candidates(service, package_id, environment):
             try:
                 version = Version.parse(str(entry.get("version", "")))
@@ -452,17 +393,59 @@ class CatalogController(ApiController):
                 continue
             if version <= current:
                 continue
-            summary = {
+            newer = {
                 "version": str(entry.get("version", "")),
                 "verdict": str(entry.get("verdict", "")),
             }
-            if newer is None:
-                newer = summary
-            if update is None and summary["verdict"] != INCOMPATIBLE:
-                update = summary
-            if newer is not None and update is not None:
-                break
-        return {"newer": newer, "update": update}
+            break
+        return {
+            "newer": newer,
+            "update": self._solved_update(service, package_id, current, installed),
+        }
+
+    def _solved_update(
+            self,
+            service: ModManagerService,
+            package_id: str,
+            current: Version,
+            installed: dict[str, dict[str, Any]] | None,
+    ) -> dict[str, Any] | None:
+        """求解器现在会把这个包装成哪一版；装着的这版或更旧就不算更新。"""
+        registry = service.registry
+        if registry is None or not registry.has_package(package_id):
+            return None
+        package = registry.get(package_id)
+        if package.releases is None and service.github.cached_releases(package_id) is None:
+            # 没有可用的发布数据就得问网络，而这份读数不联网：宁可不给更新。
+            return None
+        try:
+            plan = service.resolve(
+                package_id,
+                installed=service.installed_versions(installed or {}),
+            )
+            target = plan.by_id()[package_id]
+        except (ModManagerError, OSError, ValueError):
+            return None
+        version = str(target.release.version)
+        try:
+            if Version.parse(version) <= current:
+                return None
+        except ValueError:
+            return None
+        verdict = next(
+            (
+                item["verdict"]
+                for item in release_verdicts(
+                    package,
+                    registry=registry,
+                    github=service.github,
+                    environment=self._environment(),
+                )
+                if item["version"] == version
+            ),
+            "",
+        )
+        return {"version": version, "verdict": verdict}
 
     def _update_candidates(
             self,

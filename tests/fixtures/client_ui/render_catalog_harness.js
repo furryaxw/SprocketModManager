@@ -185,7 +185,10 @@ const sandbox = {
     openUrl: () => {},
     callApi: async () => ({ ok: true }),
     showPage: async () => {},
-    showModal: async () => true,
+    showModal: async (options) => {
+        modalCalls.push(options || {});
+        return true;
+    },
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -209,6 +212,7 @@ const injected = {
     showIncompatible: Boolean(payload.show_incompatible),
     modloadersRequested: true,
 };
+const modalCalls = [];
 const source = [
     fs.readFileSync(path.join(clientUiDir, "js", "i18n.js"), "utf8"),
     fs.readFileSync(path.join(clientUiDir, "js", "core.js"), "utf8"),
@@ -431,6 +435,25 @@ if (Number.isInteger(payload.right_click_row)) {
     list.replaceChildren = originalReplace;
 }
 
+// 详情页那个按钮点开的是「版本与兼容性」：直接跑真函数，留下它交给对话框的那份内容。
+let versionList = null;
+let versionListPending = null;
+if (payload.version_list && sandbox.__state.selectedId) {
+    versionListPending = Promise.resolve(
+        vm.runInContext(
+            "showVersionList(state.packages.find((pkg) => pkg.id === state.selectedId))",
+            context,
+        ),
+    ).then(() => {
+        const options = modalCalls[modalCalls.length - 1] || {};
+        return {
+            title: options.title || "",
+            body: serialize(options.body),
+            lines: flatten(options.body).map((node) => node.text),
+        };
+    });
+}
+
 const report = () => process.stdout.write(JSON.stringify({
         rows: firstRender.rows,
         emptyState: firstRender.emptyState,
@@ -457,12 +480,17 @@ const report = () => process.stdout.write(JSON.stringify({
         readme: {default: readme, opened: readmeOpened},
         rowClick,
         rowSelect,
+        versionList,
 }));
-if (catalogLoadPending) {
-    catalogLoadPending
-        .catch((error) => ({error: String((error && error.stack) || error)}))
-        .then((value) => {
-            catalogLoad = value;
+if (catalogLoadPending || versionListPending) {
+    Promise.all([
+        catalogLoadPending || Promise.resolve(null),
+        versionListPending || Promise.resolve(null),
+    ])
+        .catch((error) => [{error: String((error && error.stack) || error)}, null])
+        .then(([loadValue, listValue]) => {
+            catalogLoad = loadValue;
+            versionList = listValue;
             setImmediate(report);
         });
 } else {

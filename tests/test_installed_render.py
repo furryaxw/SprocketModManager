@@ -296,28 +296,28 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(reinstall["className"], "primary-button", "损坏行上重装是主按钮")
 
     def test_reinstalling_a_corrupted_row_overwrites_in_one_step(self) -> None:
-        """损坏的行点重装：要一份「已装同一版也给」的计划，入队时带上覆盖权限。"""
+        """损坏的行点重装：计划页带重装与强制两个标记，执行也照这两个标记走。"""
         result = self._render(
             corrupted=True,
             packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
         )
 
         self.assertEqual(self._plan_calls(result), [
-            ["plan_install", ["furryaxw.sprocket-laser-rangefinder"], {"furryaxw.sprocket-laser-rangefinder": "0.1.3"}, True],
+            ["plan_changes", ["furryaxw.sprocket-laser-rangefinder"], {}, True, True],
         ])
-        self.assertEqual(self._enqueue_calls(result), [
-            ["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], True, {"furryaxw.sprocket-laser-rangefinder": "0.1.3"}, True],
+        self.assertEqual(self._apply_calls(result), [
+            ["apply_changes", ["furryaxw.sprocket-laser-rangefinder"], {}, True, True],
         ])
 
     def test_reinstalling_a_healthy_row_asks_before_overwriting(self) -> None:
-        """没被改动过的行照常重装，但不带覆盖权限：冲突仍由后端拦下来。"""
+        """没被改动过的行照常重装，但不带强制：冲突仍由计划页摆出来。"""
         result = self._render(
             packages=[{"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.1.3"}}],
         )
 
         self.assertEqual(
-            self._enqueue_calls(result)[0][2], False,
-            "没标记损坏就不该绕过冲突保护",
+            self._apply_calls(result)[0][4], False,
+            "没标记损坏就不该要求覆盖",
         )
 
     def test_a_row_matched_only_by_its_registry_id_can_be_reinstalled(self) -> None:
@@ -331,7 +331,6 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         self.assertEqual(
             self._plan_calls(result)[0][1], ["furryaxw.cannon-sound-pool-fix"],
         )
-
     def test_a_row_without_any_source_has_no_reinstall_button(self) -> None:
         """纯本地 DLL（记录与注册表都没有它）没有来源，行上不摆重装按钮。"""
         result = self._render()
@@ -347,15 +346,15 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         return [
             entry["args"]
             for entry in result["apiCalls"]
-            if entry.get("kind") == "call" and entry["args"][0] == "plan_install"
+            if entry.get("kind") == "call" and entry["args"][0] == "plan_changes"
         ]
 
     @staticmethod
-    def _enqueue_calls(result: dict) -> list:
+    def _apply_calls(result: dict) -> list:
         return [
             entry["args"]
             for entry in result["apiCalls"]
-            if entry.get("kind") == "call" and entry["args"][0] == "enqueue_install"
+            if entry.get("kind") == "call" and entry["args"][0] == "apply_changes"
         ]
 
     def test_newer_release_shows_a_chip_while_an_equal_one_does_not(self) -> None:
@@ -936,7 +935,7 @@ class InstalledRenderHarnessTests(unittest.TestCase):
                 self.assertEqual(result["sidebar"]["loaders"], [sidebar_line],
                                  "左下角环境区的加载器名来自注册表，不是包 id")
 
-    def test_batch_update_enqueues_only_the_selected_outdated_packages(self) -> None:
+    def test_batch_update_sends_only_the_selected_outdated_packages(self) -> None:
         package = {"id": "furryaxw.sprocket-laser-rangefinder", "release": {"version": "0.2.0"}}
         result = self._render(
             packages=[package],
@@ -944,12 +943,11 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             action="update-selected",
             update={"version": "0.2.0", "verdict": "compatible"},
         )
-        queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
+        planned = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "plan_changes"]
         self.assertEqual(
-            queued,
-            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False,
-              {"furryaxw.sprocket-laser-rangefinder": "0.2.0"}]],
-            "只有选中且确实有新版的行才排队，并且装的就是行上写的那一版",
+            planned,
+            [["plan_changes", ["furryaxw.sprocket-laser-rangefinder"], {}, False, False]],
+            "只有选中且确实有新版的行进计划，版本由求解器定",
         )
 
     def test_a_blocked_update_does_not_count_as_an_update(self) -> None:
@@ -967,8 +965,8 @@ class InstalledRenderHarnessTests(unittest.TestCase):
 
         self.assertTrue(result["toolbar"]["buttons"]["update-selected"], "拦下来就不该点亮「更新」")
         self.assertEqual(result["toolbar"]["filters"]["outdated"]["text"], "Updates (0)")
-        queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
-        self.assertEqual(queued, [], "红版不入队")
+        planned = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "plan_changes"]
+        self.assertEqual(planned, [], "红版不进计划")
         self.assertEqual(
             [entry["kind"] for entry in result["apiCalls"] if entry["kind"] == "error"], [],
             "没有更新是正常情况，不该报错",
@@ -996,11 +994,10 @@ class InstalledRenderHarnessTests(unittest.TestCase):
         row = result["rows"][0]
         self.assertIsNotNone(_find(row, lambda node: node["text"] == "Version 0.2.0 available"))
         self.assertIsNotNone(_find(row, lambda node: "update-alert" in node["className"]))
-        queued = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "enqueue_install"]
+        planned = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "plan_changes"]
         self.assertEqual(
-            queued,
-            [["enqueue_install", ["furryaxw.sprocket-laser-rangefinder"], False,
-              {"furryaxw.sprocket-laser-rangefinder": "0.2.0"}]],
+            planned,
+            [["plan_changes", ["furryaxw.sprocket-laser-rangefinder"], {}, False, False]],
         )
 
     def test_batch_toggle_calls_the_api_per_selected_path(self) -> None:
@@ -1015,13 +1012,18 @@ class InstalledRenderHarnessTests(unittest.TestCase):
             "已经是禁用状态的行不重复调用",
         )
 
-    def test_batch_remove_confirms_once_and_removes_every_selected_package(self) -> None:
+    def test_batch_remove_goes_through_the_plan_with_every_selected_package(self) -> None:
         result = self._render(
             selection=[PACKAGE_KEY],
             action="remove-selected",
         )
-        removes = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "remove"]
-        self.assertEqual(removes, [["remove", "furryaxw.sprocket-laser-rangefinder"]])
+        planned = [entry["args"] for entry in result["apiCalls"] if entry["args"][0] == "plan_changes"]
+        self.assertEqual(
+            planned,
+            [["plan_changes", ["furryaxw.sprocket-laser-rangefinder"],
+              {"furryaxw.sprocket-laser-rangefinder": "remove"}, False, False]],
+            "卸载也走计划页，并且把每一行标成卸载",
+        )
         self.assertEqual([entry for entry in result["apiCalls"] if entry["kind"] == "error"], [])
 
 

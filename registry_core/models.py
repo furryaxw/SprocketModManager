@@ -503,6 +503,12 @@ class ResolvedPackage:
 class ResolutionPlan:
     root_id: str
     packages: tuple[ResolvedPackage, ...]
+    # 本次点名要装的根（多根时为全部）。空表示只有 `root_id` 一个。参与求解但不点名的已装包
+    # 只进约束、不进 `packages`：它们保持原样，没有要落的盘。
+    roots: tuple[str, ...] = ()
+
+    def named_roots(self) -> tuple[str, ...]:
+        return self.roots or (self.root_id,)
 
     def by_id(self) -> dict[str, ResolvedPackage]:
         return {item.package.id: item for item in self.packages}

@@ -379,7 +379,7 @@ window.tr = (key, values = {}) => {
         detectedMods: `${values.count} detected mods`, noInstalled: "No mods detected",
         missingDepsCount: `${values.count} missing deps`, corrupted: "Corrupted", reinstall: "Reinstall",
         requested: "User-installed", dependency: "Installed dependency",
-        enableMod: "Enable", disableMod: "Disable", disabledMod: "Disabled",
+        enableMod: "Enable", disableMod: "Disable",
         requiresLabel: "Requires", missingLabel: "Missing", incompatibleLabel: "Incompatible", localOnly: "Local only",
     };
     return table[key] !== undefined ? table[key] : key;
