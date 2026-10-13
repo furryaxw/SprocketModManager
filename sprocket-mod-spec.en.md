@@ -11,7 +11,7 @@ assets inside the entry itself.
 
 ```text
 Pages data/packages.json
-  -> mods/<author>/<modid>.json
+  -> packages/<author>/<modid>.json
   -> GitHub API /repos/<owner>/<repo>/releases (an external source uses the entry's own releases)
   -> select a compatible tag and Release assets
   -> download

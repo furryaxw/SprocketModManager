@@ -135,7 +135,7 @@ class CompatOverrideGateTests(unittest.TestCase):
 
     def test_the_shipped_table_passes(self) -> None:
         game, _warnings = GEN_INDEX.load_game_file(GEN_INDEX.GAME_FILE)
-        packages = GEN_INDEX.scan_mods(ROOT / "mods", game=game)
+        packages = GEN_INDEX.scan_mods(ROOT / "packages", game=game)
 
         self.assertEqual(VALIDATE.validate_overrides(GEN_INDEX, packages), [])
 

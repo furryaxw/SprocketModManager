@@ -225,7 +225,7 @@ def validate_diagnosis(index_module, package_ids) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the Sprocket mod registry")
-    parser.add_argument("--mods-dir", default="mods")
+    parser.add_argument("--mods-dir", default="packages")
     parser.add_argument("--offline", action="store_true", help="skip public GitHub checks")
     args = parser.parse_args()
     index_module = load_index_module()

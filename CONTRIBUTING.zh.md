@@ -7,8 +7,8 @@ Pull Request 加进本仓库；不需要改动已有的 Release，也不要把�
 
 ## 条目文件
 
-条目放在 `mods/<作者>/<modid>.json`，路径读作 `<作者>.<modid>`，必须与条目里的 `id` 完全一致：
-`id` 为 `example.sprocket-mod` 的条目放在 `mods/example/sprocket-mod.json`。
+条目放在 `packages/<作者>/<modid>.json`，路径读作 `<作者>.<modid>`，必须与条目里的 `id` 完全一致：
+`id` 为 `example.sprocket-mod` 的条目放在 `packages/example/sprocket-mod.json`。
 文件顶部用 `$schema` 指回仓库里的 schema，从条目所在目录出发写成
 `../../schemas/sprocket-mod.schema.json`。
 
@@ -225,7 +225,7 @@ BepInEx/MelonLoader 桥接。桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 
 ## 提交 Pull Request
 
-1. 新建分支，按 `mods/<作者>/<modid>.json` 加好文件。
+1. 新建分支，按 `packages/<作者>/<modid>.json` 加好文件。
 2. 提交 Pull Request。
 3. 等待 Registry CI 和维护者审核。
 

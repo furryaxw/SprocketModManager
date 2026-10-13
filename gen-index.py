@@ -1323,12 +1323,12 @@ def validate_install_types(
 
 
 def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dict]:
-    """读 `mods/` 下的全部条目并校验它们之间的关系。
+    """读 `packages/` 下的全部条目并校验它们之间的关系。
 
     `game` 给出游戏自身的身份与供给（`game.json`）；不给时用内在身份、供给为空。
     """
     if not mods_dir.is_dir():
-        raise RegistryError(f"mods directory does not exist: {mods_dir}")
+        raise RegistryError(f"packages directory does not exist: {mods_dir}")
     game = game if game is not None else {
         "id": GAME_CAPABILITY_ID,
         "name": GAME_NAME,
@@ -1337,7 +1337,7 @@ def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dic
 
     packages: dict[str, dict] = {}
     for author_dir in sorted(path for path in mods_dir.iterdir() if path.is_dir()):
-        # 路径本身就是身份：`mods/<作者>/<modid>.json` 读作 `<作者>.<modid>`，条目里的 `id` 必须一致。
+        # 路径本身就是身份：`packages/<作者>/<modid>.json` 读作 `<作者>.<modid>`，条目里的 `id` 必须一致。
         for meta_path in sorted(author_dir.glob("*.json")):
             package_id = f"{author_dir.name}.{meta_path.stem}"
             try:
@@ -1347,7 +1347,7 @@ def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dic
 
             validate_meta(meta, package_id)
             package = {key: value for key, value in meta.items() if key != "$schema"}
-            package["meta_url"] = f"mods/{author_dir.name}/{meta_path.name}"
+            package["meta_url"] = f"packages/{author_dir.name}/{meta_path.name}"
             packages[package["id"]] = package
 
     capabilities = set(compat_capabilities(packages, str(game["id"])))
@@ -1878,7 +1878,7 @@ def generate_index(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the Sprocket Pages registry index")
-    parser.add_argument("--mods-dir", default="mods")
+    parser.add_argument("--mods-dir", default="packages")
     parser.add_argument(
         "--output-dir",
         default="site",

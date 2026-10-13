@@ -787,7 +787,7 @@ class CompanionTests(unittest.TestCase):
         return {"id": package_id, "version": version}
 
     def scan(self, entries: dict[str, dict]) -> list[dict]:
-        """把条目按 `mods/<作者>/<modid>.json` 落盘后走一遍 `scan_mods`。"""
+        """把条目按 `packages/<作者>/<modid>.json` 落盘后走一遍 `scan_mods`。"""
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
             for package_id, meta in entries.items():

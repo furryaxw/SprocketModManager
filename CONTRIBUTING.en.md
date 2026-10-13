@@ -8,9 +8,9 @@ need to modify an existing Release or copy binaries into this repository.
 
 ## The Entry File
 
-An entry lives at `mods/<author>/<modid>.json`, and the path must read as
+An entry lives at `packages/<author>/<modid>.json`, and the path must read as
 `<author>.<modid>` matching the entry's `id` exactly: an entry whose `id` is
-`example.sprocket-mod` lives at `mods/example/sprocket-mod.json`. `$schema` at the top of
+`example.sprocket-mod` lives at `packages/example/sprocket-mod.json`. `$schema` at the top of
 the file points back at the repository's schema, written as
 `../../schemas/sprocket-mod.schema.json` from the entry's own directory.
 
@@ -257,7 +257,7 @@ declare `lavagang.melonloader` — the BepInEx axis does not have to be written.
 
 ## Opening a Pull Request
 
-1. Create a branch and add the file at `mods/<author>/<modid>.json`.
+1. Create a branch and add the file at `packages/<author>/<modid>.json`.
 2. Open a Pull Request.
 3. Wait for Registry CI and maintainer review.
 

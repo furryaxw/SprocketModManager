@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-REAL_META = ROOT / "mods" / "furryaxw" / "sprocket-depth.json"
+REAL_META = ROOT / "packages" / "furryaxw" / "sprocket-depth.json"
 
 
 def load_module():
@@ -40,7 +40,7 @@ def copy_package(mods_dir: Path, *package_ids: str) -> None:
         target = mods_dir / author
         target.mkdir(parents=True, exist_ok=True)
         (target / f"{mod_id}.json").write_bytes(
-            (ROOT / "mods" / author / f"{mod_id}.json").read_bytes()
+            (ROOT / "packages" / author / f"{mod_id}.json").read_bytes()
         )
 
 PACKAGE = {
