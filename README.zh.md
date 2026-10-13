@@ -49,7 +49,7 @@ DLL 的 PE 版本信息；BepInEx 的标识符检测 `winhttp.dll` / `doorstop_c
 
 ## 加载器管理
 
-加载器就是注册表里的普通条目：`mods/lavagang/melonloader.json` 与 `mods/bepinex/bepinex-be.json` 的
+加载器就是注册表里的普通条目：`packages/lavagang/melonloader.json` 与 `packages/bepinex/bepinex-be.json` 的
 `kind` 是 `modloader`，用 `supply` 声明它供给别的包哪些类型、各自装在哪，用 `provides` 声明它的
 兼容性能力。客户端在加载器页列出每个 `modloader` 包：装没装、已装版本、能装的最新版、当前环境
 的兼容判定，以及它供给的类型与目录。安装、更新和卸载都走普通安装管线（解析 → 准备 → 应用），与
@@ -175,10 +175,10 @@ sh build_linux.sh
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe validate_registry.py --mods-dir mods --offline
-.\.venv\Scripts\python.exe validate_registry.py --mods-dir mods
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site --fetch-releases
+.\.venv\Scripts\python.exe validate_registry.py --mods-dir packages --offline
+.\.venv\Scripts\python.exe validate_registry.py --mods-dir packages
+.\.venv\Scripts\python.exe gen-index.py --mods-dir packages --output-dir site
+.\.venv\Scripts\python.exe gen-index.py --mods-dir packages --output-dir site --fetch-releases
 ```
 
 在线校验仅调用 GitHub API；它不会克隆、构建或执行第三方模组代码。

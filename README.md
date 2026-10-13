@@ -37,8 +37,8 @@ state tracking, removal of the requested package, and orphan dependency cleanup.
 
 ## Loader management
 
-Loaders are ordinary registry entries: `mods/lavagang/melonloader.json` and
-`mods/bepinex/bepinex-be.json` have `kind` `modloader`, declare through `supply` which types
+Loaders are ordinary registry entries: `packages/lavagang/melonloader.json` and
+`packages/bepinex/bepinex-be.json` have `kind` `modloader`, declare through `supply` which types
 they provide to other packages and where, and declare their compatibility capabilities
 through `provides`. The modloader page lists every `modloader` package with whether it is
 installed, its installed version, the newest installable version, its compatibility
@@ -189,10 +189,10 @@ replaced files).
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe validate_registry.py --mods-dir mods --offline
-.\.venv\Scripts\python.exe validate_registry.py --mods-dir mods
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site
-.\.venv\Scripts\python.exe gen-index.py --mods-dir mods --output-dir site --fetch-releases
+.\.venv\Scripts\python.exe validate_registry.py --mods-dir packages --offline
+.\.venv\Scripts\python.exe validate_registry.py --mods-dir packages
+.\.venv\Scripts\python.exe gen-index.py --mods-dir packages --output-dir site
+.\.venv\Scripts\python.exe gen-index.py --mods-dir packages --output-dir site --fetch-releases
 ```
 
 Online validation calls only the GitHub API. It does not clone, build, or execute
