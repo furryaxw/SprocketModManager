@@ -89,6 +89,9 @@ const I18N = {
         aboutCommunityIntro: "Manager discussion, issue reports and the changelog are on the Syncanid Discord server.",
         aboutDiscord: "Join the Syncanid Discord",
         aboutOfficialDiscord: "Official Sprocket Discord",
+        sponsorTitle: "Sponsors",
+        sponsorKofi: "Ko-fi",
+        sponsorAfdian: "Afdian",
     },
     zh: {
         pageTitle: "SprocketModManager 模组目录",
@@ -178,5 +181,8 @@ const I18N = {
         aboutCommunityIntro: "管理器的讨论、问题反馈与更新日志都在 Syncanid Discord 服务器。",
         aboutDiscord: "加入 Syncanid Discord",
         aboutOfficialDiscord: "Sprocket 官方 Discord",
+        sponsorTitle: "赞助",
+        sponsorKofi: "Ko-fi",
+        sponsorAfdian: "爱发电",
     },
 };
