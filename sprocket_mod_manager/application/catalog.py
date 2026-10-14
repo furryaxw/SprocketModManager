@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Sequence
 
+from .releases import installable_release
 from .service import ModManagerService
 from ..domain.errors import DownloadError, RegistryError
 from ..domain.models import RegistryPackage, ReleaseInfo
@@ -33,7 +34,7 @@ def load_catalog(
             usable = [
                 release
                 for release in releases
-                if service.github.install_assets(package, release)
+                if installable_release(package, release, service.github)
             ]
         except (DownloadError, KeyError, RegistryError, ValueError) as exc:
             LOGGER.warning("release lookup failed package=%s error=%s", package.id, exc)

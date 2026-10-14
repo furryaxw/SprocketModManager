@@ -2,14 +2,15 @@
 
 /** 被兼容性藏起来的包：默认不显示，开关打开后照常出现（「显示不兼容」是内存态）。 */
 function hiddenByCompatibility() {
+    const view = packageBrowserView();
     return state.packages.filter(
         (pkg) => !pkg.private && !isModloaderPackage(pkg)
-            && (pkg.category === "translation") === (state.page === "translations") && packageHidden(pkg),
+            && packageMatchesPage(pkg, view) && packageHidden(pkg),
     );
 }
 
-function renderCatalogNotice(hidden) {
-    const notice = $("#catalog-notice");
+function renderCatalogNotice(hidden, view) {
+    const notice = view.notice;
     if (!notice) return;
     const sprocket = state.environment?.sprocket;
     const unusable = ["legacy", "unreadable"].includes(sprocket?.state);
@@ -45,8 +46,8 @@ function catalogSelection() {
     return state.batch;
 }
 
-function catalogSelectionScope(translations) {
-    const page = $(translations ? "#page-translations" : "#page-catalog");
+function catalogSelectionScope(view) {
+    const page = $(`#page-${view.page}`);
     return page?.querySelector?.("[data-selection-scope]") || null;
 }
 
@@ -79,7 +80,7 @@ function updateCatalogSelection() {
         if (!visibleIds.has(id)) catalogSelection().delete(id);
     }
     const selected = packages.filter((pkg) => catalogSelection().has(pkg.id));
-    const scope = catalogSelectionScope(view.translations);
+    const scope = catalogSelectionScope(view);
     if (!scope) return;
     scope.hidden = selected.length === 0;
     const count = scope.querySelector?.("[data-selection-count]");
@@ -140,7 +141,7 @@ function renderCatalog() {
     const {container} = view;
     if (!container) return;
     const hidden = hiddenByCompatibility();
-    renderCatalogNotice(hidden);
+    renderCatalogNotice(hidden, view);
     const packages = visiblePackages(view);
     view.count.textContent = String(packages.length);
     container.replaceChildren();
@@ -304,8 +305,10 @@ function paintPackageChecks() {
 async function focusPackage(packageId) {
     const pkg = (state.packages || []).find((item) => item.id === packageId);
     if (!pkg) return false;
-    const page = pkg.category === "translation" ? "translations" : "catalog";
-    if (page === "translations") {
+    const page = isPackPackage(pkg) ? "packs" : pkg.category === "translation" ? "translations" : "catalog";
+    if (page === "packs") {
+        $("#packs-search").value = "";
+    } else if (page === "translations") {
         $("#translation-search").value = "";
     } else {
         $("#catalog-search").value = "";
@@ -354,8 +357,7 @@ function renderDetail() {
     const {panel} = view;
     if (!panel) return;
     const pkg = state.packages.find(
-        (item) => item.id === state.selectedId
-            && (item.category === "translation") === view.translations,
+        (item) => item.id === state.selectedId && packageMatchesPage(item, view),
     );
     panel.replaceChildren();
     if (!pkg) {
@@ -413,6 +415,15 @@ function renderDetail() {
     appendGroupLabel(block, tr("dependencies").toUpperCase(), pkg.dependencies?.length ? "" : tr("none"));
     for (const item of pkg.dependencies || []) {
         appendFact(block, item.id, item.version);
+    }
+
+    // 整合包的成员单列一段：它们不是依赖边，但对这个包来说一样是"装上就要在盘上"的东西。
+    if (isPackPackage(pkg)) {
+        appendGroupLabel(block, tr("packMembers").toUpperCase(), pkg.members?.length ? "" : tr("none"));
+        for (const item of pkg.members || []) {
+            const member = state.packages.find((candidate) => candidate.id === item.id);
+            appendFact(block, member ? packageLabel(member) : item.id, item.version);
+        }
     }
 
     appendGroupLabel(block, tr("companions").toUpperCase(), pkg.companions?.length ? "" : tr("none"));

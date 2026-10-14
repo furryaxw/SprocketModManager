@@ -451,7 +451,7 @@ button:disabled {
     display: block;
 }
 
-#page-catalog.active, #page-translations.active {
+#page-catalog.active, #page-packs.active, #page-translations.active {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     overflow: hidden;
@@ -473,15 +473,17 @@ button:disabled {
 
 .catalog-tools {
     display: grid;
-    /* 顺序＝计数、搜索、分类、排序。 */
-    grid-template-columns: auto minmax(260px, 1fr) 120px 120px;
+    /* 顺序＝计数、搜索、分类、排序。分类那一栏只有目录页有，所以列数由 --tool-columns 给。 */
+    --tool-columns: 120px 120px;
+    grid-template-columns: auto minmax(260px, 1fr) var(--tool-columns);
     gap: 9px;
     align-items: center;
     margin-bottom: 14px;
 }
 
-.translation-tools {
-    grid-template-columns: auto minmax(260px, 1fr) 120px;
+/* 没有分类下拉的页（翻译、整合包）：少一栏，不给末尾留空格子。 */
+.translation-tools, .packs-tools {
+    --tool-columns: 120px;
 }
 
 input, select {
@@ -505,8 +507,13 @@ input::placeholder {
 
 select {
     width: 100%;
-    padding: 0 30px 0 11px;
+    padding: 0 22px 0 11px;
     color-scheme: dark;
+    /* 自己画箭头：系统箭头会再占掉一整块右侧空间，把选项文字挤没。 */
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M1 1.2 4.5 4.8 8 1.2' fill='none' stroke='%23858c89' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 7px center;
 }
 
 select option {
@@ -537,7 +544,8 @@ select option {
 .sort-control select {
     height: 36px;
     border: 0;
-    background: transparent;
+    /* 只清底色：箭头是自己画的背景图，一起清掉就没箭头了。 */
+    background-color: transparent;
 }
 
 .result-count {
@@ -2130,7 +2138,11 @@ html.large-text .app-shell {
 }
 
 html.large-text .catalog-tools {
-    grid-template-columns: auto minmax(260px, 1fr) 150px 150px;
+    --tool-columns: 150px 150px;
+}
+
+html.large-text .translation-tools, html.large-text .packs-tools {
+    --tool-columns: 150px;
 }
 
 html.large-text .detail-heading {
@@ -2212,7 +2224,12 @@ html.large-text .queue-message {
     }
 
     .catalog-tools {
-        grid-template-columns: auto minmax(220px, 1fr) 120px 120px;
+        --tool-columns: 120px 120px;
+        grid-template-columns: auto minmax(220px, 1fr) var(--tool-columns);
+    }
+
+    .translation-tools, .packs-tools {
+        --tool-columns: 120px;
     }
 
     .page-header, .page {
@@ -2228,7 +2245,7 @@ html.large-text .queue-message {
         grid-template-columns: 230px minmax(0, 1fr);
     }
 
-    html.large-text #page-catalog.active, html.large-text #page-translations.active {
+    html.large-text #page-catalog.active, html.large-text #page-packs.active, html.large-text #page-translations.active {
         grid-template-rows: auto auto;
         overflow: auto;
     }

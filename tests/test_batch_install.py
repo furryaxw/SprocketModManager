@@ -165,7 +165,7 @@ class BatchInstallUiTests(unittest.TestCase):
 
     def test_plan_body_writes_the_reason_inside_the_mod_box(self) -> None:
         installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")
-        self.assertIn("function planLineBox(line, onChoice)", installs)
+        self.assertIn("function planLineBox(line, onChoice, planState)", installs)
         self.assertIn(
             'group.className = line.problems?.length ? "plan-group skipped" : "plan-group"',
             installs,
@@ -183,7 +183,7 @@ class BatchInstallUiTests(unittest.TestCase):
             installs,
             "计划里的每一行都有框，出局的那些也在",
         )
-        self.assertIn("body.append(planLineBox(line, onChoice))", installs)
+        self.assertIn("body.append(planLineBox(line, onChoice, planState))", installs)
 
     def test_the_plan_page_reports_what_it_did(self) -> None:
         installs = (self.client_ui / "js" / "installs.js").read_text(encoding="utf-8")

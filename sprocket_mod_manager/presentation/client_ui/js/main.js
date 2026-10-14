@@ -11,6 +11,8 @@ function wireEvents() {
     $("#sort-select").addEventListener("change", renderCatalog);
     $("#translation-search").addEventListener("input", renderCatalog);
     $("#translation-sort").addEventListener("change", renderCatalog);
+    $("#packs-search").addEventListener("input", renderCatalog);
+    $("#packs-sort").addEventListener("change", renderCatalog);
     $("#refresh-catalog").addEventListener("click", () => loadCatalog(true));
     $$("[data-selection-action]").forEach((button) => {
         button.addEventListener("click", () => void handleCatalogSelection(button.dataset.selectionAction));

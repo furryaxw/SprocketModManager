@@ -10,9 +10,48 @@ from typing import Any
 
 from ..domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
 from ..domain.errors import ModManagerError
-from ..domain.models import RegistryPackage
+from ..domain.models import RegistryPackage, ReleaseInfo
 from ..domain.registry import Registry
 from ..infrastructure.github import GitHubClient
+from ..utilities.dependencies import dependencies_for_release
+
+
+def installable_release(
+        package: RegistryPackage,
+        release: ReleaseInfo,
+        github: GitHubClient,
+) -> bool:
+    """这一版有没有可装的东西。
+
+    普通包看有没有可安装资产；整合包还认清单带来的成员与落点规则 —— 纯成员包的 release 里可以
+    只有清单、没有载荷，它照样能装（成员各自有自己的条目与载荷）。
+    """
+    if github.install_assets(package, release):
+        return True
+    if not package.is_pack:
+        return False
+    version = str(release.version)
+    return bool(
+        dependencies_for_release(package, release)
+        or package.file_rules_for(version)
+        or package.payload_rules_for(version)
+    )
+
+
+def missing_manifest_data(package: RegistryPackage, github: GitHubClient) -> bool:
+    """整合包在索引里既没有成员也没有落点规则：它的清单还没被索引构建读进来。
+
+    索引构建那一版读不到清单（下载失败，或者索引是本地/预览构建）时就是这个样子。说清原因，比
+    让它显示成「没有可安装版本」有用。
+    """
+    if not package.is_pack:
+        return False
+    if package.members or package.file_rules or package.payload_rules:
+        return False
+    try:
+        return bool(github.releases(package))
+    except (ModManagerError, OSError, ValueError):
+        return False
 
 
 def release_verdicts(
@@ -39,7 +78,7 @@ def release_verdicts(
     game_version = environment.capability_version(game_capability)
     verdicts: list[dict[str, Any]] = []
     for release in releases:
-        if not github.install_assets(package, release):
+        if not installable_release(package, release, github):
             continue
         decision = (
             loader_table_decision(

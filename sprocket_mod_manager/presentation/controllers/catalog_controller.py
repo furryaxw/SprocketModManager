@@ -22,7 +22,7 @@ from ...application.data_hub import (
 )
 from ...application.identifiers import scan_targets, toggle_directories
 from ...application.local_mods import scan_local_mods, summarize
-from ...application.releases import release_verdicts
+from ...application.releases import missing_manifest_data, release_verdicts
 from ...application.service import ModManagerService
 from ...domain.compatibility import (
     CapabilityEnvironment,
@@ -252,6 +252,7 @@ class CatalogController(ApiController):
             "category": package.category,
             "tags": list(package.tags),
             "dependencies": [dict(item) for item in package.dependencies],
+            "members": [dict(item) for item in package.members],
             "companions": [dict(item) for item in package.companions],
             "recommendations": list(package.recommendations),
             "featured": package.featured,
@@ -261,6 +262,7 @@ class CatalogController(ApiController):
             "release": release_data,
             "releases": releases,
             "install_assets": [asset.name for asset in selected_assets],
+            "pack_manifest_missing": missing_manifest_data(package, service.github),
             "installed": self._installed_entry(records.get(package.id)),
         }
 
@@ -280,6 +282,7 @@ class CatalogController(ApiController):
             "category": package.category,
             "tags": list(package.tags),
             "dependencies": [dict(item) for item in package.dependencies],
+            "members": [dict(item) for item in package.members],
             "companions": [],
             "recommendations": [],
             "featured": False,
@@ -287,6 +290,7 @@ class CatalogController(ApiController):
             "release": None,
             "releases": [],
             "install_assets": [],
+            "pack_manifest_missing": False,
             "installed": None,
         }
 

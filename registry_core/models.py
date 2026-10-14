@@ -16,12 +16,16 @@ MODLOADER_KIND = "modloader"
 LOADERBRIDGE_KIND = "loaderbridge"
 TRANSLATELOADER_KIND = "translateloader"
 PATCH_KIND = "patch"
+# 整合包：载荷是「成员清单 + override 文件」。成员在盘上的要求与依赖是同一套口径，求解、
+# 落盘、卸载级联都按依赖走；分开一个种类只是为了界面上单独有「整合包」的位置。
+PACK_KIND = "pack"
 PACKAGE_KINDS = frozenset({
     MODFILE_KIND,
     MODLOADER_KIND,
     LOADERBRIDGE_KIND,
     TRANSLATELOADER_KIND,
     PATCH_KIND,
+    PACK_KIND,
 })
 LOADER_KINDS = frozenset({
     MODLOADER_KIND,
@@ -88,6 +92,9 @@ class RegistryPackage:
     install: dict[str, Any]
     category: str
     tags: tuple[str, ...]
+    # 整合包声明的成员：与 `dependencies` 同一形状（`id`/`version`/`when`）、同一套版本约束，
+    # 单独一个字段只因为界面要把它列成「包含的模组」。索引构建时包内清单里的成员已经并进这一份。
+    members: tuple[dict[str, str], ...] = ()
     # 伴随包：一起装、一起卸的包。条目只要一边点名，客户端按双向闭包算，所以卸载从哪边发起
     # 都会把一对一起卸掉。
     companions: tuple[dict[str, str], ...] = ()
@@ -148,6 +155,18 @@ class RegistryPackage:
     def is_loader(self) -> bool:
         """是不是某类加载器：加载器自身用 `install.payload` 安装。"""
         return self.kind in LOADER_KINDS
+
+    @property
+    def is_pack(self) -> bool:
+        """是不是整合包：装它就是装它的成员，它自己带的是 override 文件与包内清单。"""
+        return self.kind == PACK_KIND
+
+    def requirements(self) -> tuple[dict[str, str], ...]:
+        """这个包在盘上要求的东西：声明的依赖，加上整合包声明的成员。
+
+        `members` 只对整合包有意义，别的种类写了也不当数（注册表 CI 会拦下这种条目）。
+        """
+        return (*self.dependencies, *(self.members if self.is_pack else ()))
 
     @property
     def uses_payload(self) -> bool:
@@ -266,6 +285,7 @@ class RegistryPackage:
             description=dict(data.get("description", {})),
             release=release_rules,
             dependencies=tuple(dict(item) for item in data.get("dependencies", ())),
+            members=tuple(dict(item) for item in data.get("members", ())),
             companions=tuple(
                 {"id": item["id"], "version": item["version"]} for item in raw_companions
             ),

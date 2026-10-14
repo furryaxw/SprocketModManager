@@ -57,6 +57,23 @@ into the same install plan, so installing a MelonLoader mod installs MelonLoader
 same transaction. The capability version a loader supplies is one of the compatibility
 axes.
 
+## Mod packs
+
+A mod pack is a registry entry whose `kind` is `pack`: it brings a set of mods (its members) plus
+optional override files, and the client lists it on its own page with the same toolbar, list,
+detail panel, and multi-select the catalog uses. A member is **an install dependency of the pack**:
+the solver puts members and the pack into one plan, so installing the pack installs that set, and
+uninstalling it takes them away again — except a member the user asked for by name, or that another
+package still depends on.
+
+A pack's members and install rules live in a **manifest asset** (a JSON file) on its own release,
+and the index build merges them into the entry per version, so the client resolves per version:
+rolling back to an older release installs that release's members and rules. A pack may install no
+files at all (a members-only pack), or it may carry overrides: a pack with `install.mode: "patch"`
+archives whatever it displaces and restores it on removal (including after an update), while a
+standard-mode pack that would write another package's file is refused outright rather than
+overwriting it. An entry's `members`/`install` are the baseline for a manifest that cannot be read.
+
 ## Run
 
 ```powershell

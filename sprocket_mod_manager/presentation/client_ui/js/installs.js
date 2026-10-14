@@ -3,6 +3,9 @@
 // 基础运行时的包种类：它在加载器页与左下角环境区，不进已安装页的行集合。
 const MODLOADER_KIND = "modloader";
 
+// 整合包：成员跟着包一起装卸，行上标出来它是哪一类。
+const PACK_KIND = "pack";
+
 // 行单击展开文件清单要等一拍：双击是「跳目录 / 定位文件」，不能顺手把清单也展开。
 const ROW_CLICK_DELAY = 240;
 let rowClickTimer = null;
@@ -73,7 +76,7 @@ function packageRelationLabel(packageId) {
 }
 
 /** 计划页的一个框：标题与版本下拉同一行，下面写依赖关系与红行原因。 */
-function planLineBox(line, onChoice) {
+function planLineBox(line, onChoice, planState) {
     const group = document.createElement("section");
     group.className = line.problems?.length ? "plan-group skipped" : "plan-group";
     const row = document.createElement("div");
@@ -96,6 +99,20 @@ function planLineBox(line, onChoice) {
         const note = document.createElement("div");
         note.className = "plan-reason";
         note.textContent = tr(key, {ids: ids.map(packageRelationLabel).join(", ")});
+        group.append(note);
+    }
+    // 整合包与它的成员各自说清关系：包这一行说包含几个模组，成员那一行说是哪个包的成员。
+    const memberIds = planState?.plan?.pack_members?.[line.id] || [];
+    if (memberIds.length) {
+        const note = document.createElement("div");
+        note.className = "plan-reason";
+        note.textContent = tr("planPackMembers", {count: memberIds.length});
+        group.append(note);
+    }
+    for (const packId of line.member_of || []) {
+        const note = document.createElement("div");
+        note.className = "plan-reason";
+        note.textContent = tr("planPackMemberOf", {id: packageRelationLabel(packId)});
         group.append(note);
     }
     for (const problem of line.problems || []) {
@@ -142,7 +159,7 @@ function planLinesBody(planState, onChoice) {
         body.append(displaced);
     }
     for (const line of planState.plan?.lines || []) {
-        body.append(planLineBox(line, onChoice));
+        body.append(planLineBox(line, onChoice, planState));
     }
     body.append(...planRecommendationBoxes(planState));
     return body;
@@ -1060,6 +1077,10 @@ function renderPackageRow(item) {
     const version = String(record.version || local?.version || "");
     if (version) parts.push(`v${version}`);
     parts.push(record.requested ? tr("requested") : tr("dependency"));
+    const members = Array.isArray(record.dependencies) ? record.dependencies : [];
+    if (String(record.kind || "") === PACK_KIND && members.length) {
+        parts.push(tr("packIncludes", {count: members.length}));
+    }
     const requires = installedRowList(item, "required_dependencies").join(", ");
     if (requires) parts.push(`${tr("requiresLabel")}: ${requires}`);
     const missing = installedRowList(item, "missing_dependencies").join(", ");
@@ -1084,7 +1105,7 @@ function renderPackageRow(item) {
     if (kindLabel) {
         const kind = document.createElement("span");
         kind.className = "state-chip";
-        kind.textContent = kindLabel;
+        kind.textContent = kindLabel === PACK_KIND ? tr("packLabel") : kindLabel;
         actions.append(kind);
     }
     if (local?.path) {

@@ -45,6 +45,7 @@ const state = {
 
 const PAGE_META = {
     catalog: {kicker: "pageRegistry", title: "catalogTitle", subtitle: () => "sprocketmods.furryaxw.top"},
+    packs: {kicker: "pagePacks", title: "packsTitle", subtitle: () => tr("packsSubtitle")},
     translations: {
         kicker: "pageLocalization",
         title: "translationsTitle",
@@ -300,7 +301,7 @@ function updatePageHeader() {
     $("#page-kicker").textContent = tr(meta.kicker);
     $("#page-title").textContent = tr(meta.title);
     $("#page-subtitle").textContent = meta.subtitle();
-    $("#header-actions").hidden = !["catalog", "translations"].includes(state.page);
+    $("#header-actions").hidden = !["catalog", "packs", "translations"].includes(state.page);
 }
 
 async function showPage(page) {
@@ -317,9 +318,10 @@ async function showPage(page) {
         await reloadSettings();
     }
     if (page === "modloaders") await refreshModloaders();
-    if (["catalog", "translations"].includes(page)) {
+    if (["catalog", "packs", "translations"].includes(page)) {
         const selected = state.packages.find((item) => item.id === state.selectedId);
-        if (selected && (selected.category === "translation") !== (page === "translations")) {
+        // 选中的包不属于这一页就撤掉选择：目录页列模组、整合包页列包、翻译页列翻译包。
+        if (selected && !packageMatchesPage(selected, packageBrowserView())) {
             state.selectedId = null;
         }
         renderCatalog();
@@ -338,6 +340,7 @@ function categoryText(category) {
         visual: "categoryVisual",
         audio: "categoryAudio",
         translation: "categoryTranslation",
+        pack: "categoryPack",
         other: "categoryOther",
     }[category] || "categoryOther";
     return tr(key);
@@ -345,20 +348,38 @@ function categoryText(category) {
 
 function packageBrowserView() {
     const translations = state.page === "translations";
+    const packs = state.page === "packs";
     return {
         translations,
-        keyword: $(translations ? "#translation-search" : "#catalog-search").value.trim().toLocaleLowerCase(),
+        packs,
+        page: state.page,
+        keyword: $(translations ? "#translation-search" : packs ? "#packs-search" : "#catalog-search").value.trim().toLocaleLowerCase(),
+        // 整合包页没有分类：它整页就是一类。
         category: translations ? "translation" : $("#category-select").value,
-        sort: $(translations ? "#translation-sort" : "#sort-select").value,
-        container: $(translations ? "#translation-list" : "#package-list"),
-        count: $(translations ? "#translation-count" : "#catalog-count"),
-        panel: $(translations ? "#translation-detail" : "#detail-panel"),
+        sort: $(translations ? "#translation-sort" : packs ? "#packs-sort" : "#sort-select").value,
+        container: $(translations ? "#translation-list" : packs ? "#pack-list" : "#package-list"),
+        count: $(translations ? "#translation-count" : packs ? "#pack-count" : "#catalog-count"),
+        panel: $(translations ? "#translation-detail" : packs ? "#pack-detail" : "#detail-panel"),
+        // 「有 N 个被兼容性藏起来」那条说明条：翻译页没有这一块，因此是 null。
+        notice: $(translations ? "#translation-notice" : packs ? "#packs-notice" : "#catalog-notice"),
     };
 }
 
 /** 加载器目录页的专属包：基础运行时不在模组目录里出现（它在加载器页安装）。 */
 function isModloaderPackage(pkg) {
     return pkg?.kind === "modloader";
+}
+
+/** 整合包有自己的一页：模组目录与翻译页都不列它。 */
+function isPackPackage(pkg) {
+    return pkg?.kind === "pack";
+}
+
+/** 一个包属于当前这一页吗：整合包在整合包页，翻译包在翻译页，其余在模组目录。 */
+function packageMatchesPage(pkg, view) {
+    if (view.packs) return isPackPackage(pkg);
+    if (isPackPackage(pkg)) return false;
+    return (pkg.category === "translation") === view.translations;
 }
 
 function filteredPackages(view) {
@@ -369,8 +390,8 @@ function filteredPackages(view) {
     (state.packages || []).forEach((pkg, index) => releaseRank.set(pkg, index));
     const result = state.packages.filter((pkg) => {
         if (isModloaderPackage(pkg)) return false;
-        if ((pkg.category === "translation") !== translations) return false;
-        if (category !== "all" && pkg.category !== category) return false;
+        if (!packageMatchesPage(pkg, view)) return false;
+        if (!view.packs && category !== "all" && pkg.category !== category) return false;
         const haystack = [
             pkg.id,
             pkg.name,
@@ -407,7 +428,9 @@ function filteredPackages(view) {
 function packageState(pkg) {
     if (packageUnavailable(pkg)) return {label: tr("dataIssues"), className: "fail"};
     if (pkg.cached) return {label: tr("unavailable"), className: ""};
-    if (!pkg.release || !(pkg.install_assets || []).length) return {label: tr("unavailable"), className: ""};
+    // 整合包的清单还没进索引：说清是"索引里没有"，而不是笼统的"没有可安装版本"。
+    if (pkg.pack_manifest_missing) return {label: tr("packManifestMissing"), className: ""};
+    if (!pkg.release || !packageHasPayload(pkg)) return {label: tr("unavailable"), className: ""};
     const installed = packageInstalled(pkg);
     if (!installed) return {label: tr("available"), className: "available"};
     // 「有更新」看的是求解器现在会把这条装成哪一版：最新那版装不上就不算更新。
@@ -418,5 +441,11 @@ function packageState(pkg) {
 function packageEligible(pkg) {
     if (packageUnavailable(pkg)) return false;
     const installed = packageInstalled(pkg);
-    return Boolean(pkg.release && (pkg.install_assets || []).length && !pkg.cached && (!installed || installed.version !== pkg.release.version));
+    return Boolean(pkg.release && packageHasPayload(pkg) && !pkg.cached && (!installed || installed.version !== pkg.release.version));
+}
+
+/** 这一条有没有可装的东西：普通包看可安装资产，整合包还认清单带来的成员（纯成员包没有载荷）。 */
+function packageHasPayload(pkg) {
+    if ((pkg.install_assets || []).length) return true;
+    return isPackPackage(pkg) && Boolean((pkg.members || []).length);
 }

@@ -41,24 +41,27 @@
             <button class="nav-item" type="button" data-page-target="catalog">
                 <span class="nav-index">02</span><span data-i18n="catalog">模组目录</span>
             </button>
+            <button class="nav-item" type="button" data-page-target="packs">
+                <span class="nav-index">03</span><span data-i18n="packs">整合包</span>
+            </button>
             <button class="nav-item" type="button" data-page-target="modloaders">
-                <span class="nav-index">03</span><span data-i18n="modloaders">加载器</span>
+                <span class="nav-index">04</span><span data-i18n="modloaders">加载器</span>
             </button>
             <button class="nav-item" type="button" data-page-target="translations">
-                <span class="nav-index">04</span><span data-i18n="translations">翻译</span>
+                <span class="nav-index">05</span><span data-i18n="translations">翻译</span>
             </button>
             <button class="nav-item" type="button" data-page-target="downloads">
-                <span class="nav-index">05</span><span data-i18n="downloads">下载队列</span>
+                <span class="nav-index">06</span><span data-i18n="downloads">下载队列</span>
                 <b id="queue-badge" hidden>0</b>
             </button>
             <button class="nav-item" type="button" data-page-target="diagnosis">
-                <span class="nav-index">06</span><span data-i18n="diagnosis">错误修复</span>
+                <span class="nav-index">07</span><span data-i18n="diagnosis">错误修复</span>
             </button>
             <button class="nav-item" type="button" data-page-target="settings">
-                <span class="nav-index">07</span><span data-i18n="settings">设置</span>
+                <span class="nav-index">08</span><span data-i18n="settings">设置</span>
             </button>
             <button class="nav-item" type="button" data-page-target="about">
-                <span class="nav-index">08</span><span data-i18n="about">关于</span>
+                <span class="nav-index">09</span><span data-i18n="about">关于</span>
             </button>
         </nav>
 
@@ -193,6 +196,58 @@
                 </aside>
                 <!-- 右键行＝快速多选；底部浮动栏给批量动作（绝对定位，不占工作区的两列网格）。 -->
                 <div class="catalog-selection-anchor" data-selection-scope="catalog" hidden>
+                    <div class="selection-bar">
+                        <span class="selection-count" data-selection-count></span>
+                        <button class="primary-button" type="button" data-selection-action="install"
+                                data-i18n="install">安装
+                        </button>
+                        <button class="danger-button" type="button" data-selection-action="remove"
+                                data-i18n="remove">卸载
+                        </button>
+                        <button class="secondary-button" type="button" data-selection-action="all"
+                                data-i18n="selectAll">全选
+                        </button>
+                        <button class="secondary-button" type="button" data-selection-action="invert"
+                                data-i18n="invertSelection">反选
+                        </button>
+                        <button class="secondary-button" type="button" data-selection-action="clear"
+                                data-i18n="clearSelection">取消选择
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="page" id="page-packs" data-page="packs" hidden>
+            <!-- 与模组目录同一套「工具条 + 列表 + 详情 + 浮动多选」，只是这一页整页都是整合包。 -->
+            <div class="catalog-header">
+                <div class="catalog-notice" id="packs-notice" hidden></div>
+
+                <div class="catalog-tools packs-tools">
+                    <span class="result-count" id="pack-count">0</span>
+                    <label class="search-control">
+                        <span class="visually-hidden" data-i18n="search">搜索</span>
+                        <input id="packs-search" type="search" autocomplete="off"
+                               placeholder="搜索整合包名称、作者或标签" data-i18n-placeholder="packSearchPlaceholder"/>
+                    </label>
+                    <label class="select-control sort-control">
+                        <span data-i18n="sort">排序</span>
+                        <select id="packs-sort">
+                            <option value="name" data-i18n="sortName">名称</option>
+                            <option value="release" data-i18n="sortRelease">版本</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+
+            <div class="catalog-workspace">
+                <section class="package-list" id="pack-list" aria-live="polite"></section>
+                <aside class="detail-panel" id="pack-detail">
+                    <div class="empty-detail">
+                        <strong data-i18n="nothingSelected">未选择模组</strong>
+                    </div>
+                </aside>
+                <div class="catalog-selection-anchor" data-selection-scope="packs" hidden>
                     <div class="selection-bar">
                         <span class="selection-count" data-selection-count></span>
                         <button class="primary-button" type="button" data-selection-action="install"

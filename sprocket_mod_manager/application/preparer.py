@@ -171,7 +171,9 @@ class PlanPreparer:
                     )
                     item.files.extend(files)
                     item.ignored_files.extend(ignored)
-                if not item.files:
+                # 整合包可以一个文件都不落盘（纯成员包：载荷是成员各自的条目），所以"没挑到可安装
+                # 文件"对它是正常的；普通包还是当作坏资产报出来。
+                if not item.files and not package.is_pack:
                     raise DownloadError(f"{package.id}: selected Release assets contain no installable files")
                 prepared_packages.append(item)
             return PreparedPlan(plan, prepared_packages, work_dir, directories)

@@ -13,13 +13,18 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from ..domain.compatibility import CapabilityEnvironment, INCOMPATIBLE
-from ..domain.errors import ModManagerError
-from ..domain.models import ReleaseInfo, RegistryPackage, ResolvedPackage
+from ..domain.errors import ModManagerError, RegistryError
+from ..domain.models import (
+    ReleaseInfo,
+    RegistryPackage,
+    ResolvedPackage,
+    rule_applies_to_version,
+)
 from ..domain.registry import Registry
 from ..infrastructure.github import GitHubClient
 from ..infrastructure.installer import Installer
 from ..utilities.dependencies import dependencies_for_release
-from .releases import release_verdicts
+from .releases import missing_manifest_data, release_verdicts
 from .solver import DependencySolver, Dropped
 
 # 版本下拉里的第三项：未装显示「不安装」、已装显示「卸载」，后端只认这两个字面量。
@@ -70,6 +75,12 @@ class ChangePlanner:
                 continue
             choice = str(request.choices.get(item) or "")
             roots[item] = f"={choice}" if choice else "*"
+        # 索引里没有清单的整合包点名要装：说清是索引缺数据，而不是笼统的"没有可安装版本"。
+        for item in roots:
+            if missing_manifest_data(self.registry.get(item), self.github):
+                raise RegistryError(
+                    f"{item}: the registry index carries no manifest for this pack; refresh the index"
+                )
         installed = {
             item: str(info.get("version") or "") for item, info in self.state.items()
         }
@@ -96,6 +107,18 @@ class ChangePlanner:
             }
         resolved = tolerant.plan.by_id()
         dropped = {item.package_id: item for item in tolerant.dropped}
+        # 整合包与它这一批的成员：界面据此把成员行归到包行下面（`pack_members` 给分组，
+        # 每行的 `member_of` 给行自己用）。只有计划里真有的成员才算，缺口另有红行。
+        pack_members = {
+            item.package.id: self._member_ids(item.package, str(item.release.version))
+            for item in tolerant.plan.packages
+            if item.package.is_pack
+        }
+        member_of: dict[str, list[str]] = {}
+        for pack_id, member_ids in pack_members.items():
+            for member_id in member_ids:
+                if member_id in resolved:
+                    member_of.setdefault(member_id, []).append(pack_id)
         remove_ids, replacements, remove_with = self._remove_plan(removed)
         # 这一份计划里的依赖关系：一行自己依赖谁，以及谁依赖这一行 —— 只在计划内部的边上算。
         depends_on = {
@@ -139,6 +162,7 @@ class ChangePlanner:
                     replacements=replacements,
                     depends_on=depends_on.get(item, ()),
                     required_by=tuple(sorted(required_by.get(item, ()))),
+                    member_of=member_of.get(item, ()),
                 )
             )
         # `install` 是这一批会落到磁盘上的全部包（点名的那些，加上它们带进来的依赖）；
@@ -154,6 +178,10 @@ class ChangePlanner:
             "lines": lines,
             "install": {item: install[item] for item in sorted(install)},
             "remove": sorted(remove_ids),
+            # 这一批里的整合包与各自的成员：界面照它把成员行收在包行下面。
+            "pack_members": {
+                pack_id: list(member_ids) for pack_id, member_ids in sorted(pack_members.items())
+            },
             # 用户标成「不安装」的那些：执行时它们连当依赖都不算。
             "excluded": sorted(skipped),
             # 这一批里的包各自推荐的、现在又装得上的那些：页面列出来让用户勾，勾中的跟着一起装。
@@ -165,6 +193,20 @@ class ChangePlanner:
                 {"id": item, "version": version} for item, version in sorted(replacements.items())
             ],
         }
+
+    @staticmethod
+    def _member_ids(package: RegistryPackage, version: str) -> tuple[str, ...]:
+        """这个整合包在这一版声明的成员 id（`when` 按包自己这一版筛，去重保序）。
+
+        只看条目声明的成员：包内清单里的那些在索引构建时已经并进同一份 `members`，
+        客户端不再单独下载一遍包去读它。
+        """
+        seen: dict[str, None] = {}
+        for member in package.members:
+            member_id = str(member.get("id") or "")
+            if member_id and rule_applies_to_version(dict(member), version):
+                seen.setdefault(member_id, None)
+        return tuple(seen)
 
     def _recommendations(
             self,
@@ -245,6 +287,7 @@ class ChangePlanner:
             replacements: Mapping[str, str],
             depends_on: Sequence[str],
             required_by: Sequence[str],
+            member_of: Sequence[str],
     ) -> dict[str, Any]:
         info = self.state.get(package_id) or {}
         installed_version = str(info.get("version") or "")
@@ -266,6 +309,8 @@ class ChangePlanner:
             # 依赖与被依赖都只在计划内部的边上算：界面照它写「依赖 xxx / 被 xxx 依赖」。
             "depends_on": [str(item) for item in depends_on],
             "required_by": [str(item) for item in required_by],
+            # 这一行是哪些整合包的成员（空表示它不是成员）。
+            "member_of": [str(item) for item in member_of],
             "remove_with": [],
             "versions": versions,
         }
@@ -331,7 +376,7 @@ class ChangePlanner:
         的东西不在」比「和某某冲突」更贴近用户看到的东西。没有缺口才落到求解器的冲突上。
         """
         gaps: list[dict[str, str]] = []
-        for dependency in package.dependencies:
+        for dependency in package.requirements():
             dependency_id = str(dependency.get("id", ""))
             if not self.registry.has_package(dependency_id):
                 kind = "missing-dependency"

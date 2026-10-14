@@ -19,6 +19,7 @@ from ..domain.registry import Registry
 from ..domain.semver import satisfies
 from ..infrastructure.github import GitHubClient
 from ..utilities.dependencies import dependencies_for_release
+from .releases import installable_release
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,7 @@ class DependencySolver:
         blocked: list[ReleaseInfo] = []
         compatible: list[ReleaseInfo] = []
         for release in self.github.releases(package):
-            if not self.github.install_assets(package, release):
+            if not installable_release(package, release, self.github):
                 continue
             installable.append(release)
             if self._env_blocks(package, release):

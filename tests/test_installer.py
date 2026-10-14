@@ -275,11 +275,13 @@ class InstallerTests(unittest.TestCase):
             store = StateStore(root / "app" / "installed.json")
             installer = Installer(root / "app", store)
 
+            # 归档发生在**接管**那一刻，不是每次落盘：所以这里每轮装完再卸，制造 6 次接管。
             for index in range(6):
                 installer.apply(
                     prepared_translation(root, files={"Config.ini": f"version {index}".encode()}),
                     game,
                 )
+                installer.remove("test.translation", game)
 
             archives = sorted(
                 (game / "SprocketModManager" / "backup" / "replaced" / "xunity-translation").glob("*.zip")

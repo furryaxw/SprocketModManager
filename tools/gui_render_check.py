@@ -215,6 +215,30 @@ CATALOG_PACKAGES = [
         "install_assets": ["NewPackage.dll"],
         "installed": None,
     },
+    {
+        "id": "fixture.example-pack",
+        "name": "ExamplePack",
+        "display_name": {"en": "Example Pack", "zh": "示例整合包"},
+        "description": {"en": "A pinned set of mods plus its own override files.", "zh": "钉住版本的一组模组，外加它自己带的覆盖文件。"},
+        "authors": ["fixture"],
+        "repository": "fixture/ExamplePack",
+        "repository_url": "https://github.com/fixture/ExamplePack",
+        "license": "MIT",
+        "kind": "pack",
+        "category": "pack",
+        "tags": [],
+        "dependencies": [],
+        "members": [
+            {"id": "furryaxw.sprocket-laser-rangefinder", "version": "=0.1.3", "when": "*"},
+            {"id": "furryaxw.cannon-sound-pool-fix", "version": ">=1.0.0", "when": "*"},
+        ],
+        "companions": [],
+        "recommendations": [],
+        "featured": False,
+        "release": {"version": "1.0.0", "published_at": "2026-09-20T00:00:00Z", "prerelease": False, "assets": []},
+        "install_assets": ["ExamplePack-1.0.0.zip"],
+        "installed": None,
+    },
 ]
 
 MODLOADERS_PAYLOAD = [
@@ -419,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Headless client rendering pre-check")
     parser.add_argument("--out", default="artifacts/gui-installed-page.png", help="screenshot output path")
     parser.add_argument("--page", default="installed",
-                        help="page to show before the screenshot: installed | catalog | translations | downloads | modloaders | settings | about")
+                        help="page to show before the screenshot: installed | catalog | packs | translations | downloads | modloaders | settings | about")
     parser.add_argument(
         "--focus",
         default="",

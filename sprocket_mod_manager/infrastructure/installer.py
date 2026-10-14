@@ -28,6 +28,7 @@ from .xunity_backup import archive_replaced_directory, restore_replaced_director
 from ..domain.errors import InstallConflictError, InstallError, ScanError
 from ..domain.models import (
     MODLOADER_KIND,
+    PACK_KIND,
     PreparedFile,
     PreparedPackage,
     PreparedPlan,
@@ -578,6 +579,10 @@ class Installer:
                 record["files"] = []
                 record["directories"] = payload_directories
                 record["payload_files"] = payload_files
+            elif resolved.package.is_pack:
+                # 整合包只多记一个种类：索引没拉到时界面也能认出它是包；逐文件清单照旧，
+                # override 文件与普通模组一样受跟踪、可开关、可校验。
+                record["kind"] = PACK_KIND
             replaced_types = resolved.package.replace_types()
             if replaced_types:
                 record["replaced_types"] = sorted(replaced_types)
@@ -604,9 +609,18 @@ class Installer:
 
         transaction = FileTransaction(manager_state_dir(game_dir))
         try:
+            # 已经被某个「整体接管」的包占着的类型不再重新归档：归档是**接管之前**那份内容的还原点，
+            # 每次 apply 都重写它，包更新一次就把还原点换成它自己上一个版本的内容（卸载还原不回原样）。
+            already_replaced = {
+                str(file_type)
+                for info in state["packages"].values()
+                for file_type in (info.get("replaced_types") or ())
+            }
             for file_type, directory in replaced_directories.items():
                 target = _safe_managed_path(game_dir, directory)
-                archive = archive_replaced_directory(backups_dir(game_dir), file_type, target)
+                archive = None
+                if file_type not in already_replaced:
+                    archive = archive_replaced_directory(backups_dir(game_dir), file_type, target)
                 if archive is not None and progress:
                     progress(f"Backed up {file_type}: {archive.name}")
                 transaction.backup_directory(target, directory)
@@ -637,7 +651,18 @@ class Installer:
                     # 内容：写回去会让补丁静默失效，安装记录里的摘要也会与磁盘对不上。
                     warnings.append(f"preserved {sample.target}: owned by another package")
                     continue
-                if is_patch and self._replaced_record(game_dir, sample.target) is None:
+                state_key = self._state_file_key(state, sample.target)
+                previous_owners = set(
+                    (state["files"].get(state_key) or {}).get("owners", ()) if state_key else ()
+                )
+                # 这条路径已经归本次要装的补丁包自己（更新它上一版装出来的文件）时没有可还原的原件：
+                # 把上一版的内容归档，卸载时会被当成"补丁之前的内容"复活成一个没有归属的文件。
+                patch_takes_own_file = bool(previous_owners) and previous_owners <= patch_package_ids
+                if (
+                        is_patch
+                        and not patch_takes_own_file
+                        and self._replaced_record(game_dir, sample.target) is None
+                ):
                     # 补丁替换别的包的文件：被替换的内容另存一份（与事务无关），卸载时据此还原。
                     # 目标还不在磁盘上时（补丁和它的加载器在同一个计划里），那一份内容就是计划里
                     # 被补丁盖掉的文件。

@@ -652,10 +652,25 @@ class WebGuiTests(unittest.TestCase):
         self.assertIn('data-page-target="translations"', html)
         self.assertIn('id="page-translations" data-page="translations"', html)
         self.assertIn('id="translation-list"', html)
-        self.assertIn('pkg.category === "translation") !== translations', javascript)
+        self.assertIn('return (pkg.category === "translation") === view.translations;', javascript)
         self.assertRegex(
             javascript,
             r'translations:\s*\{\s*kicker:\s*"pageLocalization"',
+        )
+
+    def test_packs_use_a_separate_client_page(self):
+        root = Path(__file__).parents[1] / "sprocket_mod_manager" / "presentation" / "client_ui"
+        html = (root / "index.html").read_text(encoding="utf-8")
+        javascript = client_javascript(root)
+
+        self.assertIn('data-page-target="packs"', html)
+        self.assertIn('id="page-packs" data-page="packs"', html)
+        self.assertIn('id="pack-list"', html)
+        self.assertIn('function isPackPackage(pkg) {', javascript)
+        self.assertIn("if (view.packs) return isPackPackage(pkg);", javascript)
+        self.assertRegex(
+            javascript,
+            r'packs:\s*\{\s*kicker:\s*"pagePacks"',
         )
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for the client initialization smoke test")
