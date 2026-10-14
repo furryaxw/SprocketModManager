@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "members": [
+    {
+      "id": "example.sprocket-mod",
+      "version": "=1.2.0",
+      "when": "*"
+    },
+    {
+      "id": "example.other-mod",
+      "version": ">=0.4.0",
+      "when": "*"
+    }
+  ],
+  "install": {
+    "mode": "patch",
+    "files": [
+      {
+        "match": "Parts/**",
+        "type": "sprocket:streamingassets",
+        "layout": "tree",
+        "subpath": "Parts"
+      },
+      {
+        "match": "BepInExConfig/**",
+        "type": "bepinex:config",
+        "layout": "tree"
+      }
+    ],
+    "exclude": []
+  }
+}

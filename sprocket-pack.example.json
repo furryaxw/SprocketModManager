@@ -1,0 +1,36 @@
+{
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "example.realism-pack",
+  "name": "ExampleRealismPack",
+  "kind": "pack",
+  "category": "pack",
+  "authors": [
+    "ExampleAuthor"
+  ],
+  "repository": "ExampleAuthor/ExampleRealismPack",
+  "license": "MIT",
+  "display_name": {
+    "en": "Example Realism Pack"
+  },
+  "description": {
+    "en": "A set of mods plus the override files they need."
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^pack-v([0-9]+\\.[0-9]+\\.[0-9]+)$",
+    "assets": {
+      "include": [
+        "*.json",
+        "*.zip"
+      ],
+      "exclude": [
+        "*-source.zip",
+        "*symbols*"
+      ]
+    }
+  },
+  "tags": [
+    "example"
+  ]
+}

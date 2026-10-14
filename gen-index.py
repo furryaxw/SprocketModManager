@@ -26,6 +26,8 @@ from registry_core.diagnosis import (
     MIN_LEVEL,
     diagnosis_pack,
 )
+from registry_core.errors import ScanError
+from registry_core.pack_manifest import parse_pack_manifest
 from registry_core.semver import Version, satisfies, validate_range
 
 REQUIRED_FIELDS = {
@@ -34,12 +36,14 @@ REQUIRED_FIELDS = {
     "name",
     "install",
 }
+# 整合包：成员与落点规则写在 release 的清单资产里，条目可以只留身份与抓取规则（连 `install` 都不写）。
+PACK_KIND = "pack"
 HOST_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 FORBIDDEN_VERSION_FIELDS = {"version", "latest_version", "download_url", "tag"}
 ALLOWED_TARGET_ROOTS = {"Mods", "Plugins", "UserLibs", "UserData"}
-ALLOWED_CATEGORIES = {"gameplay", "utility", "library", "visual", "audio", "translation", "other"}
+ALLOWED_CATEGORIES = {"gameplay", "utility", "library", "visual", "audio", "translation", "pack", "other"}
 PATCH_MODE = "patch"
-PACKAGE_KINDS = ("modfile", "modloader", "loaderbridge", "translateloader", "patch")
+PACKAGE_KINDS = ("modfile", "modloader", "loaderbridge", "translateloader", "patch", PACK_KIND)
 LOADER_KINDS = ("modloader", "loaderbridge", "translateloader", "patch")
 # `provides` 里的这个字面量表示「这条发布自己的版本」。
 VERSION_TEMPLATE = "{version}"
@@ -53,6 +57,10 @@ GITHUB_API_VERSION = "2022-11-28"
 # 上一版索引的包列表：拉取失败时从它取已知的 releases。
 FALLBACK_INDEX_URL = "https://sprocketmods.furryaxw.top/data/packages.json"
 INSTALLABLE_SUFFIXES = {".dll", ".zip"}
+# 整合包的清单是 release 里独立的 JSON 资产：它决定成员与落点规则，所以索引也要把它收进来。
+MANIFEST_SUFFIX = ".json"
+# 清单只是成员与规则的列表；下载它时给一个比它大得多的上限，挡住拿错文件。
+MANIFEST_ASSET_LIMIT = 32 * 1024 * 1024
 
 # 能力用版本化名字表达：模组的依赖区间就是对某个能力的区间。游戏那项是本地能力，
 # 由索引顶层 `game.id` 给出；其余能力由加载器类包的 `provides` 声明（没写就是它自己的包 id）。
@@ -618,6 +626,10 @@ def normalize_release_records(
     include_prerelease = release_rules["include_prerelease"]
     includes = tuple(pattern.casefold() for pattern in release_rules["assets"]["include"])
     excludes = tuple(pattern.casefold() for pattern in release_rules["assets"]["exclude"])
+    # 整合包的清单也是 release 资产：它要进索引（客户端按它判"这一版有没有可装的东西"）。
+    recorded_suffixes = INSTALLABLE_SUFFIXES | (
+        {MANIFEST_SUFFIX} if str(package.get("kind", "modfile")) == PACK_KIND else set()
+    )
     expected_download_prefix = f"/{package['repository']}/releases/download/".casefold()
     expected_page_prefix = f"/{package['repository']}/releases/tag/".casefold()
     releases: list[tuple[Version, dict[str, Any]]] = []
@@ -650,7 +662,7 @@ def normalize_release_records(
                 continue
             name = str(asset.get("name", ""))
             folded_name = name.casefold()
-            if Path(name).suffix.casefold() not in INSTALLABLE_SUFFIXES:
+            if Path(name).suffix.casefold() not in recorded_suffixes:
                 continue
             if not any(fnmatch.fnmatchcase(folded_name, pattern) for pattern in includes):
                 continue
@@ -843,6 +855,198 @@ def fetch_package_releases(
     )
 
 
+def _download_bytes(url: str, *, limit: int) -> bytes:
+    """取回一个 release 资产（清单）；超过上限就报错，别把内存吃光。"""
+    request = Request(url, headers={"User-Agent": "sprocket-mod-registry-indexer/1"})
+    with urlopen(request, timeout=60) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise RegistryError(f"asset is larger than {limit} bytes: {url}")
+    return data
+
+
+def manifest_assets(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """这条 release 里全部清单资产：一个 release 只放一份，多了说不清算哪份。"""
+    return [
+        asset
+        for asset in record.get("assets") or []
+        if Path(str(asset.get("name", ""))).suffix.casefold() == MANIFEST_SUFFIX
+    ]
+
+
+def _manifest_rule_applies(when: object, version: str) -> bool:
+    """清单里这条成员/规则管不管这一版（`when` 是相对包自己那一版的区间）。"""
+    text = str(when or "*").strip()
+    if not text or text == "*":
+        return True
+    try:
+        return satisfies(version, text)
+    except (IndexError, ValueError):
+        return False
+
+
+def _validate_manifest_install(install: dict[str, Any], source: str) -> None:
+    """清单里的落点规则用注册表自己的校验器过一遍（类型、路径、replace 与 files 的配套）。"""
+    mode = install.get("mode", "standard")
+    if "exclude" in install and not isinstance(install["exclude"], list):
+        raise RegistryError(f"{source}: manifest install.exclude must be a list")
+    if "files" in install:
+        validate_file_rules(install["files"])
+    if "payload" in install:
+        validate_payload_rules(install["payload"])
+    if "files" in install and "payload" in install:
+        raise RegistryError(f"{source}: a pack must not mix install.files and install.payload")
+    validate_replace_types(install, mode)
+
+
+def fetch_pack_manifests(
+        package: dict[str, Any],
+        releases: list[dict[str, Any]],
+        known: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """给整合包的每一版取回清单资产，挂到那条 release 记录的 `pack` 键上；返回网络类警告。
+
+    上一版索引里那条 release 已经带着同一份清单资产时直接沿用（release 没变就不重新下载）。
+    下载不动只警告并跳过（那一版退回条目里可选的基线）；清单内容本身不合法则是错误 —— 坏内容
+    不该进索引。
+    """
+    if str(package.get("kind", "modfile")) != PACK_KIND:
+        return []
+    cached = {
+        int(record.get("id", 0)): record["pack"]
+        for record in (known or [])
+        if isinstance(record.get("pack"), dict)
+    }
+    warnings: list[str] = []
+    for record in releases:
+        tag = str(record.get("tag", ""))
+        assets = manifest_assets(record)
+        if len(assets) > 1:
+            raise RegistryError(
+                f"{package['id']} {tag}: {len(assets)} manifest assets "
+                f"({', '.join(str(asset.get('name', '')) for asset in assets)}); a release carries one"
+            )
+        if not assets:
+            warnings.append(f"{package['id']} {tag}: release has no manifest asset")
+            continue
+        asset = assets[0]
+        previous = cached.get(int(record.get("id", 0)))
+        if previous is not None and int(previous.get("asset_id", 0)) == int(asset.get("id", 0)):
+            record["pack"] = previous
+            continue
+        source = f"{package['id']} {tag}"
+        try:
+            raw = _download_bytes(str(asset["download_url"]), limit=MANIFEST_ASSET_LIMIT)
+        except (HTTPError, URLError, OSError) as exc:
+            warnings.append(f"{source}: cannot download the manifest ({exc})")
+            continue
+        manifest = parse_pack_manifest(raw, source=source)
+        _validate_manifest_install(manifest.install, source)
+        record["pack"] = {
+            "asset_id": int(asset.get("id", 0)),
+            "asset_name": str(asset.get("name", "")),
+            "members": [dict(member) for member in manifest.members],
+            "install": dict(manifest.install),
+        }
+    return warnings
+
+
+def merge_pack_manifests(package: dict[str, Any]) -> list[str]:
+    """把每一版清单里的成员与落点规则并进条目，都带上 `when: "=该版本"`。
+
+    客户端按版本求解时因此只看到那一版的成员与规则；回退到老版本读的是老清单。条目自己写的
+    `members`/`install` 作为基线留着（清单取不到时它还在）。`mode`/`exclude`/`replace` 不是按版本
+    生效的字段：取最新一版清单的值，老版本不一致只给警告。
+    """
+    if str(package.get("kind", "modfile")) != PACK_KIND:
+        return []
+    releases = package.get("releases") or []
+    manifests = [record["pack"] for record in releases if isinstance(record.get("pack"), dict)]
+    if not manifests:
+        return []
+    warnings: list[str] = []
+
+    members = [dict(member) for member in package.get("members", [])]
+    seen = {(str(member.get("id")), str(member.get("when"))) for member in members}
+    files = [dict(rule) for rule in (package.get("install") or {}).get("files", [])]
+    payload = [dict(rule) for rule in (package.get("install") or {}).get("payload", [])]
+    for record in releases:
+        manifest = record.get("pack")
+        if not isinstance(manifest, dict):
+            continue
+        version = str(record.get("version", ""))
+        if not version:
+            continue
+        when = f"={version}"
+        for member in manifest.get("members") or []:
+            if not _manifest_rule_applies(member.get("when"), version):
+                continue
+            key = (str(member.get("id")), when)
+            if key in seen:
+                continue
+            seen.add(key)
+            members.append({"id": member["id"], "version": member["version"], "when": when})
+        install = manifest.get("install") or {}
+        for rule in install.get("files") or []:
+            if not _manifest_rule_applies(rule.get("when"), version):
+                continue
+            merged = {key: value for key, value in rule.items() if key != "when"}
+            merged["when"] = when
+            files.append(merged)
+        for rule in install.get("payload") or []:
+            if not _manifest_rule_applies(rule.get("when"), version):
+                continue
+            merged = {key: value for key, value in rule.items() if key != "when"}
+            merged["when"] = when
+            payload.append(merged)
+
+    newest = manifests[0].get("install") or {}
+    install = dict(package.get("install") or {})
+    for field in ("mode", "exclude", "replace"):
+        if install.get(field) in (None, [], ""):
+            if newest.get(field) is not None:
+                install[field] = newest[field]
+    for record in releases:
+        manifest_install = (record.get("pack") or {}).get("install") or {}
+        for field in ("mode", "exclude", "replace"):
+            if field in manifest_install and manifest_install[field] != newest.get(field):
+                warnings.append(
+                    f"{package['id']} {record.get('tag')}: manifest install.{field} differs from "
+                    f"the newest release ({manifest_install[field]!r} vs {newest.get(field)!r}); "
+                    "the newest release wins"
+                )
+    install["files"] = files
+    if payload:
+        install["payload"] = payload
+    package["members"] = members
+    package["install"] = install
+    return warnings
+
+
+def validate_release_history(package: dict[str, Any], baseline: list[dict[str, Any]]) -> list[str]:
+    """上一版索引里有、这一版却没了的 tag：说清是被 include/正则漏掉的。
+
+    条目是"对这个包所有版本生效"的描述，收窄 `release.assets.include` 或改 `version_pattern` 会让
+    老 release 在 `normalize_release_records` 里被静默 `continue` 掉 —— 客户端的回退选项就没了。
+    这里把它报成错误，要丢掉历史就得显式 `--refresh` 重建。
+    """
+    if not baseline:
+        return []
+    current = {str(record.get("tag", "")) for record in package.get("releases") or []}
+    dropped = sorted(
+        str(record.get("tag", ""))
+        for record in baseline
+        if str(record.get("tag", "")) and str(record.get("tag", "")) not in current
+    )
+    if not dropped:
+        return []
+    return [
+        f"{package['id']}: releases in the previous index are gone ({', '.join(dropped)}); "
+        "release.assets.include or version_pattern no longer matches them "
+        "(rebuild with --refresh to drop them on purpose)"
+    ]
+
+
 def validate_target(target: str) -> None:
     if not target or "\\" in target or ":" in target:
         raise RegistryError(f"unsafe install target: {target!r}")
@@ -1028,11 +1232,16 @@ def validate_release_records(meta: dict[str, Any]) -> None:
 
 
 def validate_meta(meta: dict, expected_id: str) -> None:
-    """必填只有 schema_version、id、name、install，其余字段写了才校验形状。
+    """必填只有 schema_version、id、name、install；`kind: "pack"` 的条目连 `install` 都可以不写
+    （成员与落点规则在 release 的清单资产里）。
 
     未定义的键原样进索引：条目是作者的文件，索引不替它筛字段。
     """
-    missing = sorted(REQUIRED_FIELDS - set(meta))
+    kind = str(meta.get("kind", "modfile"))
+    if kind not in PACKAGE_KINDS:
+        raise RegistryError(f"invalid kind: {meta.get('kind')!r}")
+    required = REQUIRED_FIELDS - ({"install"} if kind == PACK_KIND else set())
+    missing = sorted(required - set(meta))
     if missing:
         raise RegistryError(f"missing fields: {', '.join(missing)}")
 
@@ -1066,6 +1275,8 @@ def validate_meta(meta: dict, expected_id: str) -> None:
         validate_localized(meta["description"], "description")
     if "category" in meta and meta["category"] not in ALLOWED_CATEGORIES:
         raise RegistryError(f"invalid category: {meta.get('category')!r}")
+    if meta.get("category") == PACK_KIND and kind != PACK_KIND:
+        raise RegistryError("category pack belongs to a pack entry")
     if "tags" in meta:
         tags = meta["tags"]
         if not isinstance(tags, list) or len(tags) != len(set(tags)):
@@ -1074,8 +1285,6 @@ def validate_meta(meta: dict, expected_id: str) -> None:
             raise RegistryError("tags must use lowercase letters, digits, and hyphens")
 
     kind = str(meta.get("kind", "modfile"))
-    if kind not in PACKAGE_KINDS:
-        raise RegistryError(f"invalid kind: {meta.get('kind')!r}")
     validate_provides(meta)
 
     if "release" in meta:
@@ -1192,7 +1401,39 @@ def validate_meta(meta: dict, expected_id: str) -> None:
 
     if not isinstance(meta.get("featured", False), bool):
         raise RegistryError("featured must be a boolean")
+
+    members = meta.get("members", [])
+    if "members" in meta and kind != PACK_KIND:
+        raise RegistryError("members belongs to a pack entry")
+    if not isinstance(members, list):
+        raise RegistryError("members must be a list")
+    seen_members: set[tuple[str, str]] = set()
+    for member in members:
+        if not isinstance(member, dict):
+            raise RegistryError("member entries must be objects")
+        missing_member = sorted({"id", "version", "when"} - set(member))
+        if missing_member:
+            raise RegistryError(f"member is missing {', '.join(missing_member)}")
+        key = (str(member["id"]), str(member["when"]))
+        if key in seen_members:
+            raise RegistryError(f"duplicate member rule: {key[0]} when {key[1]}")
+        seen_members.add(key)
+        if not ID_RE.fullmatch(str(member["id"])):
+            raise RegistryError(f"invalid member id: {member['id']!r}")
+        if member["id"] == package_id:
+            raise RegistryError("package cannot be its own member")
+        for field in ("version", "when"):
+            try:
+                validate_range(member[field])
+            except ValueError as exc:
+                raise RegistryError(f"invalid member {field}: {member[field]!r}") from exc
+
     install = meta.get("install")
+    if install is None:
+        # 整合包可以不写 install：规则在 release 的清单资产里，构建时并进来。
+        if kind != PACK_KIND:
+            raise RegistryError("install must be an object")
+        install = {}
     if not isinstance(install, dict):
         raise RegistryError("install must be an object")
     if "exclude" in install and not isinstance(install["exclude"], list):
@@ -1367,6 +1608,11 @@ def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dic
             if companion["id"] not in packages:
                 raise RegistryError(
                     f"{package['id']}: companion is not registered: {companion['id']}"
+                )
+        for member in package.get("members", []):
+            if member["id"] not in packages:
+                raise RegistryError(
+                    f"{package['id']}: member is not registered: {member['id']}"
                 )
 
     validate_install_types(packages, game.get("supply") or {})
@@ -1822,6 +2068,22 @@ def generate_index(
                     f"no release data available ({fallback_reason})",
                     file=sys.stderr,
                 )
+
+        # 整合包：清单在 release 资产里，按版本并进条目（成员与落点规则都带 `when: "=该版本"`）。
+        for package in packages:
+            if str(package.get("kind", "modfile")) != PACK_KIND:
+                continue
+            history = baseline.get(package["id"]) or []
+            gone = validate_release_history(package, history)
+            if gone:
+                raise RegistryError(gone[0])
+            for warning in fetch_pack_manifests(package, package.get("releases") or [], history):
+                print(f"warning: {warning}", file=sys.stderr)
+            for warning in merge_pack_manifests(package):
+                print(f"warning: {warning}", file=sys.stderr)
+        # 清单里的规则也要过一遍类型供给检查：条目文件那一轮看不到它们。
+        validate_install_types(by_id, game.get("supply") or {})
+
     for package in packages:
         # 每个包都走一遍：增量基线里的条目同样要补上覆盖表那份声明，外部来源的条目也一样。
         entries = overrides.get(package["id"])

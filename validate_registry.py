@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from registry_core.errors import ScanError
+from registry_core.pack_manifest import parse_pack_manifest
 from registry_core.semver import Version
 
 
@@ -39,6 +41,13 @@ SOURCE_SUFFIXES = {
 LICENSE_NAMES = {"license", "license.md", "license.txt", "copying", "copying.md", "copying.txt"}
 # 条目用这个占位值声明许可证还没定：SPDX 与 LICENSE 文件两项检查豁免。
 PLACEHOLDER_LICENSE = "TODO-SPDX"
+# 整合包：成员与落点规则写在 release 的清单资产里，条目可以只留身份与抓取规则。
+PACK_KIND = "pack"
+MANIFEST_SUFFIX = ".json"
+# 清单只是成员与规则的列表；下载它时给一个比它大得多的上限，挡住拿错文件。
+MAX_MANIFEST_BYTES = 32 * 1024 * 1024
+# 整合包逐版读清单：版本太多的包只读最新的这些，剩下的交给索引构建去读。
+MAX_PACK_RELEASES = 30
 
 
 def load_index_module():
@@ -81,35 +90,199 @@ class GitHubApi:
         raise RuntimeError(f"GitHub API request failed for {path}: {last_error}") from last_error
 
 
-def matching_release_assets(meta: dict[str, Any], releases: list[dict[str, Any]]) -> list[str]:
-    """Released assets that match the entry's `release` rules; no rules mean nothing to match."""
-    release = meta.get("release")
-    if not isinstance(release, dict) or not isinstance(release.get("version_pattern"), str):
+def _release_version(meta: dict[str, Any], release: dict[str, Any]) -> str | None:
+    """这条 release 落在条目的 `release` 规则里时给出它的版本；不在里面给 None。"""
+    rules = meta.get("release")
+    if not isinstance(rules, dict) or not isinstance(rules.get("version_pattern"), str):
+        return None
+    if release.get("draft") or (release.get("prerelease") and not rules.get("include_prerelease")):
+        return None
+    tag = str(release.get("tag_name", ""))
+    match = re.compile(rules["version_pattern"]).fullmatch(tag)
+    if not match:
+        return None
+    try:
+        return str(Version.parse(match.group(1)))
+    except (IndexError, ValueError):
+        return None
+
+
+def _matching_asset_names(meta: dict[str, Any], release: dict[str, Any]) -> list[str]:
+    """这条 release 里匹配 `release.assets` 的资产名。"""
+    rules = meta.get("release")
+    if not isinstance(rules, dict):
         return []
-    version_pattern = re.compile(release["version_pattern"])
-    include_prerelease = bool(release.get("include_prerelease"))
-    assets = release.get("assets") if isinstance(release.get("assets"), dict) else {}
+    assets = rules.get("assets") if isinstance(rules.get("assets"), dict) else {}
     includes = [pattern.casefold() for pattern in assets.get("include") or []]
     excludes = [pattern.casefold() for pattern in assets.get("exclude") or []]
+    names: list[str] = []
+    for asset in release.get("assets") or []:
+        name = str(asset.get("name", "")).casefold()
+        if any(fnmatch.fnmatchcase(name, pattern) for pattern in includes) and not any(
+            fnmatch.fnmatchcase(name, pattern) for pattern in excludes
+        ):
+            names.append(str(asset.get("name", "")))
+    return names
+
+
+def matching_release_assets(meta: dict[str, Any], releases: list[dict[str, Any]]) -> list[str]:
+    """Released assets that match the entry's `release` rules; no rules mean nothing to match."""
     matches: list[str] = []
     for release in releases:
-        if release.get("draft") or (release.get("prerelease") and not include_prerelease):
+        if _release_version(meta, release) is None:
             continue
         tag = str(release.get("tag_name", ""))
-        version_match = version_pattern.fullmatch(tag)
-        if not version_match:
+        matches.extend(f"{tag}/{name}" for name in _matching_asset_names(meta, release))
+    return matches
+
+
+def unmatched_release_tags(meta: dict[str, Any], releases: list[dict[str, Any]]) -> list[str]:
+    """匹配 `version_pattern` 却一个资产都不匹配的 tag。
+
+    收窄 `release.assets.include` 或改正则会让这些 release 从索引里消失（`gen-index.py` 对它们
+    `continue`），客户端的回退选项跟着没了。
+    """
+    return [
+        str(release.get("tag_name", ""))
+        for release in releases
+        if _release_version(meta, release) is not None and not _matching_asset_names(meta, release)
+    ]
+
+
+def _download_bytes(url: str, *, limit: int) -> bytes:
+    """取回一个 release 资产（整合包的清单）；超过上限就报错。"""
+    request = Request(url, headers={"User-Agent": "sprocket-mod-registry-validator/1"})
+    with urlopen(request, timeout=60) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise OSError(f"asset is larger than {limit} bytes: {url}")
+    return data
+
+
+def _manifest_assets(release: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        asset
+        for asset in release.get("assets") or []
+        if Path(str(asset.get("name", ""))).suffix.casefold() == MANIFEST_SUFFIX
+    ]
+
+
+def validate_releases(
+        meta: dict[str, Any],
+        api: "GitHubApi",
+        *,
+        index_module,
+        packages: dict[str, dict[str, Any]],
+        game_supply: dict[str, str],
+        published_tags: frozenset[str] = frozenset(),
+) -> tuple[list[str], list[str]]:
+    """按版本核对 release：每个版本都要有匹配的资产，整合包还要读得动它的清单。
+
+    某个 release 掉了资产是**错误**当且仅当已发布索引里还有它 —— 那正是"老版本被静默削掉"。
+    其余情况（从来没进过索引的 tag）只给警告，别拿历史噪音拦提交。整合包的清单是成员与落点
+    规则的来源，所以逐版读回来验：成员要已注册、区间要读得动、规则的类型要有人供给。
+    """
+    rules = meta.get("release")
+    if not isinstance(rules, dict) or not isinstance(rules.get("version_pattern"), str):
+        return [], []
+    repository = str(meta.get("repository") or "")
+    if not repository:
+        return [], []
+    encoded = "/".join(quote(part, safe="") for part in repository.split("/", 1))
+    try:
+        releases = api.get(f"/repos/{encoded}/releases?per_page=100")
+    except RuntimeError as exc:
+        return [str(exc)], []
+    if not isinstance(releases, list):
+        return ["GitHub Releases response is not a list"], []
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    for tag in unmatched_release_tags(meta, releases):
+        message = (
+            f"release {tag} matches release.version_pattern but no asset matches release.assets; "
+            "it would disappear from the index"
+        )
+        if tag in published_tags:
+            errors.append(f"{message} (the published index still lists it)")
+        else:
+            warnings.append(message)
+
+    if str(meta.get("kind", "modfile")) != PACK_KIND:
+        return errors, warnings
+
+    checked = 0
+    for release in releases:
+        if _release_version(meta, release) is None:
+            continue
+        if checked >= MAX_PACK_RELEASES:
+            warnings.append(
+                f"only the newest {MAX_PACK_RELEASES} releases were checked for a manifest"
+            )
+            break
+        checked += 1
+        tag = str(release.get("tag_name", ""))
+        assets = _manifest_assets(release)
+        if len(assets) > 1:
+            errors.append(
+                f"release {tag} carries {len(assets)} manifest assets "
+                f"({', '.join(str(asset.get('name', '')) for asset in assets)}); "
+                "a release carries one"
+            )
+            continue
+        if not assets:
+            errors.append(f"release {tag} carries no manifest asset ({MANIFEST_SUFFIX})")
+            continue
+        asset = assets[0]
+        try:
+            raw = _download_bytes(
+                str(asset.get("browser_download_url", "")), limit=MAX_MANIFEST_BYTES
+            )
+        except (HTTPError, URLError, OSError) as exc:
+            errors.append(f"release {tag}: cannot download the manifest ({exc})")
             continue
         try:
-            version = Version.parse(version_match.group(1))
-        except (IndexError, ValueError):
+            manifest = parse_pack_manifest(raw, source=f"{meta['id']} {tag}")
+        except ScanError as exc:
+            errors.append(str(exc))
             continue
-        for asset in release.get("assets") or []:
-            name = str(asset.get("name", "")).casefold()
-            if any(fnmatch.fnmatchcase(name, pattern) for pattern in includes) and not any(
-                fnmatch.fnmatchcase(name, pattern) for pattern in excludes
-            ):
-                matches.append(f"{tag}/{asset.get('name')}")
-    return matches
+        errors.extend(_manifest_member_errors(meta, tag, manifest, packages, index_module))
+        if manifest.install:
+            try:
+                _validate_manifest_rules(index_module, meta, manifest.install, packages, game_supply)
+            except index_module.RegistryError as exc:
+                errors.append(f"release {tag}: {exc}")
+    return errors, warnings
+
+
+def _manifest_member_errors(meta, tag, manifest, packages, index_module) -> list[str]:
+    errors: list[str] = []
+    for member in manifest.members:
+        if member["id"] not in packages:
+            errors.append(f"release {tag}: manifest member is not registered: {member['id']}")
+        try:
+            index_module.validate_range(member["version"])
+        except ValueError:
+            errors.append(
+                f"release {tag}: manifest member {member['id']} has an unusable version range: "
+                f"{member['version']!r}"
+            )
+    return errors
+
+
+def _validate_manifest_rules(index_module, meta, install, packages, game_supply) -> None:
+    """清单里的落点规则过一遍注册表自己的校验器：形状、replace 的配套、类型有没有供给者。"""
+    if "files" in install:
+        index_module.validate_file_rules(install["files"])
+    if "payload" in install:
+        index_module.validate_payload_rules(install["payload"])
+    if "files" in install and "payload" in install:
+        raise index_module.RegistryError("a pack must not mix install.files and install.payload")
+    index_module.validate_replace_types(install, install.get("mode", "standard"))
+    # 类型必须有供给者：拿一份临时条目跑注册表那套检查，供给表用的是整份注册表。
+    index_module.validate_install_types(
+        {**packages, meta["id"]: {**meta, "install": install}}, game_supply
+    )
 
 
 def validate_online(meta: dict[str, Any], api: GitHubApi) -> list[str]:
@@ -223,6 +396,25 @@ def validate_diagnosis(index_module, package_ids) -> list[str]:
     return errors
 
 
+def _published_release_tags(index_module) -> dict[str, frozenset[str]]:
+    """已发布索引里每个包带着的 tag：拿它区分"老版本被削掉"和"从来没进过索引"。
+
+    读不到就不比较历史（只留警告），别让一次网络失败把提交拦下来。
+    """
+    try:
+        releases = index_module.load_index_releases(index_module.FALLBACK_INDEX_URL)
+    except Exception as exc:
+        print(
+            f"warning: cannot read the published index ({exc}); release history is not compared",
+            file=sys.stderr,
+        )
+        return {}
+    return {
+        package_id: frozenset(str(record.get("tag", "")) for record in records)
+        for package_id, records in releases.items()
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the Sprocket mod registry")
     parser.add_argument("--mods-dir", default="packages")
@@ -265,8 +457,21 @@ def main() -> int:
         return 0
 
     api = GitHubApi()
+    by_id = {package["id"]: package for package in packages}
+    published = _published_release_tags(index_module)
     for meta in packages:
         errors = validate_online(meta, api)
+        release_errors, release_warnings = validate_releases(
+            meta,
+            api,
+            index_module=index_module,
+            packages=by_id,
+            game_supply=game.get("supply") or {},
+            published_tags=published.get(meta["id"], frozenset()),
+        )
+        errors.extend(release_errors)
+        for warning in release_warnings:
+            print(f"warning: {meta['id']}: {warning}", file=sys.stderr)
         if errors:
             failures.extend(f"{meta['id']}: {error}" for error in errors)
         else:

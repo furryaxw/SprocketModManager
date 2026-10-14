@@ -6,8 +6,7 @@
   "required": [
     "schema_version",
     "id",
-    "name",
-    "install"
+    "name"
   ],
   "properties": {
     "$schema": { "type": "string" },
@@ -42,6 +41,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/dependency" }
     },
+    "members": {
+      "description": "Pack-only. Packages this pack brings in, with the version range it needs each of them to be. A member is an install dependency of the pack: the solver resolves it, and uninstalling the pack takes it away again unless something else asks for it. The pack's own release carries the authoritative list; an entry's `members` is the baseline for a pack whose manifest is unreachable.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/dependency" }
+    },
     "companions": {
       "description": "Packages this one is installed and uninstalled with. One side naming the other is enough: the client closes the pair both ways.",
       "type": "array",
@@ -57,15 +61,15 @@
     },
     "featured": { "type": "boolean" },
     "kind": {
-      "description": "modfile installs through install.files; the four loader kinds may install through install.payload, or through install.files when their content maps onto supply types. Only modloader is listed on the loader page and may declare an external release source.",
-      "enum": ["modfile", "modloader", "loaderbridge", "translateloader", "patch"],
+      "description": "modfile installs through install.files; the four loader kinds may install through install.payload, or through install.files when their content maps onto supply types. Only modloader is listed on the loader page and may declare an external release source. pack is a modpack: its members and its install rules live in a `pack.json` asset on its own release, so the entry itself may stay thin.",
+      "enum": ["modfile", "modloader", "loaderbridge", "translateloader", "patch", "pack"],
       "default": "modfile"
     },
     "provides": { "$ref": "#/$defs/provides" },
     "supply": { "$ref": "#/$defs/supply" },
     "install": { "$ref": "#/$defs/install" },
     "category": {
-      "enum": ["gameplay", "utility", "library", "visual", "audio", "translation", "other"]
+      "enum": ["gameplay", "utility", "library", "visual", "audio", "translation", "pack", "other"]
     },
     "tags": {
       "type": "array",
@@ -77,6 +81,22 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "required": ["kind"],
+        "properties": { "kind": { "const": "pack" } }
+      },
+      "then": {
+        "properties": { "category": { "const": "pack" } }
+      },
+      "else": {
+        "required": ["install"],
+        "properties": {
+          "category": { "not": { "const": "pack" } },
+          "members": { "not": {} }
+        }
+      }
+    },
     {
       "if": {
         "required": ["release"],

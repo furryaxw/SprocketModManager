@@ -16,12 +16,15 @@ MODLOADER_KIND = "modloader"
 LOADERBRIDGE_KIND = "loaderbridge"
 TRANSLATELOADER_KIND = "translateloader"
 PATCH_KIND = "patch"
+# 整合包：成员与落点规则在它自己 release 的清单资产里，条目可以只留身份与抓取规则。
+PACK_KIND = "pack"
 PACKAGE_KINDS = frozenset({
     MODFILE_KIND,
     MODLOADER_KIND,
     LOADERBRIDGE_KIND,
     TRANSLATELOADER_KIND,
     PATCH_KIND,
+    PACK_KIND,
 })
 LOADER_KINDS = frozenset({
     MODLOADER_KIND,
@@ -94,6 +97,8 @@ class RegistryPackage:
     releases: tuple["ReleaseInfo", ...] | None = None
     schema_version: int = 1
     kind: str = MODFILE_KIND
+    # 整合包带进来的成员：形状与 `dependencies` 相同，只在 `kind` 为 `pack` 时当数。
+    members: tuple[dict[str, str], ...] = ()
     # 加载器的供给表：可安装类型 -> 游戏根目录下的位置。非空即表示这个包供给某类文件。
     supply: dict[str, str] = field(default_factory=dict)
     # v2 的安装规则（按顺序匹配文件名/条目路径，给出类型）。v1 用 install.overrides。
@@ -145,6 +150,18 @@ class RegistryPackage:
     def is_loader(self) -> bool:
         """是不是某类加载器：加载器自身用 `install.payload` 安装。"""
         return self.kind in LOADER_KINDS
+
+    @property
+    def is_pack(self) -> bool:
+        """是不是整合包：装它就是装它的成员，它自己带的是 override 文件与清单。"""
+        return self.kind == PACK_KIND
+
+    def requirements(self) -> tuple[dict[str, str], ...]:
+        """这个包在盘上要求的东西：声明的依赖，加上整合包声明的成员。
+
+        `members` 只对整合包有意义，别的种类写了也不当数（注册表 CI 会拦下这种条目）。
+        """
+        return (*self.dependencies, *(self.members if self.is_pack else ()))
 
     @property
     def uses_payload(self) -> bool:
@@ -251,6 +268,7 @@ class RegistryPackage:
             description=dict(data.get("description", {})),
             release=release_rules,
             dependencies=tuple(dict(item) for item in data.get("dependencies", ())),
+            members=tuple(dict(item) for item in data.get("members", ())),
             install=install_rules,
             category=data.get("category", "other"),
             tags=tuple(data.get("tags", ())),

@@ -161,6 +161,10 @@ function renderDetails(packageId) {
     ];
     document.querySelector("#detail-grid").innerHTML = details
         .map(([term, value]) => `<div><dt>${escapeHtml(term)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+    const members = (pkg.members || []).filter((item) => memberApplies(item.when, release?.version));
+    document.querySelector("#detail-members-block").hidden = !members.length;
+    document.querySelector("#detail-members").innerHTML = members
+        .map((item) => `<span class="dependency-pill">${escapeHtml(item.id)} ${escapeHtml(item.version)}</span>`).join("");
     document.querySelector("#detail-dependencies").innerHTML = pkg.dependencies.length
         ? pkg.dependencies.map((item) => `<span class="dependency-pill">${escapeHtml(item.id)} ${escapeHtml(item.version)}</span>`).join("")
         : `<span class="dependency-pill">${escapeHtml(tr("none"))}</span>`;
@@ -177,6 +181,13 @@ function renderDetails(packageId) {
     releaseLink.href = release?.html_url || `https://github.com/${pkg.repository}/releases`;
     releaseLink.toggleAttribute("aria-disabled", !release);
     refreshIcons();
+}
+
+/** 成员是按版本并进索引的：某一版的精确门控只显示给那一版，基线里的区间照显示。 */
+function memberApplies(when, version) {
+    if (!when || when === "*") return true;
+    if (!when.startsWith("=")) return true;
+    return when === `=${version}`;
 }
 
 function categoryLabel(category) {

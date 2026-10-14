@@ -112,6 +112,7 @@ Pages data/packages.json
 - `loaderbridge`：把另一个加载器的模块跑在别的底座上的加载器。
 - `translateloader`：翻译框架加载器，例如 XUnity AutoTranslator。
 - `patch`：叠在某个加载器上的补丁，例如 Sprocket-Mod-Loader。
+- `pack`：整合包，成员与落点规则写在它自己 release 的清单资产里，见「整合包」。
 
 `modfile` 必须用 `install.files`。`modloader`、`loaderbridge`、`translateloader`、`patch`
 可以用 `install.payload`，内容映射到供给类型时也可以用 `install.files`；一个包不能同时用两条
@@ -119,6 +120,7 @@ Pages data/packages.json
 都搭配使用。只有 `kind` 为 `modloader` 的包可以声明外部
 `release.source`；也只有它列在客户端的加载器页上，并可以在那里充当兼容性供给者。
 `loaderbridge`、`translateloader`、`patch` 是可以直接安装的普通条目，只带一个种类徽标。
+`pack` 的成员与安装规则来自清单资产，条目里的 `install`/`members` 只是基线。
 顶层 `provides` 声明这个包供给哪些兼容性能力，见「兼容性」。
 
 ## 依赖
@@ -492,6 +494,53 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 归它原来的归属；原本没有归属的还原后不再受管理）；补丁自己新增的文件随补丁删除；手工改过的
 文件保留并给出告警。
 归档条目只在没有任何补丁包引用它时清除。
+
+## 整合包
+
+`kind` 为 `pack` 的包是一组模组加上它自己的覆盖文件。成员与落点规则不写在条目里，而是写在
+**release 里的清单资产**（`.json`）：作者改成员、改落点、往新目录里加文件都只要发一个新版本，
+不需要动注册表。
+
+```json
+{
+  "schema_version": 1,
+  "members": [
+    { "id": "roanwassink.sprocket-thermal-sight", "version": ">=0.2.0", "when": "*" }
+  ],
+  "install": {
+    "mode": "patch",
+    "files": [
+      {
+        "match": "Parts/**",
+        "type": "sprocket:streamingassets",
+        "layout": "tree",
+        "subpath": "Parts"
+      }
+    ],
+    "exclude": []
+  }
+}
+```
+
+- `members` 与条目的 `dependencies` 是同一套形状：精确 `=x.y.z` 与区间都支持，`when` 相对包自己的
+  版本。**成员在盘上的要求就是依赖** —— 求解、环境筛选、落盘记录、卸载级联全部走现有那一套。
+  包带进来的成员算「包要的」：卸载包时跟着走；用户自己点名过的、或还被别的包依赖的成员留下。
+- `install` 与条目的 `install` 是同一套形状与语义（`mode`、`files`、`exclude`、`replace`）。
+- 清单与载荷是**同一个 release 里的两个资产**（清单 JSON 与 zip），`release.assets.include` 要同时
+  覆盖 `*.json` 与 `*.zip`。整合包可以只有清单、没有载荷 —— 成员各自有自己的条目与二进制。
+  一个 release 里只放一份清单 JSON：多了取第一份，说不清算的是哪份。
+- 条目只留身份、元数据与抓取规则；`install` 与 `members` 可选，作为**基线**：清单读不到时用它，
+  站点也照它显示。
+
+索引构建会为每个 release 读回清单，把成员与规则以 `when: "=该版本"` 并进发布的条目 —— 客户端按
+版本求解时只看到那一版的内容，用户回退到老版本读的是老清单。`mode`/`exclude`/`replace` 不是按版本
+生效的字段，取最新一版清单的值（老版本不一致时构建给出警告）。
+
+清单里的成员必须已经在注册表里，规则里的文件类型必须有人供给：与普通条目同一套门槛，由联网校验
+在 PR 上查。**收窄 `release.assets.include` 或改 `version_pattern` 会让老版本从索引里消失**，所以
+构建时发现上一版索引里还有这个 tag 就直接报错；确实要丢掉历史版本，用 `--refresh` 重建索引。
+
+条目示例见 `sprocket-pack.example.json`，清单示例见 `pack.example.json`。
 
 ## 外部下载来源
 

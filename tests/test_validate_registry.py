@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -218,6 +219,160 @@ class LicensePlaceholderTests(unittest.TestCase):
 
         self.assertIn("repository must have a recognized SPDX open-source license", errors)
         self.assertIn("repository must contain a LICENSE or COPYING file", errors)
+
+
+class ReleaseRuleGateTests(unittest.TestCase):
+    """每个匹配 `version_pattern` 的 release 都要有匹配的资产，整合包还要读得动它的清单。
+
+    收窄 `release.assets.include` 或改正则会让老 release 从索引里静默消失；已发布索引里还有它的
+    时候就是错误，从来没进过索引的 tag 只给警告。
+    """
+
+    MEMBER = "test.lib"
+    GAME_SUPPLY = {"sprocket:streamingassets": "{Sprocket}/Sprocket_Data/StreamingAssets"}
+
+    class _Api:
+        def __init__(self, releases: list[dict]) -> None:
+            self.releases = releases
+
+        def get(self, path: str):
+            return self.releases
+
+    @staticmethod
+    def _meta(**overrides) -> dict:
+        meta = {
+            "id": "test.pack",
+            "name": "TestPack",
+            "kind": "pack",
+            "category": "pack",
+            "repository": "someone/repo",
+            "release": {
+                "include_prerelease": False,
+                "version_pattern": r"^v?(\d+\.\d+\.\d+)$",
+                "assets": {"include": ["*.zip", "*.json"], "exclude": []},
+            },
+        }
+        meta.update(overrides)
+        return meta
+
+    @staticmethod
+    def _release(tag: str, *names: str) -> dict:
+        return {
+            "tag_name": tag,
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {
+                    "name": name,
+                    "browser_download_url": (
+                        f"https://github.com/someone/repo/releases/download/{tag}/{name}"
+                    ),
+                }
+                for name in names
+            ],
+        }
+
+    def _validate(self, meta, releases, *, published=frozenset()):
+        return VALIDATE.validate_releases(
+            meta,
+            self._Api(releases),
+            index_module=GEN_INDEX,
+            packages={
+                "test.pack": meta,
+                self.MEMBER: {"id": self.MEMBER, "install": {"files": []}},
+            },
+            game_supply=self.GAME_SUPPLY,
+            published_tags=frozenset(published),
+        )
+
+    def test_a_release_without_a_matching_asset_only_warns(self):
+        meta = self._meta(kind="modfile", category=None)
+
+        errors, warnings = self._validate(meta, [self._release("v1.0.0", "Mod.dll")])
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("v1.0.0", warnings[0])
+
+    def test_a_release_the_published_index_lists_is_an_error(self):
+        meta = self._meta(kind="modfile", category=None)
+
+        errors, _warnings = self._validate(
+            meta, [self._release("v1.0.0", "Mod.dll")], published={"v1.0.0"}
+        )
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("the published index still lists it", errors[0])
+
+    def test_a_pack_release_without_a_manifest_asset_is_an_error(self):
+        errors, _warnings = self._validate(self._meta(), [self._release("v1.0.0", "pack.zip")])
+
+        self.assertTrue(any("carries no manifest asset" in error for error in errors), errors)
+
+    def test_two_manifest_assets_are_an_error(self):
+        errors, _warnings = self._validate(
+            self._meta(), [self._release("v1.0.0", "pack.zip", "pack.json", "extra.json")]
+        )
+
+        self.assertTrue(any("2 manifest assets" in error for error in errors), errors)
+
+    def test_a_manifest_member_must_be_registered(self):
+        raw = b'{"schema_version": 1, "members": [{"id": "test.ghost", "version": "*"}]}'
+
+        with patch.object(VALIDATE, "_download_bytes", return_value=raw):
+            errors, _warnings = self._validate(
+                self._meta(), [self._release("v1.0.0", "pack.zip", "pack.json")]
+            )
+
+        self.assertTrue(any("member is not registered: test.ghost" in error for error in errors), errors)
+
+    def test_a_manifest_rule_needs_a_supplier(self):
+        raw = json.dumps({
+            "schema_version": 1,
+            "install": {"files": [{"match": "**", "type": "nobody:thing"}]},
+        }).encode("utf-8")
+
+        with patch.object(VALIDATE, "_download_bytes", return_value=raw):
+            errors, _warnings = self._validate(
+                self._meta(), [self._release("v1.0.0", "pack.zip", "pack.json")]
+            )
+
+        self.assertTrue(any("not supplied by any modloader" in error for error in errors), errors)
+
+    def test_a_usable_pack_release_passes(self):
+        raw = json.dumps({
+            "schema_version": 1,
+            "members": [{"id": self.MEMBER, "version": ">=1.0.0"}],
+            "install": {
+                "mode": "patch",
+                "files": [{"match": "Parts/**", "type": "sprocket:streamingassets"}],
+            },
+        }).encode("utf-8")
+
+        with patch.object(VALIDATE, "_download_bytes", return_value=raw):
+            errors, warnings = self._validate(
+                self._meta(), [self._release("v1.0.0", "pack.zip", "pack.json")]
+            )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_a_mod_never_reads_a_manifest(self):
+        meta = self._meta(kind="modfile", category=None)
+
+        with patch.object(VALIDATE, "_download_bytes", side_effect=AssertionError("must not read")):
+            errors, warnings = self._validate(meta, [self._release("v1.0.0", "Mod.zip")])
+
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_an_unreachable_manifest_is_an_error(self):
+        with patch.object(VALIDATE, "_download_bytes", side_effect=OSError("network down")):
+            errors, _warnings = self._validate(
+                self._meta(), [self._release("v1.0.0", "pack.zip", "pack.json")]
+            )
+
+        self.assertTrue(any("cannot download the manifest" in error for error in errors), errors)
 
 
 if __name__ == "__main__":

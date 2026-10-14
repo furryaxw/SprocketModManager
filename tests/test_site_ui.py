@@ -92,3 +92,19 @@ class SiteUiTests(unittest.TestCase):
         self.assertIn("if (featured) return featured", script)
         self.assertIn('class="featured-star"', script)
         self.assertIn('tr("starterRecommended")', script)
+
+    def test_the_rail_lists_a_pack_category(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        script = site_javascript()
+
+        self.assertIn('data-category="pack"', html)
+        self.assertIn('id="count-pack"', html)
+        self.assertEqual(script.count("categoryPack:"), 2, "中英两套标签都要有")
+
+    def test_details_show_what_a_pack_brings_in(self):
+        html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        script = site_javascript()
+
+        self.assertIn('id="detail-members"', html)
+        self.assertIn("pkg.members || []", script)
+        self.assertIn("memberApplies", script, "按版本合并的成员清单只显示当前那一版适用的")

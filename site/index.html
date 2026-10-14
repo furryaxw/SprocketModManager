@@ -79,6 +79,9 @@
                 <i data-lucide="languages"></i><span data-i18n="categoryTranslation">Translations</span><b
                     id="count-translation">0</b>
             </button>
+            <button type="button" data-category="pack">
+                <i data-lucide="boxes"></i><span data-i18n="categoryPack">Mod packs</span><b id="count-pack">0</b>
+            </button>
             <button type="button" data-category="other">
                 <i data-lucide="ellipsis"></i><span data-i18n="categoryOther">Other</span><b id="count-other">0</b>
             </button>
@@ -163,6 +166,13 @@
     </div>
     <p class="detail-description" id="detail-description"></p>
     <dl class="detail-grid" id="detail-grid"></dl>
+    <div class="dependency-block" id="detail-members-block" hidden>
+        <div class="section-heading">
+            <h3 data-i18n="members">Included mods</h3>
+            <span data-i18n="membersHint">Installed and removed with the pack</span>
+        </div>
+        <div id="detail-members"></div>
+    </div>
     <div class="dependency-block">
         <div class="section-heading">
             <h3 data-i18n="dependencies">Dependencies</h3>

@@ -121,6 +121,8 @@ prerelease suffix are allowed.
 - `loaderbridge`: a loader that runs another loader's modules on a different base.
 - `translateloader`: a translation framework loader such as XUnity AutoTranslator.
 - `patch`: a patch applied on top of a loader, such as Sprocket-Mod-Loader.
+- `pack`: a mod pack, whose members and install rules live in a manifest asset on its own release;
+  see "Mod Packs".
 
 A `modfile` must use `install.files`. A `modloader`, `loaderbridge`, `translateloader`, or
 `patch` may use `install.payload`, and may also use `install.files` when its content
@@ -129,7 +131,9 @@ never uses `install.payload`. `install.mode` (`standard`, `patch`) works with ei
 install line. Only a `modloader` may declare an external
 `release.source`, and only a `modloader` is listed on the client's loader page and can act
 there as a compatibility provider. A `loaderbridge`, `translateloader`, or `patch` is
-a directly installable ordinary entry that carries only a kind badge. The top-level
+a directly installable ordinary entry that carries only a kind badge. A `pack` takes its members
+and install rules from its manifest asset, so an entry's `install`/`members` are only a baseline.
+The top-level
 `provides` declares which compatibility capabilities the package supplies; see
 "Compatibility".
 
@@ -575,6 +579,61 @@ and the file on disk still matches what the patch installed (the file keeps its 
 owners, or becomes unmanaged again if it had none); files the patch itself added are
 deleted with it; a hand-modified file is kept and reported as a warning. Archive entries
 are removed once no patch package references them.
+
+## Mod Packs
+
+A package whose `kind` is `pack` is a set of mods plus its own override files. Its members and its
+install rules do not live in the entry but in a **manifest asset on the release** (`.json`): changing
+members, changing where files land, or adding files in a new directory only takes a new release, with
+no registry change.
+
+```json
+{
+  "schema_version": 1,
+  "members": [
+    { "id": "roanwassink.sprocket-thermal-sight", "version": ">=0.2.0", "when": "*" }
+  ],
+  "install": {
+    "mode": "patch",
+    "files": [
+      {
+        "match": "Parts/**",
+        "type": "sprocket:streamingassets",
+        "layout": "tree",
+        "subpath": "Parts"
+      }
+    ],
+    "exclude": []
+  }
+}
+```
+
+- `members` has the same shape as an entry's `dependencies`: exact `=x.y.z` and ranges both work, and
+  `when` is relative to the pack's own version. **A member is an install dependency**: resolution,
+  environment filtering, the install record, and uninstall cascades all use the existing machinery.
+  A member the pack brought in belongs to the pack and leaves with it; a member the user asked for by
+  name, or that another package still depends on, stays.
+- `install` has the same shape and meaning as an entry's `install` (`mode`, `files`, `exclude`,
+  `replace`).
+- The manifest and the payload are **two assets on the same release** (the JSON and a zip), so
+  `release.assets.include` has to cover `*.json` and `*.zip`. A pack may carry a manifest and no
+  payload at all — members have their own entries and binaries. One manifest per release: with
+  several JSON assets the first one is used, and which one counts is then unclear.
+- The entry keeps identity, metadata, and the fetch rules. `install` and `members` are optional and
+  act as a **baseline**: used when the manifest cannot be read, and shown on the site.
+
+The index build reads each release's manifest back and merges its members and rules into the
+published entry as `when: "=that version"` — the client therefore only sees that version's content
+when resolving, and an older version reads its own older manifest. `mode`/`exclude`/`replace` are not
+per-version fields: they take the newest manifest's value (the build warns when an older release
+disagrees).
+
+A manifest's members must already be registered, and its rule types must have a supplier: the same
+gates as any entry, checked online on a pull request. **Narrowing `release.assets.include` or changing
+`version_pattern` makes older versions disappear from the index**, so the build refuses when the
+previous index still lists such a tag; dropping release history on purpose takes a `--refresh` rebuild.
+
+See `sprocket-pack.example.json` for an entry and `pack.example.json` for a manifest.
 
 ## External Download Sources
 

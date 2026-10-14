@@ -159,9 +159,11 @@ DLL 的具体种类也可以留到下载后按它自己的元数据决定，把�
 - `loaderbridge`：把另一个加载器的模块跑在别的底座上的加载器。
 - `translateloader`：翻译框架加载器，例如 XUnity AutoTranslator。
 - `patch`：叠在某个加载器上的补丁，例如 Sprocket-Mod-Loader。
+- `pack`：整合包，成员与落点规则写在它自己 release 的清单资产里，见「整合包」。
 
 除 `modfile` 之外的四种可以用 `install.payload`，内容能映射到供给类型时也可以用
-`install.files`；一个包只能用其中一条安装线。`install.payload` 的行写成 `{match, target}`
+`install.files`；一个包只能用其中一条安装线。`pack` 的两条线都来自清单资产，条目里可以不写
+`install`。`install.payload` 的行写成 `{match, target}`
 （可选 `subpath`、`layout`），`target` 直接是游戏目录里的一处位置，
 写法与 `supply` 的值相同（`{Sprocket}`、`{Sprocket}/BepInEx/core`）。
 
@@ -222,6 +224,21 @@ Release 在正文里用注释块声明它落在哪些版本区间：
 `0.2.53.x` 及更早由官方 MelonLoader 承担；`0.2.54` 起是 BepInEx Bleeding Edge 加
 BepInEx/MelonLoader 桥接。桥接按 `0.7.3` 供给 `lavagang.melonloader`，所以在桥上跑的
 模组只要声明 `lavagang.melonloader`，不需要另写 BepInEx 的轴。
+
+## 整合包
+
+整合包是 `kind: "pack"` 的条目加一份**清单资产**：
+
+1. 在作者仓库里写一份清单（成员用 `members`，落点规则用 `install`，形状与条目里的完全一样），
+   示例见 `pack.example.json`。
+2. 发 release 时把清单与载荷 zip 一起传上去，`release.assets.include` 覆盖 `*.json` 与 `*.zip`；
+   纯成员包只传清单。
+3. 条目只写身份、元数据与 `release`（示例见 `sprocket-pack.example.json`）。`install`/`members`
+   可以留空；写了就当基线（清单读不到时用它）。
+4. 之后的版本改成员或改落点，只要发新 release，不需要 PR。要 PR 的是"形状"变了：资产命名超出
+   `include`、tag 格式变了、或者条目元数据要改。
+5. CI 会下载清单检查：成员必须已注册、区间要读得动、规则里的类型必须有人供给。收窄 `include` 或改
+   `version_pattern` 会削掉老版本，CI 直接红（确实要丢掉历史版本时用 `--refresh` 重建索引）。
 
 ## 提交 Pull Request
 

@@ -179,10 +179,13 @@ not covered by a rule fails the scan for that package.
 - `loaderbridge`: a loader that runs another loader's modules on a different base.
 - `translateloader`: a translation framework loader such as XUnity AutoTranslator.
 - `patch`: a patch applied on top of a loader, such as Sprocket-Mod-Loader.
+- `pack`: a mod pack, whose members and install rules live in a manifest asset on its own release;
+  see "Mod Packs".
 
 The four kinds other than `modfile` may use `install.payload`, and may also use
 `install.files` when their content maps onto supply types; a package uses one install
-line or the other. An `install.payload` line is `{match, target}` with optional `subpath`
+line or the other. A `pack` takes both lines from its manifest asset, so its entry may omit
+`install` entirely. An `install.payload` line is `{match, target}` with optional `subpath`
 and `layout`; `target` is a location in the game directory,
 written like a `supply` value (`{Sprocket}`, `{Sprocket}/BepInEx/core`).
 
@@ -254,6 +257,24 @@ A list of ranges:
 BepInEx Bleeding Edge plus the BepInEx/MelonLoader bridge. The bridge supplies
 `lavagang.melonloader` at `0.7.3`, so a mod running under the bridge only needs to
 declare `lavagang.melonloader` — the BepInEx axis does not have to be written.
+
+## Mod Packs
+
+A mod pack is an entry with `kind: "pack"` plus a **manifest asset**:
+
+1. Write a manifest in the author's repository (members under `members`, install rules under
+   `install`, exactly the shape an entry uses); see `pack.example.json`.
+2. Upload the manifest together with the payload zip on the release, and let
+   `release.assets.include` cover `*.json` and `*.zip`. A members-only pack uploads the manifest alone.
+3. The entry keeps identity, metadata, and `release` only (see `sprocket-pack.example.json`).
+   `install`/`members` may be left out; when written they act as a baseline for a manifest that
+   cannot be read.
+4. Later versions change members or install rules by publishing a new release — no pull request.
+   A pull request is for a change in *shape*: asset names outside `include`, a different tag format,
+   or entry metadata.
+5. CI downloads the manifest and checks it: members must be registered, ranges must parse, and rule
+   types must have a supplier. Narrowing `include` or changing `version_pattern` drops older
+   versions, so CI fails (dropping release history on purpose takes a `--refresh` rebuild).
 
 ## Opening a Pull Request
 
