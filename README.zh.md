@@ -18,6 +18,10 @@ GitHub API 配额。二进制仍始终来自模组自己的 GitHub Release。客
 
 Sprocket 游戏本体的官方 Discord 服务器：https://discord.com/invite/baFH43keyR
 
+## 赞助
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-furryaxw-ff5e5b?logo=kofi&logoColor=white&style=for-the-badge)](https://ko-fi.com/furryaxw) [![爱发电](https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-furryaxw-946ce6?logo=afdian&logoColor=white&style=for-the-badge)](https://afdian.com/a/furryaxw)
+
 ## 当前纵向场景
 
 ```text

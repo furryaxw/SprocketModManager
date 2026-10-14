@@ -23,6 +23,10 @@ server:
 The official Sprocket Discord server covers the game itself:
 https://discord.com/invite/baFH43keyR
 
+## Sponsors
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-furryaxw-ff5e5b?logo=kofi&logoColor=white&style=for-the-badge)](https://ko-fi.com/furryaxw) [![Afdian](https://img.shields.io/badge/Afdian-furryaxw-946ce6?logo=afdian&logoColor=white&style=for-the-badge)](https://afdian.com/a/furryaxw)
+
 ## Current Vertical Slice
 
 ```text
