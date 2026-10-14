@@ -464,8 +464,8 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 同一类型的已装包；被顶掉的包若还被别的已装包依赖，就拒绝安装。
 
 按文件打补丁的例子是 Sprocket 兼容补丁 `hans21223.sprocket-mod-loader`：它依赖
-`bepinex.bepinex-be`，把归档里的 `Patch/BepInEx/core/*.dll` 落进 `bepinex:core` 的供给目录；
-`bepinex:core` 指向 `BepInEx/core`，不需要 `subpath`。
+`bepinex.bepinex-be`，把归档里的 `**/Patch/BepInEx/core/*.dll` 落进 `bepinex:core` 的供给目录；
+`bepinex:core` 指向 `BepInEx/core`，不需要 `subpath`；前导的 `**` 走过归档顶层的 `Sprocket-Mod-Loader-<version>/`。
 
 ```json
 {
@@ -474,7 +474,7 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
     "mode": "patch",
     "files": [
       {
-        "match": "Patch/BepInEx/core/*.dll",
+        "match": "**/Patch/BepInEx/core/*.dll",
         "type": "bepinex:core"
       }
     ],

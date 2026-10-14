@@ -546,8 +546,8 @@ it is refused when another installed package still depends on the displaced one.
 
 The per-file example is the Sprocket compatibility pack
 `hans21223.sprocket-mod-loader`: it depends on `bepinex.bepinex-be` and lands
-`Patch/BepInEx/core/*.dll` from its archive in the supply directory of `bepinex:core`;
-`bepinex:core` names `BepInEx/core`, so no `subpath` is needed.
+`**/Patch/BepInEx/core/*.dll` from its archive in the supply directory of `bepinex:core`;
+`bepinex:core` names `BepInEx/core`, so no `subpath` is needed; the leading `**` walks the `Sprocket-Mod-Loader-<version>/` wrapper the release archive nests the payload under.
 
 ```json
 {
@@ -556,7 +556,7 @@ The per-file example is the Sprocket compatibility pack
     "mode": "patch",
     "files": [
       {
-        "match": "Patch/BepInEx/core/*.dll",
+        "match": "**/Patch/BepInEx/core/*.dll",
         "type": "bepinex:core"
       }
     ],
