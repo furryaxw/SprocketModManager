@@ -15,11 +15,13 @@ that supplies that type (`{Sprocket}/Mods`, `{Sprocket}/BepInEx/plugins`, and so
 
 ## Community
 
-Release announcements go to the `#mod-releases` channel of the official Sprocket
-Discord server:
+Manager discussion, issue reports and the changelog are on the Syncanid Discord
+server:
 
-- Server invite: https://discord.com/invite/baFH43keyR
-- Release channel: https://discord.com/channels/788349365466038283/1531947654957891614
+- Server invite: https://discord.gg/E67tDJC8jh
+
+The official Sprocket Discord server covers the game itself:
+https://discord.com/invite/baFH43keyR
 
 ## Current Vertical Slice
 

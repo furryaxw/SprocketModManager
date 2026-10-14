@@ -12,10 +12,11 @@ GitHub API 配额。二进制仍始终来自模组自己的 GitHub Release。客
 
 ## 社区
 
-模组发布公告发在 Sprocket 官方 Discord 服务器的 `#mod-releases` 频道：
+管理器的讨论、问题反馈与更新日志都在 Syncanid Discord 服务器：
 
-- 服务器邀请：https://discord.com/invite/baFH43keyR
-- 发布频道：https://discord.com/channels/788349365466038283/1531947654957891614
+- 服务器邀请：https://discord.gg/E67tDJC8jh
+
+Sprocket 游戏本体的官方 Discord 服务器：https://discord.com/invite/baFH43keyR
 
 ## 当前纵向场景
 
