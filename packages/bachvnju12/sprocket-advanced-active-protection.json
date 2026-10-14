@@ -1,0 +1,67 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "bachvnju12.sprocket-advanced-active-protection",
+    "name": "SprocketAdvancedAPS",
+    "authors": [
+        "bachvnju12"
+    ],
+    "repository": "bachvnju12/Sprocket-Advanced-Active-Protection",
+    "license": "MIT",
+    "display_name": {
+        "en": "Sprocket Advanced APS",
+        "zh": "Sprocket 高级主动防护系统"
+    },
+    "description": {
+        "en": "Adds ten historical active protection systems as designer parts, with threat detection, hard-kill interception, soft-kill jamming and per-module damage. Blueprints that reference these parts need them removed in the designer after uninstalling.",
+        "zh": "以设计器部件形式加入十种历史上的主动防护系统，包含威胁探测、硬杀伤拦截、软杀伤干扰与逐模块损伤。卸载后需在设计器中移除仍引用这些部件的蓝图。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketAdvancedAPS-*.zip"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "furryaxw.sprocket-mod-api",
+            "version": ">=1.1.0 <2.0.0",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "BepInEx/plugins/*.dll",
+                "type": "bepinex:plugin"
+            },
+            {
+                "match": "BepInEx/plugins/SprocketAdvancedAPS/**",
+                "type": "bepinex:plugin",
+                "layout": "tree",
+                "subpath": "SprocketAdvancedAPS"
+            },
+            {
+                "match": "Sprocket_Data/StreamingAssets/**",
+                "type": "sprocket:streamingassets",
+                "layout": "tree"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "active-protection",
+        "hard-kill",
+        "soft-kill",
+        "parts",
+        "bepinex"
+    ]
+}

@@ -13,27 +13,24 @@
         "zh": "Sprocket 战斗编辑器"
     },
     "description": {
-        "en": "Editor and mission framework for custom battles: place your own designs or the game's tanks and AT guns, give them paths, targets and reserves, add zones, mines, obstacles, rules and artillery, film a keyframed multi-camera cinematic, and command or take over any tank in the battle. Bundles Map Framework, which opens Ambush, The Crossroad, Silent Border and Sandbox to custom battles. Alpha.",
-        "zh": "自定义战斗的编辑器与任务框架：布置自己的载具或游戏自带的坦克与反坦克炮，为它们设置路径、目标与预备队，添加区域、地雷、障碍、规则与炮火支援，用关键帧多机位拍摄过场，并可在战斗中指挥任意坦克或接管驾驶、炮塔与火炮。内含 Map Framework，让 Ambush、The Crossroad、Silent Border 与 Sandbox 可用于自定义战斗。Alpha 阶段。"
+        "en": "Editor and mission framework for custom battles: place your own designs or the game's tanks and AT guns, give them paths, targets and reserves, add zones, mines, obstacles, rules and artillery, film a keyframed multi-camera cinematic, and command or take over any tank in the battle. Bundles Map Framework, which opens Ambush, The Crossroad, Silent Border, Sandbox and Sandbox (Low performance) to Custom Battle and Battle Editor, imports Garry's Mod maps and raw OBJ, FBX and .unitypackage sources, and keeps an imported map's own lighting, water and breakable scenery. Beta.",
+        "zh": "自定义战斗的编辑器与任务框架：布置自己的载具或游戏自带的坦克与反坦克炮，为它们设置路径、目标与预备队，添加区域、地雷、障碍、规则与炮火支援，用关键帧多机位拍摄过场，并可在战斗中指挥任意坦克或接管驾驶、炮塔与火炮。内含 Map Framework：让 Ambush、The Crossroad、Silent Border、Sandbox 与 Sandbox (Low performance) 可用于自定义战斗与战斗编辑器，导入 Garry's Mod 地图与原始 OBJ、FBX、.unitypackage 素材，并保留导入地图自身的光照、水面与可破坏景物。Beta 阶段。"
     },
     "release": {
         "include_prerelease": true,
         "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
         "assets": {
             "include": [
-                "Sprocket-Battle-Editor*.zip"
+                "Sprocket-Battle-Editor-and-Map-Framework-*.zip",
+                "Sprocket-Battle-Editor-*.zip"
             ],
             "exclude": []
         }
     },
-    "dependencies": [
-        {
-            "id": "furryaxw.sprocket-mod-api",
-            "version": ">=1.0.0 <2.0.0",
-            "when": ">=0.17.31"
-        }
+    "dependencies": [],
+    "recommendations": [
+        "furryaxw.sprocket-mod-api"
     ],
-    "recommendations": [],
     "featured": false,
     "install": {
         "files": [

@@ -26,14 +26,10 @@
             "exclude": []
         }
     },
-    "dependencies": [
-        {
-            "id": "furryaxw.sprocket-mod-api",
-            "version": ">=1.0.0 <2.0.0",
-            "when": ">=1.8.7"
-        }
+    "dependencies": [],
+    "recommendations": [
+        "furryaxw.sprocket-mod-api"
     ],
-    "recommendations": [],
     "featured": true,
     "install": {
         "files": [
