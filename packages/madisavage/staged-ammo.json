@@ -1,0 +1,55 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.staged-ammo",
+    "name": "stagedAmmo",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Staged Ammo",
+        "zh": "分级弹药"
+    },
+    "description": {
+        "en": "Loaders only draw from ready racks near the breech. While free, a living loader re-racks shells inward from stowage, timed by the game's loader rules and crew efficiency, with a HUD readout.",
+        "zh": "装填手只从炮尾附近的待发弹架取弹。空闲时，存活的装填手会把弹药从储备架逐架向内倒运，耗时按游戏的装填规则与乘员效率计算，并在 HUD 上显示进度。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "stagedAmmo.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": ">=26.10.12"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "ammunition",
+        "ammo-racks",
+        "crew",
+        "loading"
+    ]
+}

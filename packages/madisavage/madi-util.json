@@ -1,0 +1,54 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.madi-util",
+    "name": "madiUtil",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "madiUtil",
+        "zh": "madiUtil"
+    },
+    "description": {
+        "en": "Vehicle designer sliders for crew seat base efficiency and laying drive torque, plus a Ctrl+S save keybind.",
+        "zh": "载具设计器中调整乘员座椅基础效率与瞄准驱动扭矩的滑条，以及 Ctrl+S 保存快捷键。"
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "madiUtil.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": ">=26.10.12"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "utility",
+    "tags": [
+        "designer",
+        "crew",
+        "keybindings"
+    ]
+}
