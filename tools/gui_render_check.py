@@ -302,7 +302,8 @@ const BOOTSTRAP = {
         github_proxy_enabled: false, github_proxy_url: "", github_proxy_placeholder: "http://127.0.0.1:7890",
         text_scale: 1.0,
     },
-    links: {repository: "https://example.invalid", registry: "https://example.invalid"},
+    links: {repository: "https://example.invalid", registry: "https://example.invalid",
+            kofi: "https://example.invalid", afdian: "https://example.invalid"},
 };
 const SERVERS = {
     servers: [

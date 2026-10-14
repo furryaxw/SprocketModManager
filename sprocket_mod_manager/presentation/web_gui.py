@@ -870,7 +870,7 @@ class ClientApi:
             if parsed.scheme != "https" or not parsed.hostname:
                 raise ValueError("only HTTPS links can be opened")
             host = parsed.hostname.casefold()
-            if host not in {"github.com", "sprocketmods.furryaxw.top"}:
+            if host not in {"github.com", "sprocketmods.furryaxw.top", "ko-fi.com", "afdian.com"}:
                 raise ValueError("link host is not allowed")
             if host == "github.com":
                 if parsed.path.rstrip("/").casefold() == "/login/device":

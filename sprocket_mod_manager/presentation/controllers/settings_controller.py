@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from .base import ApiController
-from ..api_constants import MANAGER_REPOSITORY_URL, REGISTRY_WEBSITE_URL
+from ..api_constants import (
+    MANAGER_AFDIAN_URL,
+    MANAGER_KOFI_URL,
+    MANAGER_REPOSITORY_URL,
+    REGISTRY_WEBSITE_URL,
+)
 from ...application.data_hub import (
     KEY_CATALOG,
     KEY_ENVIRONMENT,
@@ -52,6 +57,8 @@ class SettingsController(ApiController):
                 "repository": MANAGER_REPOSITORY_URL,
                 "registry": REGISTRY_WEBSITE_URL,
                 "modloaders": REGISTRY_WEBSITE_URL,
+                "kofi": MANAGER_KOFI_URL,
+                "afdian": MANAGER_AFDIAN_URL,
             },
         )
 

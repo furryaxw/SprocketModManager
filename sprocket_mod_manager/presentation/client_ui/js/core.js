@@ -24,7 +24,7 @@ const state = {
         proxy_enabled: false, proxy_url: "", github_proxy_enabled: false,
         github_proxy_url: "", github_user_id: "", text_scale: 100,
     },
-    links: {repository: "", registry: ""},
+    links: {repository: "", registry: "", kofi: "", afdian: ""},
     // 环境读数与已安装读数都是数据层的只读视图（见 `data.js`）；这里只留渲染要用的界面状态。
     environmentAxesKey: null,
     // 「显示不兼容」是内存态：页面来回切不丢，重启回到默认（隐藏）。

@@ -58,6 +58,8 @@ function wireEvents() {
         else void openUrl(state.update.page_url);
     });
     $("#open-repository").addEventListener("click", () => openUrl(state.links.repository));
+    $("#sponsor-kofi").addEventListener("click", () => openUrl(state.links.kofi));
+    $("#sponsor-afdian").addEventListener("click", () => openUrl(state.links.afdian));
     $("#open-registry").addEventListener("click", () => openUrl(state.links.registry));
     $("#open-manager-directory").addEventListener("click", openManagerDirectory);
     $("#open-game-directory").addEventListener("click", openGameDirectory);

@@ -528,6 +528,23 @@ class WebGuiTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         open_browser.assert_called_once()
 
+    def test_the_sponsor_links_are_allowed_and_any_other_host_is_not(self):
+        with TemporaryDirectory() as directory:
+            api = ClientApi("0.2.0", app_dir=Path(directory))
+            try:
+                links = api.bootstrap()["links"]
+                with patch("sprocket_mod_manager.presentation.web_gui.webbrowser.open") as open_browser:
+                    kofi = api.open_url(links["kofi"])
+                    afdian = api.open_url(links["afdian"])
+                    elsewhere = api.open_url("https://example.invalid/sponsor")
+            finally:
+                api.install_queue.close()
+
+        self.assertTrue(kofi["ok"])
+        self.assertTrue(afdian["ok"])
+        self.assertEqual(open_browser.call_count, 2)
+        self.assertFalse(elsewhere["ok"])
+
     def test_package_readme_is_loaded_from_registered_repository(self):
         with TemporaryDirectory() as directory:
             api = ClientApi(
