@@ -303,7 +303,7 @@ class DependencySolver:
 
         伴随边和依赖一样把对方拉进同一个计划、一样参与版本约束，但不进依赖图：一对互相需要的包
         本来就是一个环，安装顺序与环检测只看 `dependencies`（见 `resolve` 的排序）。
-        没注册的伴随 id 不跟 —— Registry CI 会拦下它，客户端不该为一条坏数据崩掉整个解析。
+        没注册的伴随 id 不跟 —— 注册表构建会报出来，客户端不该为一条坏数据崩掉整个解析。
         """
         return tuple(
             dict(companion)

@@ -164,7 +164,7 @@ class RegistryPackage:
     def requirements(self) -> tuple[dict[str, str], ...]:
         """这个包在盘上要求的东西：声明的依赖，加上整合包声明的成员。
 
-        `members` 只对整合包有意义，别的种类写了也不当数（注册表 CI 会拦下这种条目）。
+        `members` 只对整合包有意义，别的种类写了也不当数（注册表构建会报出来，这种条目不进索引）。
         """
         return (*self.dependencies, *(self.members if self.is_pack else ()))
 

@@ -68,7 +68,7 @@ class PackModelTests(unittest.TestCase):
         self.assertEqual(parsed.requirements(), (member("example.first", "=1.2.0"),))
 
     def test_members_only_count_for_a_pack(self):
-        """别的种类写了 `members` 也不当数：注册表 CI 会拦下这种条目，客户端不另造语义。"""
+        """别的种类写了 `members` 也不当数：注册表构建会报出来，这种条目不进索引，客户端不另造语义。"""
         parsed = RegistryPackage.from_dict(self.entry(kind="modfile"))
 
         self.assertFalse(parsed.is_pack)
