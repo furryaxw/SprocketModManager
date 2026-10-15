@@ -148,7 +148,7 @@ class PackEntryValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(GEN_INDEX.RegistryError, "category pack belongs to a pack entry"):
             GEN_INDEX.validate_meta(mod_entry(category="pack"), "test.mod")
 
-    def test_scan_mods_refuses_an_unregistered_member(self):
+    def test_scan_mods_reports_an_unregistered_member(self):
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory)
             (mods_dir / "test").mkdir()
@@ -156,10 +156,13 @@ class PackEntryValidationTests(unittest.TestCase):
                 json.dumps(pack_entry(members=[member("test.ghost")])), encoding="utf-8"
             )
 
-            with self.assertRaisesRegex(
-                GEN_INDEX.RegistryError, "member is not registered: test.ghost"
-            ):
-                GEN_INDEX.scan_mods(mods_dir)
+            issues: list[str] = []
+            packages = GEN_INDEX.scan_mods(mods_dir, issues=issues)
+
+        self.assertEqual(issues, ["test.pack: member is not registered: test.ghost"])
+        self.assertEqual(
+            [package["id"] for package in packages], ["test.pack"], "引用写坏不影响条目进索引"
+        )
 
 
 class PackAssetRecordingTests(unittest.TestCase):
@@ -324,12 +327,15 @@ class PackManifestFetchTests(unittest.TestCase):
         self.assertIn("no manifest asset", warnings[0])
         self.assertNotIn("pack", record)
 
-    def test_two_manifest_assets_are_an_error(self):
+    def test_two_manifest_assets_only_warn(self):
         record = self.record()
         record["assets"].append(record_asset("pack-extra.json", 13))
 
-        with self.assertRaisesRegex(GEN_INDEX.RegistryError, "2 manifest assets"):
-            GEN_INDEX.fetch_pack_manifests(pack_entry(), [record])
+        warnings = GEN_INDEX.fetch_pack_manifests(pack_entry(), [record])
+
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("2 manifest assets", warnings[0])
+        self.assertNotIn("pack", record)
 
     def test_a_download_failure_only_warns(self):
         record = self.record()
@@ -341,20 +347,25 @@ class PackManifestFetchTests(unittest.TestCase):
         self.assertIn("cannot download the manifest", warnings[0])
         self.assertNotIn("pack", record)
 
-    def test_broken_manifest_content_is_an_error(self):
+    def test_broken_manifest_content_only_warns(self):
         record = self.record()
 
         with patch.object(GEN_INDEX, "_download_bytes", return_value=b"{ not json"):
-            with self.assertRaises(GEN_INDEX.ScanError):
-                GEN_INDEX.fetch_pack_manifests(pack_entry(), [record])
+            warnings = GEN_INDEX.fetch_pack_manifests(pack_entry(), [record])
+
+        self.assertEqual(len(warnings), 1)
+        self.assertNotIn("pack", record)
 
     def test_manifest_rules_are_validated(self):
         record = self.record()
         raw = b'{"schema_version": 1, "install": {"files": [{"match": "**", "type": "not a type"}]}}'
 
         with patch.object(GEN_INDEX, "_download_bytes", return_value=raw):
-            with self.assertRaisesRegex(GEN_INDEX.RegistryError, "invalid install file type"):
-                GEN_INDEX.fetch_pack_manifests(pack_entry(), [record])
+            warnings = GEN_INDEX.fetch_pack_manifests(pack_entry(), [record])
+
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("invalid install file type", warnings[0])
+        self.assertNotIn("pack", record)
 
 
 class ReleaseHistoryTests(unittest.TestCase):

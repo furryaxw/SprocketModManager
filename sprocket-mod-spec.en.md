@@ -629,8 +629,8 @@ per-version fields: they take the newest manifest's value (the build warns when 
 disagrees).
 
 A manifest's members must already be registered, and its rule types must have a supplier: the same
-gates as any entry, checked online on a pull request. **Narrowing `release.assets.include` or changing
-`version_pattern` makes older versions disappear from the index**, so the build refuses when the
+checks as any entry, run online on a pull request. **Narrowing `release.assets.include` or changing
+`version_pattern` makes older versions disappear from the index**, which the build reports when the
 previous index still lists such a tag; dropping release history on purpose takes a `--refresh` rebuild.
 
 See `sprocket-pack.example.json` for an entry and `pack.example.json` for a manifest.

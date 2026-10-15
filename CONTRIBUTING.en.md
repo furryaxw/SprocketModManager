@@ -274,7 +274,7 @@ A mod pack is an entry with `kind: "pack"` plus a **manifest asset**:
    or entry metadata.
 5. CI downloads the manifest and checks it: members must be registered, ranges must parse, and rule
    types must have a supplier. Narrowing `include` or changing `version_pattern` drops older
-   versions, so CI fails (dropping release history on purpose takes a `--refresh` rebuild).
+   versions; that is reported (dropping release history on purpose takes a `--refresh` rebuild).
 
 ## Opening a Pull Request
 
@@ -282,10 +282,12 @@ A mod pack is an entry with `kind: "pack"` plus a **manifest asset**:
 2. Open a Pull Request.
 3. Wait for Registry CI and maintainer review.
 
-CI verifies that:
+CI verifies the following; every finding is reported without blocking publication — one broken entry
+does not stop the site:
 
 - the metadata matches `schemas/sprocket-mod.schema.json`, the file path matches `id`,
-  and it contains no version number or download URL;
+  and it contains no version number or download URL (an entry that does not match does not enter
+  the index; the other entries publish as usual);
 - the GitHub repository is public;
 - the repository contains `LICENSE`/`COPYING` and actual source files; the license is the
   SPDX identifier the entry declares, and a file GitHub cannot classify still passes;

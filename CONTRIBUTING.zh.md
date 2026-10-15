@@ -238,7 +238,7 @@ BepInEx/MelonLoader 桥接。桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 4. 之后的版本改成员或改落点，只要发新 release，不需要 PR。要 PR 的是"形状"变了：资产命名超出
    `include`、tag 格式变了、或者条目元数据要改。
 5. CI 会下载清单检查：成员必须已注册、区间要读得动、规则里的类型必须有人供给。收窄 `include` 或改
-   `version_pattern` 会削掉老版本，CI 直接红（确实要丢掉历史版本时用 `--refresh` 重建索引）。
+   `version_pattern` 会削掉老版本，这一条会报出来（确实要丢掉历史版本时用 `--refresh` 重建索引）。
 
 ## 提交 Pull Request
 
@@ -246,9 +246,10 @@ BepInEx/MelonLoader 桥接。桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 2. 提交 Pull Request。
 3. 等待 Registry CI 和维护者审核。
 
-CI 会检查：
+CI 会检查下面这些，每一条都只报出来、不拦发布：一个条目写坏不该让整站停更。
 
-- meta 符合 `schemas/sprocket-mod.schema.json`，文件路径与 `id` 一致，且不含版本号或下载地址；
+- meta 符合 `schemas/sprocket-mod.schema.json`，文件路径与 `id` 一致，且不含版本号或下载地址
+  （不合规的条目不进索引，别的条目照常发布）；
 - GitHub 仓库公开；
 - 仓库包含 `LICENSE`/`COPYING` 和实际源文件；许可证以条目的 SPDX 标识为准，GitHub 认不出该文件时也算通过；
 - 至少一个非草稿 Release 的 tag 可解析为 SemVer；

@@ -536,9 +536,9 @@ BepInEx/MelonLoader 桥接：桥接按 `0.7.3` 供给 `lavagang.melonloader`，�
 版本求解时只看到那一版的内容，用户回退到老版本读的是老清单。`mode`/`exclude`/`replace` 不是按版本
 生效的字段，取最新一版清单的值（老版本不一致时构建给出警告）。
 
-清单里的成员必须已经在注册表里，规则里的文件类型必须有人供给：与普通条目同一套门槛，由联网校验
-在 PR 上查。**收窄 `release.assets.include` 或改 `version_pattern` 会让老版本从索引里消失**，所以
-构建时发现上一版索引里还有这个 tag 就直接报错；确实要丢掉历史版本，用 `--refresh` 重建索引。
+清单里的成员必须已经在注册表里，规则里的文件类型必须有人供给：与普通条目同一套校验，由联网校验
+在 PR 上查。**收窄 `release.assets.include` 或改 `version_pattern` 会让老版本从索引里消失**，
+构建时发现上一版索引里还有这个 tag 就报出来；确实要丢掉历史版本，用 `--refresh` 重建索引。
 
 条目示例见 `sprocket-pack.example.json`，清单示例见 `pack.example.json`。
 

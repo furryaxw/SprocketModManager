@@ -425,13 +425,14 @@ class InstallTypeValidationTests(unittest.TestCase):
             }
         }
 
-        with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
-            INDEX.validate_install_types(packages)
+        issues = INDEX.validate_install_types(packages)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("not supplied", issues[0])
 
         packages["example.mod"]["install"]["files"] = [
             {"match": "*.dll", "type": "melonloader:mod"}
         ]
-        INDEX.validate_install_types(packages)
+        self.assertEqual(INDEX.validate_install_types(packages), [])
 
     def test_a_wildcard_install_type_needs_a_supplier_in_its_namespace(self):
         packages = {
@@ -441,13 +442,14 @@ class InstallTypeValidationTests(unittest.TestCase):
             }
         }
 
-        INDEX.validate_install_types(packages)
+        self.assertEqual(INDEX.validate_install_types(packages), [])
 
         packages["example.mod"]["install"]["files"] = [
             {"match": "*.dll", "type": "bepinex:*"}
         ]
-        with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
-            INDEX.validate_install_types(packages)
+        issues = INDEX.validate_install_types(packages)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("not supplied", issues[0])
 
     def test_the_game_supplies_its_own_folders(self):
         """游戏不是可安装的包，它供给的位置只从 `game.json` 来。"""
@@ -457,11 +459,17 @@ class InstallTypeValidationTests(unittest.TestCase):
             }
         }
 
-        with self.assertRaisesRegex(INDEX.RegistryError, "not supplied"):
-            INDEX.validate_install_types(packages)
+        issues = INDEX.validate_install_types(packages)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("not supplied", issues[0])
 
-        INDEX.validate_install_types(packages, {"sprocket:userdata": "{Documents}/My Games/Sprocket"})
-        INDEX.validate_install_types(packages, ("sprocket:userdata",))
+        self.assertEqual(
+            INDEX.validate_install_types(
+                packages, {"sprocket:userdata": "{Documents}/My Games/Sprocket"}
+            ),
+            [],
+        )
+        self.assertEqual(INDEX.validate_install_types(packages, ("sprocket:userdata",)), [])
 
     def test_a_supply_target_may_point_outside_the_game_directory(self):
         meta = self.schema_two()
@@ -769,7 +777,7 @@ class SchemaThreeTests(unittest.TestCase):
 
 
 class CompanionTests(unittest.TestCase):
-    """伴随对：一起装一起卸；`dependencies` 的环仍然不允许，环只允许经过伴随边。"""
+    """伴随对：一起装一起卸；`dependencies` 之间的环要报出来，经过伴随边的环不算。"""
 
     @staticmethod
     def entry(package_id: str, *, companions=(), dependencies=()) -> dict:
@@ -786,7 +794,7 @@ class CompanionTests(unittest.TestCase):
     def companion(package_id: str, version: str = "*") -> dict:
         return {"id": package_id, "version": version}
 
-    def scan(self, entries: dict[str, dict]) -> list[dict]:
+    def scan(self, entries: dict[str, dict], *, issues: list[str] | None = None) -> list[dict]:
         """把条目按 `packages/<作者>/<modid>.json` 落盘后走一遍 `scan_mods`。"""
         with tempfile.TemporaryDirectory() as directory:
             mods_dir = Path(directory) / "mods"
@@ -795,7 +803,7 @@ class CompanionTests(unittest.TestCase):
                 author_dir = mods_dir / author
                 author_dir.mkdir(parents=True, exist_ok=True)
                 (author_dir / f"{modid}.json").write_text(json.dumps(meta), encoding="utf-8")
-            return INDEX.scan_mods(mods_dir)
+            return INDEX.scan_mods(mods_dir, issues=issues)
 
     def test_a_pair_is_accepted_and_reaches_the_index(self):
         packages = self.scan(
@@ -816,26 +824,41 @@ class CompanionTests(unittest.TestCase):
         )
         self.assertEqual(by_id["example.patch"]["companions"], [])
 
-    def test_a_companion_must_be_registered(self):
-        with self.assertRaisesRegex(INDEX.RegistryError, "companion is not registered"):
-            self.scan(
-                {"example.loader": self.entry("example.loader", companions=[self.companion("example.patch")])}
-            )
+    def test_a_companion_that_is_not_registered_is_reported(self):
+        issues: list[str] = []
 
-    def test_a_dependency_cycle_is_still_rejected(self):
-        with self.assertRaisesRegex(INDEX.RegistryError, "dependency cycle"):
-            self.scan(
-                {
-                    "example.loader": self.entry(
-                        "example.loader",
-                        dependencies=[{"id": "example.patch", "version": "*", "when": "*"}],
-                    ),
-                    "example.patch": self.entry(
-                        "example.patch",
-                        dependencies=[{"id": "example.loader", "version": "*", "when": "*"}],
-                    ),
-                }
-            )
+        packages = self.scan(
+            {"example.loader": self.entry("example.loader", companions=[self.companion("example.patch")])},
+            issues=issues,
+        )
+
+        self.assertEqual(issues, ["example.loader: companion is not registered: example.patch"])
+        self.assertEqual(
+            [package["id"] for package in packages], ["example.loader"], "引用写坏不影响条目进索引"
+        )
+
+    def test_a_dependency_cycle_is_reported(self):
+        issues: list[str] = []
+
+        packages = self.scan(
+            {
+                "example.loader": self.entry(
+                    "example.loader",
+                    dependencies=[{"id": "example.patch", "version": "*", "when": "*"}],
+                ),
+                "example.patch": self.entry(
+                    "example.patch",
+                    dependencies=[{"id": "example.loader", "version": "*", "when": "*"}],
+                ),
+            },
+            issues=issues,
+        )
+
+        self.assertEqual(len(issues), 1)
+        self.assertIn("dependency cycle", issues[0])
+        self.assertEqual(
+            [package["id"] for package in packages], ["example.loader", "example.patch"]
+        )
 
     def test_companions_are_optional_and_validated_when_present(self):
         INDEX.validate_meta({**metadata(), "companions": []}, "example.mod")
@@ -862,6 +885,46 @@ class CompanionTests(unittest.TestCase):
                 meta = {**metadata(), "companions": companions}
                 with self.assertRaisesRegex(INDEX.RegistryError, message):
                     INDEX.validate_meta(meta, "example.mod")
+
+
+class ScanIsolationTests(unittest.TestCase):
+    """一个条目读不动或不合规时只有它自己不参与构建，别的条目照常进索引。"""
+
+    @staticmethod
+    def write(directory: str, name: str, payload) -> None:
+        author_dir = Path(directory) / "example"
+        author_dir.mkdir(parents=True, exist_ok=True)
+        text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        (author_dir / f"{name}.json").write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def good() -> dict:
+        return {"schema_version": 3, "id": "example.good", "name": "Good", "install": {}}
+
+    def test_an_unreadable_entry_only_drops_itself(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.write(directory, "good", self.good())
+            self.write(directory, "broken", "{ not json")
+
+            issues: list[str] = []
+            packages = INDEX.scan_mods(Path(directory), issues=issues)
+
+        self.assertEqual([package["id"] for package in packages], ["example.good"])
+        self.assertEqual(len(issues), 1)
+        self.assertIn("example.broken: cannot read metadata", issues[0])
+
+    def test_an_entry_that_breaks_the_schema_only_drops_itself(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.write(directory, "good", self.good())
+            self.write(
+                directory, "broken", {"schema_version": 3, "id": "example.broken", "install": {}}
+            )
+
+            issues: list[str] = []
+            packages = INDEX.scan_mods(Path(directory), issues=issues)
+
+        self.assertEqual([package["id"] for package in packages], ["example.good"])
+        self.assertEqual(issues, ["example.broken: missing fields: name"])
 
 
 class RegistryIsolationTests(unittest.TestCase):

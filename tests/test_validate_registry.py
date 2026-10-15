@@ -1,4 +1,4 @@
-"""供给表与兼容覆盖表在工作树上写坏时，CI 的门禁要直接红，而不是安静地少过滤一条。"""
+"""供给表与兼容覆盖表在工作树上写坏时，报告里要出现那条问题，而不是安静地少过滤一条。"""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def game_module(path: Path):
     return Module
 
 
-class GameFileGateTests(unittest.TestCase):
+class GameFileReportTests(unittest.TestCase):
     def write(self, directory: str, payload) -> Path:
         path = Path(directory) / GEN_INDEX.GAME_FILE_NAME
         path.write_text(
@@ -86,7 +86,7 @@ class GameFileGateTests(unittest.TestCase):
         self.assertIn(f"{GEN_INDEX.GAME_FILE_NAME} has no usable supply entry", errors)
 
 
-class ProvidersTableGateTests(unittest.TestCase):
+class ProvidersTableReportTests(unittest.TestCase):
     def write(self, directory: str, payload) -> Path:
         path = Path(directory) / GEN_INDEX.PROVIDERS_FILE_NAME
         path.write_text(
@@ -125,7 +125,7 @@ class ProvidersTableGateTests(unittest.TestCase):
         self.assertIn("providers.json has no usable entry", errors)
 
 
-class CompatOverrideGateTests(unittest.TestCase):
+class CompatOverrideReportTests(unittest.TestCase):
     def write(self, directory: str, payload) -> Path:
         path = Path(directory) / GEN_INDEX.OVERRIDE_FILE_NAME
         path.write_text(
@@ -166,7 +166,7 @@ class CompatOverrideGateTests(unittest.TestCase):
 
             errors = VALIDATE.validate_overrides(override_module(path), [{"id": LOADER_ID}])
 
-        self.assertEqual(errors, [], "一条覆盖都没有不该拦住提交")
+        self.assertEqual(errors, [], "一条覆盖都没有不该报出来")
 
 class LicensePlaceholderTests(unittest.TestCase):
     """`TODO-SPDX` 表示许可证还没定，两项全豁免；真实取值要求仓库带 LICENSE/COPYING 文件，GitHub 认不出该文件时以条目声明为准。"""
@@ -203,14 +203,14 @@ class LicensePlaceholderTests(unittest.TestCase):
 
         errors = VALIDATE.validate_online(self._meta(VALIDATE.PLACEHOLDER_LICENSE), api)
 
-        self.assertEqual(errors, [], "占位值下许可证两项不许拦")
+        self.assertEqual(errors, [], "占位值下许可证两项不该报出来")
 
     def test_a_license_file_covers_a_repository_github_cannot_classify(self) -> None:
         api = self._Api(license_id="NOASSERTION", paths=("LICENSE", "src/Plugin.cs"))
 
         errors = VALIDATE.validate_online(self._meta("LGPL-3.0-only"), api)
 
-        self.assertEqual(errors, [], "仓库带许可文件时 GitHub 认不出不该拦")
+        self.assertEqual(errors, [], "仓库带许可文件时 GitHub 认不出不该报出来")
 
     def test_a_real_license_value_still_needs_both_checks(self) -> None:
         api = self._Api(license_id=None, paths=("src/Plugin.cs",))
@@ -221,7 +221,7 @@ class LicensePlaceholderTests(unittest.TestCase):
         self.assertIn("repository must contain a LICENSE or COPYING file", errors)
 
 
-class ReleaseRuleGateTests(unittest.TestCase):
+class ReleaseRuleReportTests(unittest.TestCase):
     """每个匹配 `version_pattern` 的 release 都要有匹配的资产，整合包还要读得动它的清单。
 
     收窄 `release.assets.include` 或改正则会让老 release 从索引里静默消失；已发布索引里还有它的

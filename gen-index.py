@@ -904,11 +904,11 @@ def fetch_pack_manifests(
         releases: list[dict[str, Any]],
         known: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    """给整合包的每一版取回清单资产，挂到那条 release 记录的 `pack` 键上；返回网络类警告。
+    """给整合包的每一版取回清单资产，挂到那条 release 记录的 `pack` 键上；返回警告。
 
     上一版索引里那条 release 已经带着同一份清单资产时直接沿用（release 没变就不重新下载）。
-    下载不动只警告并跳过（那一版退回条目里可选的基线）；清单内容本身不合法则是错误 —— 坏内容
-    不该进索引。
+    下载不动、资产数不对、清单内容不合法都只警告并跳过那一版：坏内容不进索引，也不拦住别的
+    版本和别的包（那一版退回条目里可选的基线）。
     """
     if str(package.get("kind", "modfile")) != PACK_KIND:
         return []
@@ -922,10 +922,11 @@ def fetch_pack_manifests(
         tag = str(record.get("tag", ""))
         assets = manifest_assets(record)
         if len(assets) > 1:
-            raise RegistryError(
+            warnings.append(
                 f"{package['id']} {tag}: {len(assets)} manifest assets "
                 f"({', '.join(str(asset.get('name', '')) for asset in assets)}); a release carries one"
             )
+            continue
         if not assets:
             warnings.append(f"{package['id']} {tag}: release has no manifest asset")
             continue
@@ -940,8 +941,12 @@ def fetch_pack_manifests(
         except (HTTPError, URLError, OSError) as exc:
             warnings.append(f"{source}: cannot download the manifest ({exc})")
             continue
-        manifest = parse_pack_manifest(raw, source=source)
-        _validate_manifest_install(manifest.install, source)
+        try:
+            manifest = parse_pack_manifest(raw, source=source)
+            _validate_manifest_install(manifest.install, source)
+        except (ScanError, RegistryError) as exc:
+            warnings.append(str(exc))
+            continue
         record["pack"] = {
             "asset_id": int(asset.get("id", 0)),
             "asset_name": str(asset.get("name", "")),
@@ -1028,7 +1033,7 @@ def validate_release_history(package: dict[str, Any], baseline: list[dict[str, A
 
     条目是"对这个包所有版本生效"的描述，收窄 `release.assets.include` 或改 `version_pattern` 会让
     老 release 在 `normalize_release_records` 里被静默 `continue` 掉 —— 客户端的回退选项就没了。
-    这里把它报成错误，要丢掉历史就得显式 `--refresh` 重建。
+    这里把它报出来，要丢掉历史就得显式 `--refresh` 重建。
     """
     if not baseline:
         return []
@@ -1531,14 +1536,14 @@ def find_dependency_cycle(packages: dict[str, dict]) -> list[str] | None:
 def validate_install_types(
     packages: dict[str, dict],
     game_supply: Iterable[str] = (),
-) -> None:
+) -> list[str]:
     """模组静态声明的安装类型必须有人供给。
 
     一个类型可以由多个加载器供给（例如原生加载器和把目录重新安家的桥接加载器），所以这里
     只要求「至少有一个供给者」；具体用哪一个由客户端按目标目录里已安装的加载器决定。
     通配类型 `<ns>:*` 只要有该名字空间下的供给者就算有着落 —— 具体类别由 DLL 的 PE 元数据定。
     游戏自己供给的位置（`game.json` 的 `supply`）同样算供给者：它始终在场。
-    类型写法与供给位置由 `validate_meta` 校验。
+    类型写法与供给位置由 `validate_meta` 校验。返回没人供给的类型，由调用方报出来。
     """
     suppliers: set[str] = {
         file_type
@@ -1546,6 +1551,7 @@ def validate_install_types(
         for file_type in (package.get("supply") or {})
     } | {str(file_type) for file_type in game_supply}
     namespaces = {file_type.split(":", 1)[0] for file_type in suppliers}
+    issues: list[str] = []
     for package_id, package in packages.items():
         install = package.get("install")
         rules = install.get("files", []) if isinstance(install, dict) else []
@@ -1553,20 +1559,38 @@ def validate_install_types(
             file_type = rule["type"]
             if file_type.endswith(":*"):
                 if file_type[: -len(":*")] not in namespaces:
-                    raise RegistryError(
+                    issues.append(
                         f"{package_id}: install file type is not supplied by any modloader: {file_type}"
                     )
                 continue
             if file_type not in suppliers:
-                raise RegistryError(
+                issues.append(
                     f"{package_id}: install file type is not supplied by any modloader: {file_type}"
                 )
+    return issues
 
 
-def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dict]:
-    """读 `packages/` 下的全部条目并校验它们之间的关系。
+def _report_issue(issues: list[str] | None, message: str) -> None:
+    """一个条目的问题：交给调用方收集，或者直接报警。都不改流程。"""
+    if issues is None:
+        print(f"warning: {message}", file=sys.stderr)
+    else:
+        issues.append(message)
+
+
+def scan_mods(
+    mods_dir: Path,
+    *,
+    game: dict[str, Any] | None = None,
+    issues: list[str] | None = None,
+) -> list[dict]:
+    """读 `packages/` 下的全部条目并核验它们之间的关系。
 
     `game` 给出游戏自身的身份与供给（`game.json`）；不给时用内在身份、供给为空。
+
+    读不动或不合规的条目只有它自己不参与构建，别的条目照常；引用未注册的包、类型没人供给、
+    依赖有环这类跨条目问题只报出来，条目本身仍然进索引 —— 一个条目写坏不该拦住整站发布。
+    消息收进 `issues`，不给就直接打到 stderr。
     """
     if not mods_dir.is_dir():
         raise RegistryError(f"packages directory does not exist: {mods_dir}")
@@ -1584,9 +1608,16 @@ def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dic
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
-                raise RegistryError(f"{package_id}: cannot read metadata: {exc}") from exc
-
-            validate_meta(meta, package_id)
+                _report_issue(issues, f"{package_id}: cannot read metadata: {exc}")
+                continue
+            if not isinstance(meta, dict):
+                _report_issue(issues, f"{package_id}: metadata is not an object")
+                continue
+            try:
+                validate_meta(meta, package_id)
+            except RegistryError as exc:
+                _report_issue(issues, f"{package_id}: {exc}")
+                continue
             package = {key: value for key, value in meta.items() if key != "$schema"}
             package["meta_url"] = f"packages/{author_dir.name}/{meta_path.name}"
             packages[package["id"]] = package
@@ -1596,30 +1627,31 @@ def scan_mods(mods_dir: Path, *, game: dict[str, Any] | None = None) -> list[dic
         for dependency in package.get("dependencies", []):
             dependency_id = dependency["id"]
             if dependency_id not in packages and dependency_id not in capabilities:
-                raise RegistryError(
-                    f"{package['id']}: dependency is not registered: {dependency_id}"
+                _report_issue(
+                    issues, f"{package['id']}: dependency is not registered: {dependency_id}"
                 )
         for recommendation in package.get("recommendations", []):
             if recommendation not in packages:
-                raise RegistryError(
-                    f"{package['id']}: recommendation is not registered: {recommendation}"
+                _report_issue(
+                    issues, f"{package['id']}: recommendation is not registered: {recommendation}"
                 )
         for companion in package.get("companions", []):
             if companion["id"] not in packages:
-                raise RegistryError(
-                    f"{package['id']}: companion is not registered: {companion['id']}"
+                _report_issue(
+                    issues, f"{package['id']}: companion is not registered: {companion['id']}"
                 )
         for member in package.get("members", []):
             if member["id"] not in packages:
-                raise RegistryError(
-                    f"{package['id']}: member is not registered: {member['id']}"
+                _report_issue(
+                    issues, f"{package['id']}: member is not registered: {member['id']}"
                 )
 
-    validate_install_types(packages, game.get("supply") or {})
+    for issue in validate_install_types(packages, game.get("supply") or {}):
+        _report_issue(issues, issue)
 
     cycle = find_dependency_cycle(packages)
     if cycle:
-        raise RegistryError("dependency cycle: " + " -> ".join(cycle))
+        _report_issue(issues, "dependency cycle: " + " -> ".join(cycle))
 
     return [packages[key] for key in sorted(packages)]
 
@@ -1693,7 +1725,7 @@ def load_game_file(path: Path) -> tuple[dict[str, Any], list[str]]:
 
     游戏不是可安装的包，没人能替它装，所以它的供给不写在条目里：这份文件是它唯一的来源，
     构建时随索引下发。文件缺失或游戏那一段写坏时退回内在身份、供给留空，并留下告警 ——
-    供给空着时用到 `sprocket:*` 的安装规则会在 `validate_install_types` 那里被拒。
+    供给空着时用到 `sprocket:*` 的安装规则会在 `validate_install_types` 那里报出来。
     """
     default: dict[str, Any] = {"id": GAME_CAPABILITY_ID, "name": GAME_NAME, "supply": {}}
     warnings: list[str] = []
@@ -2074,15 +2106,15 @@ def generate_index(
             if str(package.get("kind", "modfile")) != PACK_KIND:
                 continue
             history = baseline.get(package["id"]) or []
-            gone = validate_release_history(package, history)
-            if gone:
-                raise RegistryError(gone[0])
+            for warning in validate_release_history(package, history):
+                print(f"warning: {warning}", file=sys.stderr)
             for warning in fetch_pack_manifests(package, package.get("releases") or [], history):
                 print(f"warning: {warning}", file=sys.stderr)
             for warning in merge_pack_manifests(package):
                 print(f"warning: {warning}", file=sys.stderr)
         # 清单里的规则也要过一遍类型供给检查：条目文件那一轮看不到它们。
-        validate_install_types(by_id, game.get("supply") or {})
+        for warning in validate_install_types(by_id, game.get("supply") or {}):
+            print(f"warning: {warning}", file=sys.stderr)
 
     for package in packages:
         # 每个包都走一遍：增量基线里的条目同样要补上覆盖表那份声明，外部来源的条目也一样。

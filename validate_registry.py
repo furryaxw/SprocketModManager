@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Validate registry metadata and its public GitHub source/release boundary."""
+"""Check registry metadata and its public GitHub source/release boundary.
+
+每个问题都只报出来：一个条目写坏不该拦住整站发布。只有读不动注册表本身时退出码才是 1。
+"""
 
 from __future__ import annotations
 
@@ -179,8 +182,8 @@ def validate_releases(
     """按版本核对 release：每个版本都要有匹配的资产，整合包还要读得动它的清单。
 
     某个 release 掉了资产是**错误**当且仅当已发布索引里还有它 —— 那正是"老版本被静默削掉"。
-    其余情况（从来没进过索引的 tag）只给警告，别拿历史噪音拦提交。整合包的清单是成员与落点
-    规则的来源，所以逐版读回来验：成员要已注册、区间要读得动、规则的类型要有人供给。
+    其余情况（从来没进过索引的 tag）只给警告。整合包的清单是成员与落点规则的来源，所以逐版
+    读回来验：成员要已注册、区间要读得动、规则的类型要有人供给。
     """
     rules = meta.get("release")
     if not isinstance(rules, dict) or not isinstance(rules.get("version_pattern"), str):
@@ -249,7 +252,12 @@ def validate_releases(
         errors.extend(_manifest_member_errors(meta, tag, manifest, packages, index_module))
         if manifest.install:
             try:
-                _validate_manifest_rules(index_module, meta, manifest.install, packages, game_supply)
+                errors.extend(
+                    f"release {tag}: {issue}"
+                    for issue in _validate_manifest_rules(
+                        index_module, meta, manifest.install, packages, game_supply
+                    )
+                )
             except index_module.RegistryError as exc:
                 errors.append(f"release {tag}: {exc}")
     return errors, warnings
@@ -270,7 +278,7 @@ def _manifest_member_errors(meta, tag, manifest, packages, index_module) -> list
     return errors
 
 
-def _validate_manifest_rules(index_module, meta, install, packages, game_supply) -> None:
+def _validate_manifest_rules(index_module, meta, install, packages, game_supply) -> list[str]:
     """清单里的落点规则过一遍注册表自己的校验器：形状、replace 的配套、类型有没有供给者。"""
     if "files" in install:
         index_module.validate_file_rules(install["files"])
@@ -280,7 +288,7 @@ def _validate_manifest_rules(index_module, meta, install, packages, game_supply)
         raise index_module.RegistryError("a pack must not mix install.files and install.payload")
     index_module.validate_replace_types(install, install.get("mode", "standard"))
     # 类型必须有供给者：拿一份临时条目跑注册表那套检查，供给表用的是整份注册表。
-    index_module.validate_install_types(
+    return index_module.validate_install_types(
         {**packages, meta["id"]: {**meta, "install": install}}, game_supply
     )
 
@@ -357,7 +365,7 @@ def validate_game(index_module) -> list[str]:
 
 
 def validate_providers(index_module, loader_ids) -> list[str]:
-    """The loader-package/game compatibility table: a platform fact, so a bad entry fails here
+    """The loader-package/game compatibility table: a platform fact, so a bad entry is reported here
     instead of silently narrowing what the client can filter."""
     path = index_module.PROVIDERS_FILE
     if not path.is_file():
@@ -371,7 +379,7 @@ def validate_providers(index_module, loader_ids) -> list[str]:
 
 def validate_overrides(index_module, packages) -> list[str]:
     """The compatibility override table: a broken range or a stale package id would leave some
-    release without a declaration, so it fails here. Having no entry is a normal state."""
+    release without a declaration, so it is reported here. Having no entry is a normal state."""
     path = index_module.OVERRIDE_FILE
     if not path.is_file():
         return [f"{path.name} is missing"]
@@ -385,7 +393,7 @@ def validate_overrides(index_module, packages) -> list[str]:
 
 def validate_diagnosis(index_module, package_ids) -> list[str]:
     """The diagnosis rule pack ships to clients through the index, so an entry the loader drops
-    has to fail here: a rule that never fires is worse than a rule that was never written."""
+    has to be reported here: a rule that never fires is worse than a rule that was never written."""
     path = index_module.DIAGNOSIS_FILE
     if not path.is_file():
         return [f"{path.name} is missing"]
@@ -427,10 +435,10 @@ def main() -> int:
     except Exception as exc:
         print(f"registry error: {exc}", file=sys.stderr)
         return 1
-    failures: list[str] = [
+    problems: list[str] = [
         f"game: {error}" for error in validate_game(index_module)
     ]
-    failures.extend(
+    problems.extend(
         f"providers: {error}"
         for error in validate_providers(
             index_module,
@@ -441,18 +449,16 @@ def main() -> int:
             },
         )
     )
-    failures.extend(
+    problems.extend(
         f"diagnosis: {error}"
         for error in validate_diagnosis(index_module, {package["id"] for package in packages})
     )
-    failures.extend(
+    problems.extend(
         f"override: {error}" for error in validate_overrides(index_module, packages)
     )
+    for problem in problems:
+        print(f"warning: {problem}", file=sys.stderr)
     if args.offline:
-        if failures:
-            for failure in failures:
-                print(f"registry error: {failure}", file=sys.stderr)
-            return 1
         print(f"validated {len(packages)} registry entries (offline)")
         return 0
 
@@ -472,14 +478,10 @@ def main() -> int:
         errors.extend(release_errors)
         for warning in release_warnings:
             print(f"warning: {meta['id']}: {warning}", file=sys.stderr)
-        if errors:
-            failures.extend(f"{meta['id']}: {error}" for error in errors)
-        else:
+        for error in errors:
+            print(f"warning: {meta['id']}: {error}", file=sys.stderr)
+        if not errors:
             print(f"validated {meta['id']} ({meta['repository']})")
-    if failures:
-        for failure in failures:
-            print(f"registry error: {failure}", file=sys.stderr)
-        return 1
     print(f"validated {len(packages)} registry entries")
     return 0
 
