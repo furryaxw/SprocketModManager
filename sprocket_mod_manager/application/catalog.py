@@ -9,9 +9,21 @@ from .releases import installable_release
 from .service import ModManagerService
 from ..domain.errors import DownloadError, RegistryError
 from ..domain.models import RegistryPackage, ReleaseInfo
+from ..infrastructure.github import GitHubClient
 from ..infrastructure.registry_source import DOCUMENT_NAMES
 
 LOGGER = logging.getLogger(__name__)
+
+
+def latest_release_for(github: GitHubClient, package: RegistryPackage) -> ReleaseInfo | None:
+    """这个包能装的最新一版；一版都装不了就是 None。
+
+    「能装」的判据只有一处（`installable_release`）：普通包看有没有可安装资产，整合包还认条目里
+    带来的成员与落点规则。目录读数与服务器那份读数都问这一个函数。
+    """
+    releases = github.releases(package, refresh=False)
+    usable = [item for item in releases if installable_release(package, item, github)]
+    return usable[0] if usable else None
 
 
 def load_catalog(
@@ -30,18 +42,14 @@ def load_catalog(
     def load_latest(package: RegistryPackage) -> tuple[str, ReleaseInfo | None]:
         """这个包能装的最新一版；这一包自己读不出来就当作没有版本，不牵连别的包。"""
         try:
-            releases = service.github.releases(package, refresh=False)
-            usable = [
-                release
-                for release in releases
-                if installable_release(package, release, service.github)
-            ]
+            release = latest_release_for(service.github, package)
         except (DownloadError, KeyError, RegistryError, ValueError) as exc:
             LOGGER.warning("release lookup failed package=%s error=%s", package.id, exc)
             return package.id, None
-        return package.id, usable[0] if usable else None
+        return package.id, release
 
-    packages = tuple(registry.packages)
+    # 只算目录读数会列出的那些：索引之外来的包由它们自己那份读数去算。
+    packages = tuple(registry.index_packages)
     if not packages:
         return service, {}
 

@@ -15,7 +15,12 @@ from sprocket_mod_manager.infrastructure.github import RepositoryReadme
 from sprocket_mod_manager.infrastructure.log_upload import LogUploadResult
 from sprocket_mod_manager.infrastructure.manager_paths import state_file_path
 from sprocket_mod_manager.infrastructure.state import StateStore
-from sprocket_mod_manager.domain.models import RegistryPackage, ReleaseAsset, ReleaseInfo
+from sprocket_mod_manager.domain.models import (
+    PACK_KIND,
+    RegistryPackage,
+    ReleaseAsset,
+    ReleaseInfo,
+)
 from sprocket_mod_manager.domain.registry import Registry
 from sprocket_mod_manager.domain.semver import Version
 from sprocket_mod_manager.application.service import ModManagerService
@@ -143,6 +148,41 @@ def installable_package(
     )
 
 
+def members_only_pack(package_id: str = "test.members-only") -> RegistryPackage:
+    """只带清单、挑不出可安装资产的整合包：成员写在条目里。"""
+    asset = ReleaseAsset(
+        id=1,
+        name="pack.json",
+        size=8,
+        download_url="https://github.com/test/repo/releases/download/v1.0.0/pack.json",
+    )
+    release = ReleaseInfo(
+        id=1,
+        tag="v1.0.0",
+        version=Version.parse("1.0.0"),
+        prerelease=False,
+        published_at="",
+        assets=(asset,),
+    )
+    return RegistryPackage(
+        id=package_id,
+        name="MembersOnly",
+        authors=("test",),
+        repository="test/repo",
+        license="MIT",
+        display_name={"en": package_id},
+        description={"en": "test"},
+        release={"assets": {"include": ["*.zip"], "exclude": []}},
+        dependencies=(),
+        install={},
+        category="pack",
+        tags=(),
+        kind=PACK_KIND,
+        members=({"id": "test.member", "version": "*"},),
+        releases=(release,),
+    )
+
+
 class WebGuiTests(unittest.TestCase):
     def test_open_manager_directory_uses_app_data_directory(self):
         with TemporaryDirectory() as directory:
@@ -224,6 +264,49 @@ class WebGuiTests(unittest.TestCase):
                 api.install_queue.close()
 
         self.assertTrue(packages[0]["featured"])
+
+    def test_both_readings_shape_a_package_through_one_path(self):
+        """服务器那份读数与目录读数对同一个包给出同一条条目：形状只有一处实现。"""
+        with TemporaryDirectory() as directory:
+            package = installable_package("test.shared-shape", "Shared.dll")
+            service = SimpleNamespace(
+                registry=Registry([package]),
+                github=SimpleNamespace(
+                    install_assets=lambda _package, release: release.assets,
+                    releases=lambda pkg, refresh=False: pkg.releases,
+                ),
+                installed=lambda _game_path: {},
+            )
+            api = ClientApi("0.3.2", app_dir=Path(directory))
+            try:
+                from_catalog = api._catalog_data(service, {package.id: package.releases[0]})
+                from_source = api._catalog_controller.entries_for([package], service)
+            finally:
+                api.install_queue.close()
+
+        self.assertEqual(from_catalog, from_source)
+
+    def test_a_members_only_pack_is_installable_in_both_readings(self):
+        """只带清单的整合包：成员在条目里，所以两条读数都该把它当可装。"""
+        with TemporaryDirectory() as directory:
+            package = members_only_pack()
+            service = SimpleNamespace(
+                registry=Registry([package]),
+                github=SimpleNamespace(
+                    install_assets=lambda _package, _release: (),
+                    releases=lambda pkg, refresh=False: pkg.releases,
+                ),
+                installed=lambda _game_path: {},
+            )
+            api = ClientApi("0.3.2", app_dir=Path(directory))
+            try:
+                from_catalog = api._catalog_data(service, {package.id: package.releases[0]})
+                from_source = api._catalog_controller.entries_for([package], service)
+            finally:
+                api.install_queue.close()
+
+        self.assertEqual(from_catalog, from_source)
+        self.assertIsNotNone(from_source[0]["release"], "成员在条目里，这一版就是可装的")
 
     def test_any_dll_under_mods_disables_new_install_recommendations(self):
         with TemporaryDirectory() as directory:

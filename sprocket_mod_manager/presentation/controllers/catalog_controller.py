@@ -13,7 +13,7 @@ from ..api_support import (
     release_order_key as _release_order_key,
     source_from_config as _source_from_config,
 )
-from ...application.catalog import load_catalog
+from ...application.catalog import latest_release_for, load_catalog
 from ...application.data_hub import (
     KEY_CATALOG,
     KEY_ENVIRONMENT,
@@ -154,26 +154,15 @@ class CatalogController(ApiController):
         registry = service.registry
         if registry is None:
             return []
-        environment = self._environment()
-        records = self._installed(service) if installed is None else installed
-        packages: list[dict[str, Any]] = []
         # 这份读数是索引那一份：私有包由服务器那份读数列（`KEY_SERVERS`），这里再列一遍就会重复。
-        for package in registry.index_packages:
-            issues = list(package.issues)
-            try:
-                entry = self._package_entry(service, package, latest, environment, records)
-            except Exception as exc:  # 单条读数的任何毛病都不许拖垮整页目录
-                LOGGER.warning("catalog entry failed package=%s error=%s", package.id, exc)
-                entry = self._unavailable_entry(package)
-                issues.append(f"catalog entry failed: {exc}")
-            entry["issues"] = issues
-            entry["available"] = not issues
-            packages.append(entry)
+        entries = self._entries_for_packages(
+            service, registry.index_packages, latest, installed=installed
+        )
         # 目录读数按发布版本从新到旧给：版本高低由后端一处排（`domain.semver`），界面照这份次序摆，
         # 不再自己比版本。同版本的按 id，读数才稳定。
-        packages.sort(key=lambda package: str(package["id"]))
-        packages.sort(key=_release_order_key, reverse=True)
-        return packages
+        entries.sort(key=lambda package: str(package["id"]))
+        entries.sort(key=_release_order_key, reverse=True)
+        return entries
 
     def entries_for(
             self,
@@ -182,44 +171,60 @@ class CatalogController(ApiController):
     ) -> list[dict[str, Any]]:
         """把一批**不在注册表里**的包加工成目录条目（私有服务器下发的那些）。
 
-        必须走与公开目录同一套：界面判「有没有可装的版本」看的是 `release` 与
-        `install_assets`，把服务器下发的原始条目直接塞过去，每一条都会显示「无可用版本」。
-        私有条目自带 `releases`，`github.releases` 会原地返回，所以这里不联网。
+        这一批不进目录读数，但界面判「有没有可装的版本」看的是同一套字段：把服务器下发的原始
+        条目直接塞过去，每一条都会显示「无可用版本」。私有条目自带 `releases`，
+        `github.releases` 会原地返回，所以这里不联网。
         """
         target = service or self.service
+        return self._entries_for_packages(
+            target, packages, self._latest_releases(target, packages)
+        )
+
+    def _entries_for_packages(
+            self,
+            service: ModManagerService,
+            packages: Sequence[RegistryPackage],
+            latest: dict[str, ReleaseInfo | None],
+            *,
+            installed: dict[str, dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """这批包的目录条目：目录读数与服务器那份读数共用这一处形状。
+
+        单条读数的任何毛病都不许拖垮整份读数 —— 读不出来的条目仍列出来，原因挂在 `issues` 上。
+        """
         environment = self._environment()
-        records = self._installed(target)
-        latest: dict[str, ReleaseInfo | None] = {}
-        for package in packages:
-            try:
-                releases = target.github.releases(package, refresh=False)
-                usable = [
-                    item for item in releases if target.github.install_assets(package, item)
-                ]
-            except Exception as exc:  # 一小包读不出来不牵连别的
-                LOGGER.warning("private release lookup failed package=%s error=%s", package.id, exc)
-                latest[package.id] = None
-                continue
-            latest[package.id] = usable[0] if usable else None
+        records = self._installed(service) if installed is None else installed
         entries: list[dict[str, Any]] = []
         for package in packages:
             issues = list(package.issues)
             try:
-                entry = self._package_entry(
-                    target,
-                    package,
-                    latest,
-                    environment,
-                    records,
-                )
+                entry = self._package_entry(service, package, latest, environment, records)
             except Exception as exc:  # noqa: BLE001 - 单条坏数据只让自己不可用
-                LOGGER.warning("private catalog entry failed package=%s error=%s", package.id, exc)
+                LOGGER.warning("catalog entry failed package=%s error=%s", package.id, exc)
                 entry = self._unavailable_entry(package)
                 issues.append(f"catalog entry failed: {exc}")
             entry["issues"] = issues
             entry["available"] = not issues
             entries.append(entry)
         return entries
+
+    @staticmethod
+    def _latest_releases(
+            service: ModManagerService,
+            packages: Sequence[RegistryPackage],
+    ) -> dict[str, ReleaseInfo | None]:
+        """这批包各自能装的最新一版；一小包读不出来只让它自己没有版本。
+
+        判据与目录读数同一处（`latest_release_for`）：纯成员的整合包在这里也是可装的。
+        """
+        latest: dict[str, ReleaseInfo | None] = {}
+        for package in packages:
+            try:
+                latest[package.id] = latest_release_for(service.github, package)
+            except Exception as exc:  # noqa: BLE001 - 一小包读不出来不牵连别的
+                LOGGER.warning("release lookup failed package=%s error=%s", package.id, exc)
+                latest[package.id] = None
+        return latest
 
     def _package_entry(
             self,
