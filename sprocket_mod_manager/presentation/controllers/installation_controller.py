@@ -14,6 +14,7 @@ from ...application.service import ModManagerService
 from ...domain.compatibility import CapabilityEnvironment, loader_table_decision, release_verdict
 from ...domain.errors import ModManagerError
 from ...domain.models import RegistryPackage, ResolutionPlan
+from ...domain.registry import Registry
 from ...domain.semver import Version
 from ...infrastructure.config import effective_game_path
 from ...utilities.processes import sprocket_is_running, terminate_sprocket
@@ -249,7 +250,7 @@ class InstallationController(ApiController):
         try:
             game_path = self._valid_game_path()
             service = self._current_service()
-            package = self._resolve_modloader(service, identifier)
+            package_id = service.modloader_id(str(identifier), game_path)
             with self._state_lock:
                 if not self._loader_idle.is_set():
                     raise RuntimeError("a modloader installation is already running")
@@ -258,13 +259,13 @@ class InstallationController(ApiController):
                 if not self._mutation_lock.acquire(blocking=False):
                     raise RuntimeError("another game-directory operation is already running")
             try:
-                removed, warnings = service.remove(package.id, game_path)
+                removed, warnings = service.remove(package_id, game_path)
             finally:
                 self._mutation_lock.release()
             self._environment_monitor.invalidate()
             # 卸载加载器会把它供给的目录一起搬走：四份读数都变了。
             self.data_changed(KEY_INSTALLED, KEY_ENVIRONMENT, KEY_LOADERS, KEY_QUEUE)
-            items = self._modloader_items(service, game_path, [package.id])
+            items = self._modloader_items(service, game_path, [package_id])
             return self._success(
                 modloader=items[0] if items else {},
                 removed=removed,
@@ -414,18 +415,16 @@ class InstallationController(ApiController):
     ) -> tuple[ModManagerService, Path, ChangeRequest]:
         game_path = self._valid_game_path()
         service = self._current_service()
-        if service.registry is None:
-            raise RuntimeError("catalog is not loaded")
-        return (
-            service,
-            game_path,
-            ChangeRequest(
-                package_ids=tuple(str(item) for item in package_ids),
-                choices={str(key): str(value) for key, value in (choices or {}).items()},
-                reinstall=bool(reinstall),
-                force=bool(force),
-            ),
+        request = ChangeRequest(
+            package_ids=tuple(str(item) for item in package_ids),
+            choices={str(key): str(value) for key, value in (choices or {}).items()},
+            reinstall=bool(reinstall),
+            force=bool(force),
         )
+        # 只卸载的请求读安装记录就算得出来：目录没加载也照样能卸。
+        if service.registry is None and not request.removes_only():
+            raise RuntimeError("catalog is not loaded")
+        return service, game_path, request
 
     def _change_plan(
             self,
@@ -434,7 +433,7 @@ class InstallationController(ApiController):
             request: ChangeRequest,
     ) -> dict[str, Any]:
         plan = ChangePlanner(
-            registry=service.registry,
+            registry=service.registry or Registry([]),
             github=service.github,
             environment=self.current_environment(),
             state=service.installed(game_path),
@@ -607,8 +606,7 @@ class InstallationController(ApiController):
             try:
                 game_path = self._valid_game_path()
                 service = self._current_service()
-                package = self._package(service, str(package_id))
-                removed, warnings = service.remove(package.id, game_path)
+                removed, warnings = service.remove(str(package_id), game_path)
                 # 交还加载器的树会改掉加载器清单：环境读数必须重来一次，否则左下角留着旧读数。
                 self._environment_monitor.invalidate()
                 # 卸载会连带搬走供给目录里的模组：四份读数都变了。

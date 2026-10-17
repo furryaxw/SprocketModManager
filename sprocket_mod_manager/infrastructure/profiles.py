@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from pathlib import Path
 
 from .installer import Installer
@@ -17,14 +18,28 @@ class InstallerProfiles:
 
     def __init__(self, app_dir: Path) -> None:
         self.app_dir = app_dir
+        self._installers: dict[str, Installer] = {}
+        self._installers_lock = threading.Lock()
 
     def installer_for(self, game_dir: Path) -> Installer:
+        """这台游戏目录的安装器：同一份状态文件在进程里只对应一个安装器对象。
+
+        安装器本身没有按次的状态，复用同一个对象省掉每次取用时的目录创建与旧位置迁移检查；
+        状态文件的锁本身按路径共享，所以即使这里不缓存，跨安装器的并发也仍然串行。
+        """
         resolved_game_dir = game_dir.expanduser().resolve()
-        state_dir = manager_state_dir(resolved_game_dir)
-        state_dir.mkdir(parents=True, exist_ok=True)
-        store = StateStore(state_dir / STATE_FILE_NAME)
-        self._migrate_legacy_state(resolved_game_dir, store)
-        return Installer(self.app_dir, store)
+        key = str(resolved_game_dir).casefold()
+        with self._installers_lock:
+            installer = self._installers.get(key)
+            if installer is not None:
+                return installer
+            state_dir = manager_state_dir(resolved_game_dir)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            store = StateStore(state_dir / STATE_FILE_NAME)
+            self._migrate_legacy_state(resolved_game_dir, store)
+            installer = Installer(self.app_dir, store)
+            self._installers[key] = installer
+            return installer
 
     def legacy_state_path(self, game_dir: Path) -> Path:
         """旧版位置（AppData/profiles/<游戏目录哈希>/installed.json）。"""

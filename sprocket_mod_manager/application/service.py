@@ -326,27 +326,93 @@ class ModManagerService:
             identifiers: Sequence[str],
             game_dir: Path,
     ) -> tuple[list[str], list[str]]:
-        """一次卸掉这几个包：卸载计划里「为了卸 A 连 B 一起卸」就是靠它才不会被彼此挡住。"""
+        """一次卸掉这几个包：卸载计划里「为了卸 A 连 B 一起卸」就是靠它才不会被彼此挡住。
+
+        标识符按**安装记录**解析：卸载读的就是那份记录，注册表里有没有这个包与它无关 ——
+        会话期才存在的包、已经下架的包，记录里在就卸得掉。注册表只在记录里没有时才问一次。
+        """
         LOGGER.info("remove requested identifiers=%s game_dir=%s", list(identifiers), game_dir)
-        registry = self._require_registry()
-        packages = [registry.resolve_identifier(item) for item in identifiers]
-        for package in packages:
-            if package.is_loader:
+        records = self._installed_packages(game_dir)
+        package_ids = [
+            self.resolve_installed_id(identifier, records) for identifier in identifiers
+        ]
+        for package_id in package_ids:
+            # 记录里已经有它的顶层条目：卸载按那份清单走，不需要再认领一次。
+            if package_id in records:
+                continue
+            if self._is_loader_id(package_id, records):
                 # 只在磁盘上的加载器也要能卸载：先按标识符登记它的顶层条目，搬进备份区才有依据。
-                self.claim_detected_loader(package.id, game_dir)
+                self.claim_detected_loader(package_id, game_dir)
         result = self._installer_for(game_dir).remove_many(
-            [package.id for package in packages],
+            package_ids,
             game_dir,
             modloaders=self.modloader_ids(),
             loader_supply=self.loader_supply(),
         )
         LOGGER.info(
             "remove completed packages=%s removed=%d warnings=%d",
-            [package.id for package in packages],
+            package_ids,
             len(result[0]),
             len(result[1]),
         )
         return result
+
+    def resolve_installed_id(self, identifier: str, records: Mapping[str, Any]) -> str:
+        """把一个标识符落到安装记录里的包 id。
+
+        依次匹配精确 id、大小写不敏感的 id、记录里的 `name`（界面按标签点名时走最后一条）。
+        记录里没有的才问一次注册表；两边都落不下时原样返回，由 `Installer.remove_many` 报「未安装」。
+        """
+        wanted = str(identifier).strip()
+        if wanted in records:
+            return wanted
+        folded = wanted.casefold()
+        for package_id in records:
+            if str(package_id).casefold() == folded:
+                return str(package_id)
+        for package_id, record in records.items():
+            if str(record.get("name") or "").casefold() == folded:
+                return str(package_id)
+        registry = self.registry
+        if registry is not None:
+            try:
+                return registry.resolve_identifier(wanted).id
+            except RegistryError:
+                pass
+        return wanted
+
+    def _is_loader_id(self, package_id: str, records: Mapping[str, Any]) -> bool:
+        """这个包是不是加载器：记录里的 `kind` 先说话，记录说不清的再问注册表。
+
+        基础运行时的记录带 `kind`；`loaderbridge`、`translateloader`、`patch` 的记录不带，
+        注册表认得这个包时照它认。
+        """
+        if str((records.get(package_id) or {}).get("kind") or "") == MODLOADER_KIND:
+            return True
+        package = self._registry_package(package_id)
+        return package is not None and package.is_loader
+
+    def modloader_id(self, identifier: str, game_dir: Path) -> str:
+        """要卸的那个加载器 id：先按安装记录解析标识符，再确认它是基础运行时。
+
+        记录里在就卸得掉 —— 服务器掉线、条目下架时注册表查不到它，这条路照样通；注册表认得
+        标识符时按它确认种类，与只在注册表里判定时一致。
+        """
+        records = self._installed_packages(game_dir)
+        package_id = self.resolve_installed_id(identifier, records)
+        if str((records.get(package_id) or {}).get("kind") or "") == MODLOADER_KIND:
+            return package_id
+        package = self._registry_package(package_id)
+        if package is not None and package.is_modloader:
+            return package_id
+        raise ModManagerError(f"{package_id} is not a modloader")
+
+    def _registry_package(self, package_id: str) -> RegistryPackage | None:
+        """注册表里这个 id 的条目；没加载目录、或它不在目录里时是 None。"""
+        registry = self.registry
+        if registry is None or not registry.has_package(package_id):
+            return None
+        return registry.get(package_id)
 
     def loader_supply(self) -> dict[str, tuple[str, ...]]:
         """注册表里每个加载器**供给别人**的目录（游戏目录相对路径）。
@@ -497,14 +563,15 @@ class ModManagerService:
         并标记 `disabled`，包级的 `files` 列表同步更新。
         """
         store = self._installer_for(game_dir).state_store
-        state = store.load()
-        # `.dll` 与 `.dll.disable` 是同一个逻辑文件：不搬键，只翻禁用标志
-        # （`_to_storage` 落盘时也会把键归一成规范路径）。
-        entry = state["files"].get(canonical_relative(old_relative))
-        if entry is None:
-            return False
+        with store.lock:
+            state = store.load()
+            # `.dll` 与 `.dll.disable` 是同一个逻辑文件：不搬键，只翻禁用标志
+            # （`_to_storage` 落盘时也会把键归一成规范路径）。
+            entry = state["files"].get(canonical_relative(old_relative))
+            if entry is None:
+                return False
 
-        entry["disabled"] = bool(disabled)
-        store.save(state)
+            entry["disabled"] = bool(disabled)
+            store.save(state)
         LOGGER.info("managed file toggled path=%s disabled=%s", old_relative, disabled)
         return True

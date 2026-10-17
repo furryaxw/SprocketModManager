@@ -390,6 +390,23 @@ class Installer:
             progress: ProgressCallback | None = None,
             force_conflicts: bool = False,
     ) -> list[str]:
+        """装一次：读改写这一整段握着状态文件的锁。"""
+        with self.state_store.lock:
+            return self._apply_locked(
+                prepared,
+                game_dir,
+                progress=progress,
+                force_conflicts=force_conflicts,
+            )
+
+    def _apply_locked(
+            self,
+            prepared: PreparedPlan,
+            game_dir: Path,
+            *,
+            progress: ProgressCallback | None = None,
+            force_conflicts: bool = False,
+    ) -> list[str]:
         game_dir = self.validate_game_dir(game_dir)
         LOGGER.info(
             "applying install plan root=%s packages=%d game_dir=%s force_conflicts=%s",
@@ -719,6 +736,21 @@ class Installer:
             dependencies: tuple[str, ...],
             game_dir: Path,
     ) -> bool:
+        """认领一个磁盘上已在场的包：读改写这一整段握着状态文件的锁。"""
+        with self.state_store.lock:
+            return self._adopt_locked(
+                package, release, files, assets, dependencies, game_dir
+            )
+
+    def _adopt_locked(
+            self,
+            package: RegistryPackage,
+            release: ReleaseInfo,
+            files: tuple[PreparedFile, ...],
+            assets: tuple[ReleaseAsset, ...],
+            dependencies: tuple[str, ...],
+            game_dir: Path,
+    ) -> bool:
         game_dir = self.validate_game_dir(game_dir)
         LOGGER.info("adopting existing package=%s game_dir=%s", package.id, game_dir)
         state = self.state_store.load()
@@ -786,6 +818,30 @@ class Installer:
         到的事实 —— 运行时自己的树（整树交还）和游戏根目录里的代理文件及其**当下**的摘要。
         目录与代理文件都必须确实存在且摘要一致，否则这次认领不成立。
         """
+        with self.state_store.lock:
+            return self._adopt_loader_locked(
+                package,
+                game_dir,
+                version=version,
+                directories=directories,
+                payload_files=payload_files,
+                dependencies=dependencies,
+                tag=tag,
+                release_id=release_id,
+            )
+
+    def _adopt_loader_locked(
+            self,
+            package: RegistryPackage,
+            game_dir: Path,
+            *,
+            version: str,
+            directories: tuple[str, ...],
+            payload_files: tuple[tuple[str, str], ...],
+            dependencies: tuple[str, ...] = (),
+            tag: str = "",
+            release_id: int | None = None,
+    ) -> bool:
         game_dir = self.validate_game_dir(game_dir)
         LOGGER.info("adopting existing loader package=%s game_dir=%s", package.id, game_dir)
         state = self.state_store.load()
@@ -919,8 +975,24 @@ class Installer:
         """一次卸掉这几个包。
 
         一起卸才不会被彼此挡住：卸载计划里「为了卸 A 而连 B 一起卸」正是这个形状，逐个卸的话
-        B 会因为「A 还需要它」被拒。
+        B 会因为「A 还需要它」被拒。读改写这一整段握着状态文件的锁。
         """
+        with self.state_store.lock:
+            return self._remove_many_locked(
+                package_ids,
+                game_dir,
+                modloaders=modloaders,
+                loader_supply=loader_supply,
+            )
+
+    def _remove_many_locked(
+            self,
+            package_ids: Iterable[str],
+            game_dir: Path,
+            *,
+            modloaders: Iterable[str] = (),
+            loader_supply: Mapping[str, Iterable[str]] | None = None,
+    ) -> tuple[list[str], list[str]]:
         removing_ids = [str(item) for item in package_ids]
         game_dir = self.validate_game_dir(game_dir)
         LOGGER.info("removing packages=%s game_dir=%s", removing_ids, game_dir)
@@ -1074,8 +1146,15 @@ class Installer:
         基础运行时没有逐文件记录，在场与否按它声明的目录判：目录一个都不在了才算它被移除。
         `modloaders` 给出调用方已知的加载器包 id，用于把不带 `kind` 的既有记录一并归一。
 
-        返回被丢弃的键（文件路径 + 包 id），供测试与诊断使用。
+        返回被丢弃的键（文件路径 + 包 id），供测试与诊断使用。对账也会落盘，所以读改写这一整段
+        握着状态文件的锁。
         """
+        with self.state_store.lock:
+            return self._reconcile_locked(game_dir, modloaders=modloaders)
+
+    def _reconcile_locked(
+            self, game_dir: Path, *, modloaders: Iterable[str] = ()
+    ) -> list[str]:
         root = Path(game_dir).expanduser()
         if not root.is_dir():
             return []

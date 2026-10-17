@@ -45,6 +45,13 @@ class ChangeRequest:
     reinstall: bool = False
     force: bool = False
 
+    def removes_only(self) -> bool:
+        """这批操作全是卸载：只读安装记录就算得出来，不需要注册表。"""
+        named = [str(item) for item in self.package_ids]
+        return bool(named) and all(
+            self.choices.get(item) == CHOICE_REMOVE for item in named
+        )
+
 
 class ChangePlanner:
     def __init__(
@@ -67,7 +74,11 @@ class ChangePlanner:
     def plan(self, request: ChangeRequest) -> dict[str, Any]:
         ids = [self._canonical(item) for item in request.package_ids]
         ids = list(dict.fromkeys(item for item in ids if item))
-        removed = {item for item in ids if request.choices.get(item) == CHOICE_REMOVE}
+        # 只有装着的才谈得上卸载：记录里没有的目标不进卸载闭包（闭包按记录算）。
+        removed = {
+            item for item in ids
+            if request.choices.get(item) == CHOICE_REMOVE and item in self.state
+        }
         skipped = {item for item in ids if request.choices.get(item) == CHOICE_SKIP}
         roots: dict[str, str] = {}
         for item in ids:
@@ -297,7 +308,7 @@ class ChangePlanner:
         versions = self._version_list(package) if package is not None else []
         line: dict[str, Any] = {
             "id": package_id,
-            "name": package.name if package is not None else package_id,
+            "name": package.name if package is not None else str(info.get("name") or package_id),
             "display_name": dict(package.display_name) if package is not None else {},
             "installed_version": installed_version,
             "named": named,
@@ -314,17 +325,17 @@ class ChangePlanner:
             "remove_with": [],
             "versions": versions,
         }
+        if removed:
+            line["action"] = ACTION_REMOVE
+            line["version"] = installed_version
+            line["remove_with"] = [item for item in remove_with if item != package_id]
+            return line
         if package is None:
             line["problems"].append({
                 "kind": "no-candidate",
                 "text": f"{package_id} is not in the registry",
                 "others": [],
             })
-            return line
-        if removed:
-            line["action"] = ACTION_REMOVE
-            line["version"] = installed_version
-            line["remove_with"] = [item for item in remove_with if item != package_id]
             return line
         if skipped:
             return line

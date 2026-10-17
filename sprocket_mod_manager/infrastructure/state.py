@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
@@ -282,27 +283,52 @@ def _to_storage(view: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_STATE_LOCKS: dict[str, threading.RLock] = {}
+_STATE_LOCKS_GUARD = threading.Lock()
+
+
+def state_lock(path: Path) -> threading.RLock:
+    """这份状态文件的锁：同一个路径在进程里只有一把。
+
+    读改写整段要互斥 —— 安装、卸载、认领，以及「刷新读数」时的对账都会读写它；而 Windows 上
+    并发读句柄会让原子替换直接失败（`os.replace` 要求目标没有不带 share-delete 的句柄）。
+    按**路径**发锁而不是按对象：每次取安装器都会新建一个 `StateStore`，按对象发锁等于没有锁。
+    """
+    key = str(Path(path).expanduser().resolve()).casefold()
+    with _STATE_LOCKS_GUARD:
+        lock = _STATE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _STATE_LOCKS[key] = lock
+        return lock
+
+
 class StateStore:
     """`<game>/SprocketModManager/installed.json`（package 主导）。"""
 
     def __init__(self, path: Path):
         self.path = path
+        self.lock = state_lock(path)
 
     def load(self, *, modloaders: Iterable[str] = ()) -> dict[str, Any]:
-        if not self.path.is_file():
-            return deepcopy(EMPTY_STATE)
-        try:
-            state = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise InstallError(f"cannot read installed state: {exc}") from exc
-        if not isinstance(state, dict):
-            raise InstallError("installed state is malformed")
-        return _to_view(state, modloaders=modloaders)
+        with self.lock:
+            if not self.path.is_file():
+                return deepcopy(EMPTY_STATE)
+            try:
+                state = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise InstallError(f"cannot read installed state: {exc}") from exc
+            if not isinstance(state, dict):
+                raise InstallError("installed state is malformed")
+            return _to_view(state, modloaders=modloaders)
 
     def save(self, state: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        storage = _to_storage(deepcopy(state))
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        data = (json.dumps(storage, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
-        temporary.write_bytes(data)
-        os.replace(temporary, self.path)
+        with self.lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            storage = _to_storage(deepcopy(state))
+            temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+            data = (
+                json.dumps(storage, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            temporary.write_bytes(data)
+            os.replace(temporary, self.path)
