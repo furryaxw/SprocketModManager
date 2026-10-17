@@ -26,7 +26,7 @@ def normalize_server_url(value: object) -> str:
 
 @dataclass(frozen=True)
 class DeveloperServerInfo:
-    """`GET /v1/server-info` 的身份读数。
+    """`GET /server-info` 的身份读数。
 
     `signing_identity` 是服务器自报的 Ed25519 公钥；它与本机记下的指纹是否一致、以及
     `signing_rotation` 是否能证明换钥，由客户端在读取时判定，不在这里解释。

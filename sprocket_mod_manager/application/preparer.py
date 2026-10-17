@@ -4,7 +4,7 @@ import hashlib
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from ..domain.errors import DownloadError, InstallError
 from ..domain.models import (
@@ -27,7 +27,7 @@ from ..utilities.package_paths import (
     validate_relative_path,
     validate_supply_target,
 )
-from .private_assets import PrivateAssetSource
+from .asset_sources import AssetSource, PublicAssetSource
 
 # 游戏自己供给的位置在目录表里的归属名：它不是包，冲突报错时只能这么称呼它。
 GAME_SUPPLY_OWNER = "the game"
@@ -54,12 +54,13 @@ class PlanPreparer:
             app_dir: Path,
             http: HttpClient,
             github: GitHubClient,
-            private_assets: PrivateAssetSource | None = None,
+            asset_sources: Sequence[AssetSource] = (),
     ):
         self.app_dir = app_dir
         self.http = http
         self.github = github
-        self.private_assets = private_assets
+        self.asset_sources = tuple(asset_sources)
+        self._public_assets = PublicAssetSource(http)
 
     def retrieve(
             self,
@@ -68,11 +69,12 @@ class PlanPreparer:
             asset: ReleaseAsset,
             destination: Path,
     ) -> None:
-        """取回一个资产：私有包走它自己的下载口（要带服务器会话），其余走公开的 HTTP 客户端。"""
-        if self.private_assets is not None and self.private_assets.handles(package):
-            self.private_assets.download(package, release, asset, destination)
-            return
-        self.http.download(asset, destination, progress=None, hosts=set(package.asset_hosts()))
+        """取回一个资产：先问这批来源谁认领这个包，谁都不认领就走公开来源。"""
+        for source in self.asset_sources:
+            if source.handles(package):
+                source.download(package, release, asset, destination)
+                return
+        self._public_assets.download(package, release, asset, destination)
 
     @staticmethod
     def install_directories(

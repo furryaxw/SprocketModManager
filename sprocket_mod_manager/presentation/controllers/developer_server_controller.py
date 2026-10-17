@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, Mapping
 
 from .base import ApiController
 from ...application.data_hub import KEY_SERVERS
@@ -197,11 +196,12 @@ class DeveloperServerController(ApiController):
             source.remember(server_id, ())
             if identity:
                 try:
-                    entries = self._server_packages(entry)
+                    entries, entitlements = self._server_reading(entry)
                     source.learn(server_id, entries)
-                    catalog, learned = self._catalog_entries(entries, str(entry.get("url", "")))
+                    catalog, learned = self._catalog_entries(entries)
                     source.remember(server_id, learned)
-                    data["status"] = "active"
+                    data["entitlements"] = entitlements
+                    data["status"] = self._entitlement_status(entitlements)
                     data["packages"] = [
                         {
                             **item,
@@ -213,11 +213,13 @@ class DeveloperServerController(ApiController):
                         for item in catalog
                     ]
                 except DeveloperServerError as exc:
-                    data["status"] = (
-                        "reauth_required" if exc.code == "invalid_session" else "offline"
-                    )
+                    data["status"] = self._failed_status(exc)
+                    data["error_code"] = exc.code
                     data["error"] = str(exc)
-                except (OSError, ValueError, TypeError) as exc:
+                except (ValueError, TypeError) as exc:
+                    data["status"] = "error"
+                    data["error"] = str(exc)
+                except OSError as exc:
                     data["status"] = "offline"
                     data["error"] = str(exc)
             servers.append(data)
@@ -370,25 +372,6 @@ class DeveloperServerController(ApiController):
             return self._success(server_id=target, team_id=result.get("team_id", ""))
         except (OSError, ValueError, TypeError, DeveloperServerError) as exc:
             return self._failure(exc, code=self._auth_code(exc, "developer_server_activation_failed"))
-
-    def accept_developer_server_invitation(self, server_id: str, token: str) -> dict[str, Any]:
-        """用邀请码加入服务器上的某个 Team；邀请码本身就是凭据。"""
-        target = str(server_id).strip()
-        entry = next(
-            (item for item in self._developer_server_entries() if item.get("server_id") == target),
-            None,
-        )
-        if entry is None:
-            return self._failure(
-                ValueError(f"unknown developer server: {target}"),
-                code="developer_server_invitation_failed",
-            )
-        try:
-            client = self._connected_client(entry)
-            result = client.accept_invitation(str(token).strip())
-            return self._success(server_id=target, team_id=result.get("team_id", ""))
-        except (OSError, ValueError, TypeError, DeveloperServerError) as exc:
-            return self._failure(exc, code=self._auth_code(exc, "developer_server_invitation_failed"))
 
     # ---- 内部 -------------------------------------------------------------
 
@@ -565,30 +548,13 @@ class DeveloperServerController(ApiController):
             connected.append(server_id)
         return connected
 
-    @staticmethod
-    def _with_private_source(item: dict[str, Any], server_url: str) -> dict[str, Any]:
-        """给私有条目补上它的来源声明与资产规则。
-
-        服务端把抓取规则那条 `release` 剪掉了。没有来源声明，解析下载地址会走「必须落在 github.com」
-        那条分支（条目带 `repository` 时），或者干脆不校验（不带时）；补上外来源与主机，
-        白名单才对得上，下载那一步的主机判定也才有依据。没有资产规则，挑可安装资产的那几处
-        （解析、版本选择、安装计划）一个资产都挑不出来：服务器下发的就是能装的那几个，规则照收。
-        """
-        host = str(urlparse(server_url).hostname or "").strip()
-        if not host:
-            return item
-        release = dict(item.get("release") or {})
-        release["source"] = {"type": "external", "hosts": [host]}
-        release.setdefault("assets", {"include": ["*"], "exclude": []})
-        return {**item, "release": release}
-
     def _catalog_entries(
-            self, entries: list[dict[str, Any]], server_url: str = ""
+            self, entries: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[RegistryPackage]]:
         """把服务器下发的条目加工成**目录形状**，并交回解析出来的包。
 
-        界面判「有没有可装的版本」看的是 `release` 与 `install_assets`；把条目原样递过去，
-        每一条都会显示「无可用版本」——原始条目只有 `releases`。
+        条目就是公开 v3 条目（`release` 与 `release.source` 由服务器自己写），所以这里只做解析
+        与形状加工：界面判「有没有可装的版本」看的是 `release` 与 `install_assets`。
 
         解析不了的条目**也交出去**，带上原因：静默丢掉会让界面显示成「这台服务器上没有包」，
         而事实是「有包，但它读不出来」。这两种情况要能分辨。交回的包只有解析成功的那些：
@@ -598,9 +564,7 @@ class DeveloperServerController(ApiController):
         unreadable: list[tuple[dict[str, Any], str]] = []
         for item in entries:
             try:
-                packages.append(
-                    RegistryPackage.from_dict(self._with_private_source(item, server_url))
-                )
+                packages.append(RegistryPackage.from_dict(item))
             except Exception as exc:  # noqa: BLE001 - 一条坏条目只影响它自己
                 LOGGER.warning(
                     "private entry is not a package id=%s error=%s", item.get("id"), exc
@@ -638,13 +602,16 @@ class DeveloperServerController(ApiController):
             "available": False,
         }
 
-    def _server_packages(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
-        """取这台服务器的私有包；存着的会话过期时换一份新的再试一次。
+    def _server_reading(
+            self, entry: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """这一趟的读数：这台服务器下发的包，以及账号在它上面的授权。
 
         会话在服务端会过期，而 GitHub 令牌通常还在 —— 能自愈就别让用户去手动重连。
         """
         try:
-            return self._connected_client(entry).packages()
+            client = self._connected_client(entry)
+            return client.packages(), client.entitlements()
         except DeveloperServerError as exc:
             if exc.code != "invalid_session":
                 raise
@@ -653,10 +620,37 @@ class DeveloperServerController(ApiController):
                 entry.get("server_id"),
             )
             try:
-                return self._connected_client(entry, reauth=True).packages()
+                client = self._connected_client(entry, reauth=True)
+                return client.packages(), client.entitlements()
             except (OSError, ValueError, TypeError):
                 # 换不了新的（GitHub 令牌也没了）：如实说这条会话要重新登录，而不是笼统的离线。
                 raise exc
+
+    @staticmethod
+    def _entitlement_status(entitlements: Mapping[str, Any]) -> str:
+        """有 active 的授权就是正常；一个 active 都没有时照服务器给的那条状态说。"""
+        grants = [
+            grant for grant in entitlements.get("grants", ()) if isinstance(grant, dict)
+        ]
+        if any(grant.get("status") == "active" for grant in grants):
+            return "active"
+        return next(
+            (
+                str(grant.get("status"))
+                for grant in grants
+                if grant.get("status") in {"expired", "revoked", "suspended"}
+            ),
+            "active",
+        )
+
+    @staticmethod
+    def _failed_status(exc: DeveloperServerError) -> str:
+        """读不出包时这一行是什么状态：连不上、会话要重来、还是服务器答了个错。"""
+        if exc.unreachable:
+            return "offline"
+        if exc.code == "invalid_session":
+            return "reauth_required"
+        return "error"
 
     def _persist_rotation(self, entry: dict[str, Any], client: DeveloperServerClient) -> None:
         """服务器换了签名钥且声明成立：把新的身份与指纹落到配置里。"""

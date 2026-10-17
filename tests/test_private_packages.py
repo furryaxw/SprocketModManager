@@ -40,7 +40,7 @@ def package(package_id: str) -> RegistryPackage:
 
 
 def release() -> ReleaseInfo:
-    asset = ReleaseAsset(1, "mod.zip", 3, "http://127.0.0.1:8787/v1/packages/a.b/download")
+    asset = ReleaseAsset(1, "mod.zip", 3, "http://127.0.0.1:8787/packages/a.b/download")
     return ReleaseInfo(1, "v1.0.0", Version.parse("1.0.0"), False, "", (asset,))
 
 

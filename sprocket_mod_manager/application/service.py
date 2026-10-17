@@ -9,12 +9,18 @@ from .identifiers import detected_capabilities, runtime_states
 from .integrity import annotate, published_hashes
 from .integrity import BROKEN_STATUSES
 from .preparer import PlanPreparer, satisfied_versions
-from .private_assets import PrivateAssetSource
+from .asset_sources import AssetSource
 from .solver import DependencySolver
 from ..domain.compatibility import CapabilityEnvironment
 from ..domain.errors import ModManagerError, RegistryError, ScanError
 from ..infrastructure.mod_toggle import canonical_relative
-from ..domain.models import PreparedPlan, ProgressCallback, RegistryPackage, ResolutionPlan
+from ..domain.models import (
+    MODLOADER_KIND,
+    PreparedPlan,
+    ProgressCallback,
+    RegistryPackage,
+    ResolutionPlan,
+)
 from ..domain.registry import Registry
 from ..infrastructure.defaults import default_app_dir
 from ..infrastructure.dll_metadata import cached_sha256, configure_metadata_backend
@@ -48,8 +54,8 @@ class ModManagerService:
         self.registry: Registry | None = None
         # 开发者服务器下发的包：不在索引里，但和索引里的包一样要能按 id 解析、安装、卸载。
         self.private_packages: tuple[RegistryPackage, ...] = ()
-        # 私有包载荷的下载口：持有开发者服务器会话的一方设置它；None 表示这台机器没有私有来源。
-        self.private_assets: PrivateAssetSource | None = None
+        # 包载荷的下载口：持有开发者服务器会话的一方设置它；空表示这台机器只有公开来源。
+        self.asset_sources: tuple[AssetSource, ...] = ()
         # 求解时用的能力表（界面每拿到一次 service 就刷新它）：给了就淘汰跑不了这个环境的版本；
         # None 表示不按能力过滤（CLI 之类没有环境概念的调用方）。
         self.environment: CapabilityEnvironment | None = None
@@ -200,7 +206,7 @@ class ModManagerService:
             progress: ProgressCallback | None = None,
             satisfied: Mapping[str, str] | None = None,
     ) -> PreparedPlan:
-        return PlanPreparer(self.app_dir, self.http, self.github, self.private_assets).prepare(
+        return PlanPreparer(self.app_dir, self.http, self.github, self.asset_sources).prepare(
             plan,
             progress,
             satisfied=satisfied,

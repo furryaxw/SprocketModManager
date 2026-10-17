@@ -28,7 +28,7 @@ class Registry:
             diagnosis: dict[str, Any] | None = None,
             game_supply: Mapping[str, str] | None = None,
             *,
-            server_packages: Iterable[RegistryPackage] = (),
+            sourced_packages: Iterable[RegistryPackage] = (),
     ):
         self.game_id = str(game_id)
         self.game_name = str(game_name)
@@ -39,10 +39,10 @@ class Registry:
         }
         self.provider_table = providers_table(provider_table)
         self.diagnosis = diagnosis_pack(diagnosis)
-        # 索引带来的那些包。私有包是整批换的（见 `merged_with`），所以这份底子要留着。
+        # 索引带来的那些包：`sourced_packages` 是整批换的（见 `merged_with`），所以这份底子要留着。
         self._index_packages = tuple(packages)
-        # 开发者服务器下发的包：二进制来自那台服务器而不是各自的 GitHub Releases。
-        sourced = tuple(server_packages)
+        # 索引之外的那些包：二进制由分发它们的来源自己给，而不是各自的 GitHub Releases。
+        sourced = tuple(sourced_packages)
         combined = [*packages, *sourced]
         first_sourced = len(packages)
 
@@ -52,7 +52,7 @@ class Registry:
         clean_indexes: list[int] = []
         for index, package in enumerate(combined):
             problems[index].extend(
-                self._source_problems(package, server_sourced=index >= first_sourced)
+                self._source_problems(package, sourced=index >= first_sourced)
                 + self._supply_problems(package)
             )
             if not problems[index]:
@@ -93,13 +93,13 @@ class Registry:
         }
 
     @staticmethod
-    def _source_problems(package: RegistryPackage, *, server_sourced: bool = False) -> list[str]:
+    def _source_problems(package: RegistryPackage, *, sourced: bool = False) -> list[str]:
         """这个包的二进制来源是否自洽。
 
-        外部来源没有可以查询的 API，所以版本与资产只能由注册表条目自己给出；主机白名单
-        保证下载地址不会漂到任意站点。基础运行时之外的包只允许从它自己的 GitHub Releases 出货，
-        唯一的例外是开发者服务器下发的包（`server_sourced`）：那台服务器的条目本来就不在 GitHub 上，
-        二进制由它自己分发，客户端按指纹确认过身份、下载时再核对它声明的下行主机。
+        外部来源没有可以查询的 API，所以版本与资产只能由条目自己给出；主机白名单保证下载地址
+        不会漂到任意站点。基础运行时之外的包只允许从它自己的 GitHub Releases 出货，唯一的例外
+        是索引之外来的包（`sourced`）：它们本来就不在 GitHub 上，二进制由分发它们的来源自己给，
+        下载时要先核对那一处声明的主机。
         """
         problems: list[str] = []
         source = package.source
@@ -113,7 +113,7 @@ class Registry:
         if source_type != "external":
             problems.append(f"unknown release source type: {source_type}")
             return problems
-        if not package.is_modloader and not server_sourced:
+        if not package.is_modloader and not sourced:
             problems.append("only a modloader may declare an external release source")
         if not package.asset_hosts():
             problems.append("external release source needs at least one allowed host")
@@ -299,26 +299,26 @@ class Registry:
 
     @property
     def index_packages(self) -> tuple[RegistryPackage, ...]:
-        """索引带来的那些包；开发者服务器下发的那些不在其中。
+        """索引带来的那些包；`sourced_packages` 那些不在其中。
 
-        只列一个来源的读数要这一份：私有包有服务器那份读数（`KEY_SERVERS`），跟着 `packages`
-        一起列出来，同一个模组就会在目录里出现两次。
+        只列一个来源的读数要这一份：索引之外来的包有它自己那份读数，跟着 `packages` 一起列出来，
+        同一个模组就会在目录里出现两次。
         """
         return self.packages[: len(self._index_packages)]
 
     def merged_with(self, packages: Iterable[RegistryPackage]) -> Registry:
-        """换成这批**开发者服务器下发的**包：结果里索引那些包照旧，只有这批是新的。
+        """换成这批**索引之外**的包：结果里索引那些包照旧，只有这批是新的。
 
         那批包不在索引里，界面却把它们和索引一起列出来；解析、安装、卸载因此也要能按 id 找到
-        它们，否则私有包永远停在「看得见、装不了」。每次都给全量 —— 一台服务器掉线，它上一轮
-        那些包就该跟着消失。供给表与诊断规则包是索引的事实，原样带过去。
+        它们，否则它们永远停在「看得见、装不了」。每次都给全量 —— 一个来源掉线，它上一轮那些包
+        就该跟着消失。供给表与诊断规则包是索引的事实，原样带过去。
         """
         merged = Registry(
             list(self._index_packages),
             game_id=self.game_id,
             game_name=self.game_name,
             game_supply=self.game_supply,
-            server_packages=tuple(packages),
+            sourced_packages=tuple(packages),
         )
         merged.provider_table = self.provider_table
         merged.diagnosis = self.diagnosis

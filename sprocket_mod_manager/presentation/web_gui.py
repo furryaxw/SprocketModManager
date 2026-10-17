@@ -379,7 +379,7 @@ class ClientApi:
         source = getattr(self, "_private_packages", None)
         if source is None or service is None:
             return
-        service.private_assets = source
+        service.asset_sources = (source,)
         service.register_private_packages(source.packages())
 
     def bind_window(self, window: Any) -> None:
@@ -558,9 +558,6 @@ class ClientApi:
 
     def activate_developer_server(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._developer_server_controller.activate_developer_server(*args, **kwargs)
-
-    def accept_developer_server_invitation(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._developer_server_controller.accept_developer_server_invitation(*args, **kwargs)
 
     def start_github_device_login(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._developer_server_controller.start_github_device_login(*args, **kwargs)

@@ -102,7 +102,7 @@ def private_release() -> ReleaseInfo:
         1,
         "mod.zip",
         len(ARCHIVE),
-        f"{SERVER_URL}/v1/packages/{MOD}/download",
+        f"{SERVER_URL}/packages/{MOD}/download",
         digest=f"sha256:{ARCHIVE_SHA256}",
     )
     return ReleaseInfo(1, "v1.0.0", Version.parse("1.0.0"), False, "", (asset,))
@@ -158,7 +158,8 @@ class PrivatePrepareTests(unittest.TestCase):
         self._temporary.cleanup()
 
     def prepare(self, private: FakePrivateAssets | None):
-        preparer = PlanPreparer(self.root / "app", self.http, FakeGitHub(), private)
+        sources = (private,) if private is not None else ()
+        preparer = PlanPreparer(self.root / "app", self.http, FakeGitHub(), sources)
         prepared = preparer.prepare(self.plan)
         self.addCleanup(PlanPreparer.discard, prepared)
         return prepared

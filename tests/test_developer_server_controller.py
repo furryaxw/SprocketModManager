@@ -29,15 +29,13 @@ from sprocket_mod_manager.presentation.web_gui import ClientApi
 SERVER_ID = "test-server"
 SERVER_NAME = "Test server"
 FINGERPRINT = "sha256:" + "ab" * 32
-# 一条服务器下发的私有条目：**只有 `releases`，没有 `release`**（抓取规则被剪掉了）。
+# 一条服务器下发的私有条目：公共 v3 条目，`release.source` 由服务器自己写。
 PRIVATE_ENTRY = {
     "schema_version": 3,
     "id": "team1.private-mod",
     "name": "PrivateMod",
     "authors": ["team1"],
     "license": "Private distribution",
-    # 真实私有包是**带 repository** 的：下载地址的校验会走「必须落在 github.com」那条，
-    # 于是私有服务端的地址被判非法。fixture 里也写上一个，免得测出假绿。
     "repository": "team1/private-mod",
     "display_name": {"en": "Private Mod", "zh": "私有模组"},
     "description": {"en": "private", "zh": "私有"},
@@ -46,6 +44,10 @@ PRIVATE_ENTRY = {
     "category": "other",
     "tags": [],
     "install": {"files": [{"match": "**", "type": "melonloader:mod", "layout": "tree"}]},
+    "release": {
+        "source": {"type": "external", "hosts": ["mods.example.invalid"]},
+        "assets": {"include": ["*"], "exclude": []},
+    },
     "releases": [
         {
             "id": 1,
@@ -55,7 +57,7 @@ PRIVATE_ENTRY = {
                     "id": 11,
                     "name": "mod.zip",
                     "size": 10,
-                    "download_url": "https://mods.example.invalid/v1/packages/team1.private-mod/download",
+                    "download_url": "https://mods.example.invalid/packages/team1.private-mod/download",
                     "digest": "sha256:" + "ab" * 32,
                 }
             ],
@@ -76,7 +78,7 @@ def server_info(*, signed: bool = True) -> DeveloperServerInfo:
         server_id=SERVER_ID,
         name=SERVER_NAME,
         operator="",
-        protocol_version=2,
+        protocol_version=3,
         signing_identity=dict(IDENTITY) if signed else None,
     )
 
@@ -87,6 +89,8 @@ class FakeServerClient:
 
     expired_sessions: set[str] = set()
     packages_result: list[dict] = []
+    # 授权读数：默认一份永久授权，所以「有权限」是这些用例的常态。
+    grants: list[dict] = [{"status": "active", "expires_at": None}]
     # GitHub 判这张访问令牌无效（401）；`github_token_rejected`。
     rejected_tokens: set[str] = set()
     # GitHub 限流或 scope 不足（403）；`github_token_forbidden`。
@@ -123,10 +127,14 @@ class FakeServerClient:
             )
         return [dict(item) for item in type(self).packages_result]
 
-    def redeem(self, key, github_user_id, **kwargs):
-        return {"team_id": "team1"}
+    def entitlements(self):
+        if self.session_token in self.expired_sessions:
+            raise DeveloperServerError(
+                "session is invalid or expired", status=401, code="invalid_session"
+            )
+        return {"grants": [dict(item) for item in type(self).grants]}
 
-    def accept_invitation(self, token, **kwargs):
+    def redeem(self, key, github_user_id, **kwargs):
         return {"team_id": "team1"}
 
 
@@ -180,6 +188,7 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.addCleanup(self._temporary.cleanup)
         FakeServerClient.expired_sessions = set()
         FakeServerClient.packages_result = []
+        FakeServerClient.grants = [{"status": "active", "expires_at": None}]
         FakeServerClient.rejected_tokens = set()
         FakeServerClient.forbidden_tokens = set()
         self._patches = [
@@ -271,6 +280,88 @@ class DeveloperServerControllerTests(unittest.TestCase):
         self.assertEqual(len(payload["servers"]), 1)
         self.assertEqual(payload["servers"][0]["status"], "offline")
         self.assertEqual(payload["packages"], [])
+
+    def test_the_payload_carries_the_entitlement_reading(self) -> None:
+        """授权读数是那一行「永久 / 有效至 …」的来源，必须原样带给界面。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        FakeServerClient.grants = [{"status": "active", "expires_at": 1790000000}]
+
+        payload = self.api.servers_payload()
+
+        server = payload["servers"][0]
+        self.assertEqual(server["entitlements"]["grants"], FakeServerClient.grants)
+        self.assertEqual(server["status"], "active")
+
+    def test_an_entitlement_that_is_not_active_shows_as_that_state(self) -> None:
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        FakeServerClient.grants = [{"status": "expired", "expires_at": 1780000000}]
+
+        payload = self.api.servers_payload()
+
+        self.assertEqual(payload["servers"][0]["status"], "expired")
+
+    def test_a_loopback_dev_server_may_ship_plain_http_assets(self) -> None:
+        """本机开发服务器是明文 http：回环地址下的资产地址照收。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+        self.api.credentials.save("github-access-token", "github-token")
+        FakeServerClient.packages_result = [
+            {
+                **PRIVATE_ENTRY,
+                "release": {"source": {"type": "external", "hosts": ["127.0.0.1"]}},
+                "releases": [
+                    {
+                        "id": 1,
+                        "version": "1.0.0",
+                        "assets": [
+                            {
+                                "id": 11,
+                                "name": "mod.zip",
+                                "size": 10,
+                                "download_url": "http://127.0.0.1:8787/packages/team1.private-mod/download",
+                                "digest": "sha256:" + "ab" * 32,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        payload = self.api.servers_payload()
+
+        package = payload["packages"][0]
+        self.assertTrue(package["available"], package["issues"])
+
+    def test_a_server_that_answers_with_a_code_is_not_called_offline(self) -> None:
+        """连不上才是离线；服务器答了错码要照它说的报，并把码留给界面翻文案。"""
+        self.api.add_developer_server("https://mods.example.invalid", FINGERPRINT)
+        self.api.config["github_user_id"] = "12345"
+        self.api.config_store.save(self.api.config)
+
+        class Refused(FakeServerClient):
+            def packages(self):
+                raise DeveloperServerError(
+                    "the server did not grant access",
+                    status=403,
+                    code="developer_server_permission_denied",
+                )
+
+        with patch.object(
+            module.DeveloperServerController, "_connected_client",
+            lambda self, entry, reauth=False: Refused("https://mods.example.invalid"),
+        ):
+            payload = self.api.servers_payload()
+
+        server = payload["servers"][0]
+        self.assertEqual(server["status"], "error")
+        self.assertEqual(server["error_code"], "developer_server_permission_denied")
 
     # ---- refresh ----------------------------------------------------------
 

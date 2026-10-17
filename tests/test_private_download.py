@@ -16,9 +16,9 @@ from sprocket_mod_manager.infrastructure.private_servers import (
 BASE = "http://127.0.0.1:8787"
 PACKAGE = "team1.example-mod"
 VERSION = "1.0.0"
-DOWNLOAD_URL = f"{BASE}/v1/packages/{PACKAGE}/download?version={VERSION}"
-# 条目里的 `download_url`：协议端点，不带版本（两侧的跨实现 fixture 都是这个形状）。
-ENTRY_URL = f"{BASE}/v1/packages/{PACKAGE}/download"
+DOWNLOAD_URL = f"{BASE}/packages/{PACKAGE}/download?version={VERSION}"
+# 条目里的 `download_url`：协议端点，不带版本（文档级签名的 fixture 就是这个形状）。
+ENTRY_URL = f"{BASE}/packages/{PACKAGE}/download"
 
 
 class _Response:
@@ -155,6 +155,14 @@ class PrivateDownloadTests(unittest.TestCase):
             instance._origin_allowed("http://cdn.example.invalid/x"),
             "裸主机名只认 https：否则中间人可以把它降级成明文",
         )
+
+    def test_a_bare_loopback_host_may_use_plain_http(self) -> None:
+        """本机开发服务器是明文 http：回环地址按裸主机名声明时照收。"""
+        instance = client(origins=("127.0.0.1", "localhost"))
+
+        self.assertTrue(instance._origin_allowed("http://127.0.0.1:9000/x"))
+        self.assertTrue(instance._origin_allowed("http://localhost:9000/x"))
+        self.assertFalse(instance._origin_allowed("http://10.0.0.5:9000/x"))
 
     def test_a_full_origin_matches_scheme_host_and_port(self) -> None:
         instance = client(origins=("http://127.0.0.1:9000",))

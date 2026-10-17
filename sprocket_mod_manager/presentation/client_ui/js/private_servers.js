@@ -14,14 +14,8 @@ function renderDeveloperServers() {
         name.textContent = server.name;
         const detail = document.createElement("span");
         const count = server.packages?.length ? ` · ${server.packages.length} ${tr("privateLabel")}` : "";
-        // Team 名称来自 `GET /v1/teams`；一个 Team 都没有是独立状态，不能显示成"没有包"。
-        const teamNames = (server.teams || [])
-            .map((team) => team.name || team.team_id)
-            .filter(Boolean);
-        const teamsText = server.needs_team
-            ? ` · ${tr("noTeamAccess")}`
-            : teamNames.length ? ` · ${tr("privateTeams", {teams: teamNames.join(", ")})}` : "";
-        const activeGrants = (server.entitlements?.grants || []).filter((grant) => grant.status === "active");
+        const grants = server.entitlements?.grants || [];
+        const activeGrants = grants.filter((grant) => grant.status === "active");
         let access = "";
         if (server.status === "offline") access = ` · ${tr("serverOffline")}`;
         else if (server.status === "reauth_required") access = ` · ${tr("reauthRequired")}`;
@@ -29,15 +23,13 @@ function renderDeveloperServers() {
         else if (server.status === "expired") access = ` · ${tr("accessExpired")}`;
         else if (server.status === "revoked") access = ` · ${tr("accessRevoked")}`;
         else if (server.status === "suspended") access = ` · ${tr("accessSuspended")}`;
+        else if (!grants.length) access = ` · ${tr("noAccess")}`;
         else if (activeGrants.some((grant) => grant.expires_at == null)) access = ` · ${tr("accessPermanent")}`;
         else if (activeGrants.length) {
             const latest = Math.max(...activeGrants.map((grant) => Number(grant.expires_at) || 0));
             access = ` · ${tr("accessUntil", {time: new Date(latest * 1000).toLocaleString()})}`;
         }
-        if (server.cached && server.synced_at) {
-            access += ` · ${tr("cachedCatalog")} · ${tr("cachedAt", {time: new Date(server.synced_at * 1000).toLocaleString()})}`;
-        }
-        detail.textContent = `${server.url}${count}${teamsText}${access}`;
+        detail.textContent = `${server.url}${count}${access}`;
         // 读不通时把原因挂在这一行上：状态标签只说得下「离线」还是「报错」，
         // 已知的服务器错误码翻成界面语言，未知的照原样给出。
         if (server.error) detail.title = errorText(server.error_code, server.error);
@@ -58,15 +50,6 @@ function renderDeveloperServers() {
         activate.className = "primary-button";
         activate.textContent = tr("activate");
         activate.addEventListener("click", () => activateDeveloperServer(server.server_id));
-        // 一个 Team 都没有时，邀请码与激活 Key 是仅有的两条进入路径。
-        if (server.needs_team) {
-            const invite = document.createElement("button");
-            invite.type = "button";
-            invite.className = "secondary-button";
-            invite.textContent = tr("acceptInvitation");
-            invite.addEventListener("click", () => acceptDeveloperServerInvitation(server.server_id));
-            actions.append(invite);
-        }
         const refresh = document.createElement("button");
         refresh.type = "button";
         refresh.className = "secondary-button developer-server-refresh";
@@ -346,35 +329,6 @@ async function activateDeveloperServer(serverId) {
         return;
     }
     toast(tr("activationComplete"));
-    await loadDeveloperServers();
-}
-
-async function acceptDeveloperServerInvitation(serverId) {
-    if (!state.settings.github_user_id) {
-        showMessage(tr("githubLoginRequired"));
-        return;
-    }
-    const body = document.createElement("div");
-    const tokenInput = document.createElement("input");
-    tokenInput.type = "text";
-    tokenInput.autocomplete = "off";
-    tokenInput.placeholder = tr("invitationCode");
-    body.append(tokenInput);
-    const confirmed = await showModal({
-        kicker: tr("privateAccessKicker"),
-        title: tr("enterInvitationCode"),
-        body,
-        confirmText: tr("acceptInvitation"),
-    });
-    const token = tokenInput.value.trim();
-    tokenInput.value = "";
-    if (!confirmed || !token) return;
-    const result = await callApi("accept_developer_server_invitation", serverId, token);
-    if (!result.ok) {
-        resultError(result);
-        return;
-    }
-    toast(tr("invitationAccepted"));
     await loadDeveloperServers();
 }
 

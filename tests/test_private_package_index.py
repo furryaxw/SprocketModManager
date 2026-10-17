@@ -1,51 +1,42 @@
-"""私有索引的验签契约：条目是公开 v3 条目加条目级 signature，任何一条不过就拒整份索引。"""
+"""私有索引文档的验签契约：`GET /packages.json` 是**文档级**签名，任何一处不过就拒整份。
+
+条目就是公开 v3 条目（签名只加在文档上），所以这一组只问文档这一层。
+"""
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from sprocket_mod_manager.infrastructure.private_servers import DeveloperServerClient
 from sprocket_mod_manager.utilities.signatures import (
     canonical_json,
-    public_key_fingerprint,
     public_key_from_identity,
     sign_detached,
     verify_detached,
 )
 
 KEY_ID = "test-key"
+SERVER_ID = "test-server"
 
 
 def make_key() -> Ed25519PrivateKey:
     return Ed25519PrivateKey.generate()
 
 
-def identity_for(key: Ed25519PrivateKey) -> dict:
-    raw = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    return {
-        "algorithm": "ed25519",
-        "encoding": "base64url",
-        "key_id": KEY_ID,
-        "public_key": base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
-        "fingerprint": public_key_fingerprint(key.public_key()),
-    }
-
-
 def entry() -> dict:
-    """一条 v3 条目：只强制四项，其余按需。"""
+    """一条 v3 条目：只强制四项，其余按需。`release` 与 `release.source` 由服务器自己写。"""
     return {
         "schema_version": 3,
         "id": "team1.example-mod",
         "name": "ExampleMod",
         "install": {"files": [{"match": "Example.dll", "type": "melonloader:mod"}]},
+        "release": {"source": {"type": "external", "hosts": ["mods.example.invalid"]}},
         "releases": [{"id": 1, "version": "1.0.0", "assets": []}],
     }
 
@@ -65,157 +56,136 @@ class _Response:
         return False
 
 
-def serve(index: dict):
-    """把 `/v1/packages` 的响应交给 client，其余端点一律视为测试写错。"""
+def document_with(*entries: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "generated_at": "2026-10-17T00:00:00Z",
+        "server": {"server_id": SERVER_ID, "name": "Test server"},
+        "packages": list(entries),
+    }
+
+
+def signed(document: dict, key: Ed25519PrivateKey, *, key_id: str = KEY_ID) -> dict:
+    return {**document, "signature": sign_detached(document, key, key_id=key_id)}
+
+
+def serve(document: dict):
+    """把 `/packages.json` 的响应交给 client，其余端点一律视为测试写错。"""
 
     def fake_urlopen(request, timeout=0):  # noqa: ARG001 - 契约如此
         url = getattr(request, "full_url", str(request))
-        if url.endswith("/v1/packages"):
-            return _Response(index)
+        if url.endswith("/packages.json"):
+            return _Response(document)
         raise AssertionError(f"unexpected request: {url}")
 
     return fake_urlopen
-
-
-def index_with(*entries: dict) -> dict:
-    return {
-        "schema_version": 1,
-        "generated_at": "2026-10-03T00:00:00Z",
-        "server": {"server_id": "test-server", "name": "Test server"},
-        "teams": [{"team_id": "team1", "name": "Team One", "packages": list(entries)}],
-    }
 
 
 def client_for(key: Ed25519PrivateKey) -> DeveloperServerClient:
     """信任已经建立好的 client：这一组用例只问验签，不问 server-info 的协商。"""
     client = DeveloperServerClient("http://127.0.0.1:8787")
     client._signing_identity = {"key": key.public_key(), "key_id": KEY_ID}
+    client._server_id = SERVER_ID
     client._info_loaded = True
     return client
 
 
-class PrivatePackageIndexTests(unittest.TestCase):
-    def test_a_signed_entry_comes_back_without_its_signature(self) -> None:
-        key = make_key()
-        raw = entry()
-        signed = {**raw, "signature": sign_detached(raw, key, key_id=KEY_ID)}
-        client = client_for(key)
+def fetch(document: dict, key: Ed25519PrivateKey) -> list[dict]:
+    with patch(
+        "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
+        serve(document),
+    ):
+        return client_for(key).packages()
 
-        with patch(
-            "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
-            serve(index_with(signed)),
-        ):
-            packages = client.packages()
+
+class PrivatePackageIndexTests(unittest.TestCase):
+    def test_a_signed_document_returns_its_packages(self) -> None:
+        key = make_key()
+
+        packages = fetch(signed(document_with(entry()), key), key)
 
         self.assertEqual(len(packages), 1)
         self.assertEqual(packages[0]["id"], "team1.example-mod")
         self.assertEqual(packages[0]["schema_version"], 3)
-        self.assertNotIn("signature", packages[0], "验签过了就不必把签名继续往下传")
+        self.assertNotIn("signature", packages[0], "条目本身没有签名")
 
-    def test_every_team_is_flattened_into_one_list(self) -> None:
+    def test_the_whole_list_comes_from_one_document(self) -> None:
         key = make_key()
-        first, second = entry(), {**entry(), "id": "team2.other-mod"}
-        index = {
-            "schema_version": 1,
-            "generated_at": "2026-10-03T00:00:00Z",
-            "server": {"server_id": "test-server", "name": "Test server"},
-            "teams": [
-                {
-                    "team_id": "team1",
-                    "name": "Team One",
-                    "packages": [{**first, "signature": sign_detached(first, key, key_id=KEY_ID)}],
-                },
-                {
-                    "team_id": "team2",
-                    "name": "Team Two",
-                    "packages": [{**second, "signature": sign_detached(second, key, key_id=KEY_ID)}],
-                },
-            ],
-        }
-        client = client_for(key)
+        second = {**entry(), "id": "team1.other-mod"}
 
-        with patch(
-            "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
-            serve(index),
-        ):
-            packages = client.packages()
+        packages = fetch(signed(document_with(entry(), second), key), key)
 
-        self.assertEqual([item["id"] for item in packages], ["team1.example-mod", "team2.other-mod"])
+        self.assertEqual(
+            [item["id"] for item in packages], ["team1.example-mod", "team1.other-mod"]
+        )
 
-    def test_an_unsigned_entry_rejects_the_whole_index(self) -> None:
+    def test_an_unsigned_document_rejects_the_index(self) -> None:
         key = make_key()
-        client = client_for(key)
 
-        with patch(
-            "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
-            serve(index_with(entry())),
-        ):
-            with self.assertRaisesRegex(ValueError, "not signed"):
-                client.packages()
+        with self.assertRaisesRegex(ValueError, "not signed"):
+            fetch(document_with(entry()), key)
 
-    def test_a_tampered_entry_rejects_the_whole_index(self) -> None:
+    def test_a_tampered_document_rejects_the_index(self) -> None:
         key = make_key()
-        raw = entry()
-        signed = {**raw, "signature": sign_detached(raw, key, key_id=KEY_ID)}
-        signed["name"] = "Tampered"  # 签名之后再改字段
-        client = client_for(key)
+        document = signed(document_with(entry()), key)
+        document["packages"][0]["name"] = "Tampered"  # 签名之后再改字段
 
-        with patch(
-            "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
-            serve(index_with(signed)),
-        ):
-            with self.assertRaisesRegex(ValueError, "signature verification failed"):
-                client.packages()
+        with self.assertRaisesRegex(ValueError, "signature verification failed"):
+            fetch(document, key)
 
-    def test_a_signature_from_another_key_rejects_the_whole_index(self) -> None:
+    def test_a_document_from_another_server_rejects_the_index(self) -> None:
+        key = make_key()
+        document = signed(document_with(entry()), key)
+        document["server"]["server_id"] = "someone-else"
+        document["signature"] = sign_detached(
+            {k: v for k, v in document.items() if k != "signature"}, key, key_id=KEY_ID
+        )
+
+        with self.assertRaisesRegex(ValueError, "not from this server"):
+            fetch(document, key)
+
+    def test_a_signature_from_another_key_rejects_the_index(self) -> None:
         trusted, other = make_key(), make_key()
-        raw = entry()
-        signed = {**raw, "signature": sign_detached(raw, other, key_id=KEY_ID)}
-        client = client_for(trusted)
 
-        with patch(
-            "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
-            serve(index_with(signed)),
-        ):
-            with self.assertRaises(ValueError):
-                client.packages()
+        with self.assertRaises(ValueError):
+            fetch(signed(document_with(entry()), other), trusted)
 
     def test_a_signature_naming_another_key_id_is_rejected(self) -> None:
         key = make_key()
-        raw = entry()
-        signed = {**raw, "signature": sign_detached(raw, key, key_id="someone-else")}
-        client = client_for(key)
 
-        with patch(
-            "sprocket_mod_manager.infrastructure.private_servers.developer_server_client.urlopen",
-            serve(index_with(signed)),
-        ):
-            with self.assertRaisesRegex(ValueError, "unexpected key"):
-                client.packages()
+        with self.assertRaisesRegex(ValueError, "unexpected key"):
+            fetch(signed(document_with(entry()), key, key_id="someone-else"), key)
+
+    def test_packages_must_be_a_list(self) -> None:
+        key = make_key()
+        document = signed({**document_with(), "packages": {"team1": []}}, key)
+
+        with self.assertRaisesRegex(ValueError, "index is invalid"):
+            fetch(document, key)
 
 
 class CrossImplementationTests(unittest.TestCase):
-    """锁定与服务端的字节级兼容：fixture 里这个签名是服务端实现签出来的。
+    """锁定 canonical JSON 的字节级规则。
 
-    两侧各有一份 `canonical_json`，只要序列化差一个字节，真机上全部私有条目都会验签失败 ——
-    这种失败在本地用自己签自己验是看不出来的，所以拿服务端的产物当回归基线。
+    两侧各有一份 `canonical_json`，只要序列化差一个字节，真机上全部私有包都会验签失败 ——
+    这种失败在本地用自己签自己验是看不出来的，所以留一份已知答案当回归基线。
     """
 
-    FIXTURE = Path(__file__).parent / "fixtures" / "private" / "cross-implementation-entry.json"
+    FIXTURE = Path(__file__).parent / "fixtures" / "private" / "cross-implementation-document.json"
 
     def payload(self) -> dict:
         return json.loads(self.FIXTURE.read_text(encoding="utf-8"))
 
-    def test_a_server_signed_entry_verifies_here(self) -> None:
+    def test_a_signed_document_verifies_here(self) -> None:
         payload = self.payload()
-        signed = payload["signed"]
-        manifest = {key: value for key, value in signed.items() if key != "signature"}
+        document = payload["signed"]
+        manifest = {key: value for key, value in document.items() if key != "signature"}
 
         verify_detached(
-            manifest, signed["signature"], public_key_from_identity(payload["identity"])
+            manifest, document["signature"], public_key_from_identity(payload["identity"])
         )
 
-    def test_canonical_json_matches_the_server_byte_for_byte(self) -> None:
+    def test_canonical_json_matches_the_known_answer(self) -> None:
         payload = self.payload()
         manifest = {
             key: value for key, value in payload["signed"].items() if key != "signature"

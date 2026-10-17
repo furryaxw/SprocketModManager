@@ -13,7 +13,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from cryptography.hazmat.primitives import serialization
 
-from .constants import MAX_ARCHIVE_BYTES, MAX_RESPONSE_BYTES, SUPPORTED_PROTOCOL_VERSION
+from .constants import (
+    MAX_ARCHIVE_BYTES,
+    MAX_DOCUMENT_BYTES,
+    MAX_RESPONSE_BYTES,
+    SUPPORTED_PROTOCOL_VERSION,
+)
 from .models import DeveloperServerInfo, normalize_server_url
 from ...utilities.signatures import (
     public_key_fingerprint,
@@ -27,12 +32,13 @@ from ...utilities.trust_negotiation import (
     negotiate_manual_transport,
     negotiate_trust_method,
 )
+from ...utilities.urls import is_loopback_host
 
 
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 # 协议里的包端点：条目里的 `download_url` 指的就是它，版本由客户端补。
-_DOWNLOAD_ENDPOINT_PATTERN = re.compile(r"^/v1/packages/[^/]+/download/?$")
+_DOWNLOAD_ENDPOINT_PATTERN = re.compile(r"^/packages/[^/]+/download/?$")
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -124,6 +130,7 @@ class DeveloperServerClient:
             payload: dict[str, Any] | None = None,
             *,
             idempotency_key: str = "",
+            max_bytes: int = MAX_RESPONSE_BYTES,
     ) -> dict[str, Any]:
         data = None
         headers = self._headers()
@@ -136,10 +143,10 @@ class DeveloperServerClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 length = response.headers.get("Content-Length")
-                if length and int(length) > MAX_RESPONSE_BYTES:
+                if length and int(length) > max_bytes:
                     raise ValueError("developer server response is too large")
-                body = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(body) > MAX_RESPONSE_BYTES:
+                body = response.read(max_bytes + 1)
+                if len(body) > max_bytes:
                     raise ValueError("developer server response is too large")
         except HTTPError as exc:
             error: Any = None
@@ -170,7 +177,7 @@ class DeveloperServerClient:
         return value
 
     def info(self) -> DeveloperServerInfo:
-        value = self._request("/v1/server-info")
+        value = self._request("/server-info")
         protocol = int(value.get("protocol_version", 0))
         if protocol != SUPPORTED_PROTOCOL_VERSION:
             raise ValueError(f"unsupported developer server protocol: {protocol}")
@@ -257,7 +264,7 @@ class DeveloperServerClient:
         )
 
     def exchange_github_token(self, access_token: str) -> dict[str, Any]:
-        value = self._request("/v1/auth/github/exchange", {"access_token": str(access_token).strip()})
+        value = self._request("/auth/github/exchange", {"access_token": str(access_token).strip()})
         token = str(value.get("token", "")).strip()
         if not token:
             raise ValueError("developer server did not return a session token")
@@ -266,31 +273,22 @@ class DeveloperServerClient:
     def revoke_session(self) -> None:
         if not self.session_token:
             return
-        self._request("/v1/auth/session/revoke", {})
+        self._request("/auth/session/revoke", {})
 
     def redeem(self, key: str, github_user_id: str, *, request_id: str = "") -> dict[str, Any]:
         idempotency_key = str(request_id).strip() or uuid.uuid4().hex
         return self._request(
-            "/v1/keys/redeem",
+            "/keys/redeem",
             {"key": key} if self.session_token else {"key": key, "github_user_id": github_user_id},
             idempotency_key=idempotency_key,
         )
 
-    def accept_invitation(self, token: str, *, request_id: str = "") -> dict[str, Any]:
-        """Join a Team with an invitation code; the code itself is the credential."""
-        idempotency_key = str(request_id).strip() or uuid.uuid4().hex
-        return self._request(
-            "/v1/invitations/accept",
-            {"token": str(token).strip()},
-            idempotency_key=idempotency_key,
-        )
-
     def packages(self) -> list[dict[str, Any]]:
-        """私有索引：我在此服务器上全部 Team 的包，逐条验签后摊平。
+        """索引文档：`GET /packages.json`，验**文档级**签名后取出 `packages` 那一列。
 
-        条目就是公开 v3 条目加条目级 `signature`；Team 只决定归属，不改变形状。验签是下载与
-        安装的信任前提，**任何一条不过就拒整份索引** —— 降级成「未验证但可用」等于把破坏签名
-        变成一种 downgrade 手段。`info()` 声明的公钥是唯一的信任锚。
+        签名对象是整份文档去掉 `signature` 成员之后的对象（canonical JSON），`key_id` 必须等于
+        `info()` 声明的当前钥，`server.server_id` 必须与身份一致。验签是下载与安装的信任前提，
+        **不过就拒整份索引** —— 降级成「未验证但可用」等于把破坏签名变成一种 downgrade 手段。
         """
         if not self._info_loaded:
             self.info()
@@ -299,33 +297,41 @@ class DeveloperServerClient:
         cached = self._cached_response("packages")
         if cached is not None:
             return cached
-        value = self._request("/v1/packages")
-        teams = value.get("teams")
-        if not isinstance(teams, list):
-            raise ValueError("developer server package index is invalid")
-        entries: list[dict[str, Any]] = []
-        for team in teams:
-            if not isinstance(team, dict) or not isinstance(team.get("packages"), list):
-                raise ValueError("developer server package index is invalid")
-            for entry in team["packages"]:
-                entries.append(self._verified_entry(entry))
-        return self._cache_response("packages", entries)
+        document = self._request("/packages.json", max_bytes=MAX_DOCUMENT_BYTES)
+        return self._cache_response("packages", self._verified_document(document))
 
-    def _verified_entry(self, entry: object) -> dict[str, Any]:
-        """一条私有条目验签通过后的形状：签名摘掉，其余原样交给 Registry。"""
-        if not isinstance(entry, dict):
-            raise ValueError("developer server package entry is invalid")
-        envelope = entry.get("signature")
+    def _verified_document(self, document: dict[str, Any]) -> list[dict[str, Any]]:
+        """一份验签通过的索引文档 → 它下发的条目（签名摘掉，其余原样交给 Registry）。"""
+        envelope = document.get("signature")
         if not isinstance(envelope, dict):
-            raise ValueError("developer server package entry is not signed")
+            raise ValueError("developer server package index is not signed")
         identity = self._signing_identity
         if identity is None:
             raise ValueError("developer server package signing is not configured")
         if envelope.get("key_id") != identity["key_id"]:
-            raise ValueError("developer server package entry is signed by an unexpected key")
-        manifest = {key: value for key, value in entry.items() if key != "signature"}
+            raise ValueError("developer server package index is signed by an unexpected key")
+        manifest = {key: value for key, value in document.items() if key != "signature"}
         verify_detached(manifest, envelope, identity["key"])
-        return manifest
+        server = manifest.get("server")
+        if not isinstance(server, dict) or str(server.get("server_id", "")) != self._server_id:
+            raise ValueError("developer server package index is not from this server")
+        packages = manifest.get("packages")
+        if not isinstance(packages, list):
+            raise ValueError("developer server package index is invalid")
+        entries: list[dict[str, Any]] = []
+        for entry in packages:
+            if not isinstance(entry, dict):
+                raise ValueError("developer server package entry is invalid")
+            entries.append(dict(entry))
+        return entries
+
+    def entitlements(self) -> dict[str, Any]:
+        """这台服务器给当前账号的授权读数：每条带 `status` 与 `expires_at`（`null` 是永久）。"""
+        value = self._request("/entitlements")
+        grants = value.get("grants")
+        if not isinstance(grants, list):
+            raise ValueError("developer server entitlements are invalid")
+        return {"grants": [dict(item) for item in grants if isinstance(item, dict)]}
 
     def download(
             self,
@@ -354,7 +360,7 @@ class DeveloperServerClient:
             raise ValueError("developer server session is required to download")
         target_url = self._with_version(
             str(url).strip() or (
-                f"{self.base_url}/v1/packages/{quote(identifier, safe='')}/download"
+                f"{self.base_url}/packages/{quote(identifier, safe='')}/download"
                 f"?version={quote(release, safe='')}"
             ),
             release,
@@ -447,15 +453,16 @@ class DeveloperServerClient:
             if "://" in candidate:
                 if candidate == origin:
                     return True
-            elif scheme == "https" and candidate == host:
-                return True
+            elif candidate == host:
+                if scheme == "https" or is_loopback_host(host):
+                    return True
         return False
 
     @staticmethod
     def _with_version(url: str, release: str) -> str:
         """包端点上缺 `version` 就补上；别的地址一个字都不改。
 
-        服务器下发的 `download_url` 写的是它自己的包端点（`/v1/packages/{id}/download`），
+        服务器下发的 `download_url` 写的是它自己的包端点（`/packages/{id}/download`），
         取哪一版由客户端按解析出来的那版说 —— 两侧的跨实现 fixture 都是这个形状。
         已经带 `version` 的地址（服务器点名了某一版）与别的路径（对象存储、CDN 的直链或
         签名地址）原样用：往签名查询串上加参数会把签名弄坏。
@@ -523,7 +530,7 @@ class DeveloperServerClient:
         cached = self._cached_response("key-status")
         if cached is not None:
             return cached
-        value = self._request("/v1/key-status")
+        value = self._request("/key-status")
         identity = {
             "algorithm": "ed25519",
             "encoding": "base64url",

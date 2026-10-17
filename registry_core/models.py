@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -7,6 +8,24 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .semver import Version, satisfies
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """回环地址：`localhost`，或 `127.0.0.0/8`、`::1` 这类。
+
+    本机开发服务器只在这里放开明文 http —— 外部来源的资产地址一律要 https，否则中间人
+    可以把下载降级成明文。
+    """
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _asset_scheme_allowed(scheme: str, hostname: str) -> bool:
+    return scheme == "https" or (scheme == "http" and _is_loopback_host(hostname))
 
 ProgressCallback = Callable[[str], None]
 
@@ -421,7 +440,8 @@ class ReleaseAsset:
         parsed = urlparse(download_url)
         if hosts:
             allowed = {host.casefold() for host in hosts}
-            if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in allowed:
+            host = (parsed.hostname or "").casefold()
+            if host not in allowed or not _asset_scheme_allowed(parsed.scheme, host):
                 raise ValueError(f"release asset host is not allowed: {download_url}")
         elif repository:
             expected_prefix = f"/{repository}/releases/download/".casefold()
@@ -469,10 +489,11 @@ class ReleaseInfo:
         page_url = str(data.get("page_url", ""))
         if page_url:
             parsed = urlparse(page_url)
+            host = (parsed.hostname or "").casefold()
             if hosts:
-                if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in {
-                    host.casefold() for host in hosts
-                }:
+                if host not in {item.casefold() for item in hosts} or not _asset_scheme_allowed(
+                    parsed.scheme, host
+                ):
                     raise ValueError(f"release page host is not allowed: {page_url}")
             elif repository:
                 expected_prefix = f"/{repository}/releases/tag/".casefold()

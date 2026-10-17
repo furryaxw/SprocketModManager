@@ -1,0 +1,85 @@
+{
+  "_comment": "文档级签名的已知答案基线：整份文档去掉 signature 之后按 canonical JSON 签。签名由客户端这份实现生成（服务端实现尚不存在），所以它只钉住 canonical 规则本身——换语言实现服务器时，两边对同一份文档必须算出同一个 canonical_sha256。",
+  "identity": {
+    "algorithm": "ed25519",
+    "encoding": "base64url",
+    "key_id": "cross-check-key",
+    "public_key": "kBXf_7cqIeMA2lbkwEcXYUNr7IK1-DY2t6LEMrHakas",
+    "fingerprint": "sha256:b2dc1b7ade4e62ded61bcfaf0fbcb5764959ca753ec9925bf0a96a1821664204"
+  },
+  "canonical_sha256": "d5d98a8cb1cc9f6e8f52ea82de23e77c93464fe6a4fee1a8794faeae921ea301",
+  "signed": {
+    "schema_version": 1,
+    "generated_at": "2026-10-17T00:00:00Z",
+    "server": {
+      "server_id": "test-server",
+      "name": "Test server"
+    },
+    "packages": [
+      {
+        "schema_version": 3,
+        "id": "team1.cross-check",
+        "name": "CrossCheck",
+        "display_name": {
+          "zh": "跨实现校验",
+          "en": "Cross check"
+        },
+        "description": {
+          "zh": "含中文与 emoji 🚀 的条目",
+          "en": "Entry with CJK and emoji"
+        },
+        "install": {
+          "files": [
+            {
+              "match": "Cross.dll",
+              "type": "melonloader:mod"
+            }
+          ]
+        },
+        "release": {
+          "source": {
+            "type": "external",
+            "hosts": [
+              "mods.example.invalid"
+            ]
+          }
+        },
+        "releases": [
+          {
+            "id": 1,
+            "version": "1.0.0",
+            "assets": [
+              {
+                "id": 11,
+                "name": "Cross.dll",
+                "size": 1024,
+                "download_url": "https://mods.example.invalid/packages/team1.cross-check/download",
+                "digest": "sha256:abababababababababababababababababababababababababababababababab"
+              }
+            ]
+          }
+        ],
+        "unicode_key_排序": "中文字段名",
+        "nested": {
+          "z": 1,
+          "a": [
+            1,
+            2.5,
+            null,
+            true
+          ],
+          "m": {
+            "deep": "值"
+          }
+        }
+      }
+    ],
+    "signature": {
+      "format": "detached-canonical-json",
+      "algorithm": "ed25519",
+      "encoding": "base64url",
+      "key_id": "cross-check-key",
+      "signature": "2736NZLLynpRg4oWzUrNFF5Qu1VQ11caWn5id_VgkwWLwzImJrajUddQ3ISIyB7hV-eFhSogfriSI2iazFocCQ"
+    }
+  }
+}
