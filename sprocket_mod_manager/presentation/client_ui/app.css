@@ -549,10 +549,15 @@ select option {
 }
 
 .result-count {
-    min-width: 48px;
+    height: 38px;
+    min-width: 38px;
     color: var(--muted);
-    font: 700 0.75rem/38px "Cascadia Mono", Consolas, monospace;
-    text-align: right;
+    font: 700 0.8rem "Cascadia Mono", Consolas, monospace;
+    display: inline-grid;
+    place-items: center;
+    background: #111516;
+    border: 1px solid var(--line);
+    border-radius: 4px;
 }
 
 /* 目录页页头：说明条（有隐藏时才出现）在工具条上方，合成网格的第一行。 */
