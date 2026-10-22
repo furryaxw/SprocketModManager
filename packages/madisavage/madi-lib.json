@@ -1,49 +1,40 @@
 {
-    "$schema": "../../schemas/sprocket-mod.schema.json",
-    "schema_version": 3,
-    "id": "madisavage.madi-lib",
-    "name": "MadiLib",
-    "authors": [
-        "madisavage"
+  "$schema": "../../schemas/sprocket-mod.schema.json",
+  "schema_version": 3,
+  "id": "madisavage.madi-lib",
+  "name": "MadiLib",
+  "authors": ["madisavage"],
+  "repository": "madisavage/sprocket-madi-util",
+  "license": "GPL-3.0-only",
+  "display_name": {
+    "en": "MadiLib",
+    "zh": "MadiLib"
+  },
+  "description": {
+    "en": "Shared library for madisavage's plugins: rebindable keybinds, a MadiLib tab in the Settings screen, and HUD panels.",
+    "zh": "供 madisavage 的插件共用的库：可重绑的快捷键、设置界面中的 MadiLib 标签页，以及 HUD 面板。"
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["MadiLib.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "featured": false,
+  "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "bepinex:plugin"
+      }
     ],
-    "repository": "madisavage/sprocket-madi-util",
-    "license": "GPL-3.0-only",
-    "display_name": {
-        "en": "MadiLib",
-        "zh": "MadiLib"
-    },
-    "description": {
-        "en": "Shared library for madisavage's plugins: rebindable keybinds, a MadiLib tab in the Settings screen, and HUD panels.",
-        "zh": "供 madisavage 的插件共用的库：可重绑的快捷键、设置界面中的 MadiLib 标签页，以及 HUD 面板。"
-    },
-    "release": {
-        "include_prerelease": false,
-        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-        "assets": {
-            "include": [
-                "MadiLib.dll"
-            ],
-            "exclude": []
-        }
-    },
-    "dependencies": [],
-    "recommendations": [],
-    "featured": false,
-    "install": {
-        "files": [
-            {
-                "match": "*.dll",
-                "type": "bepinex:plugin"
-            }
-        ],
-        "scan_dlls": false,
-        "exclude": []
-    },
-    "category": "library",
-    "tags": [
-        "api",
-        "keybindings",
-        "settings",
-        "hud"
-    ]
+    "scan_dlls": false,
+    "exclude": []
+  },
+  "category": "library",
+  "tags": ["api", "keybindings", "settings", "hud"]
 }
