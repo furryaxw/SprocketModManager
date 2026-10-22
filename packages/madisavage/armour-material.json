@@ -1,0 +1,53 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.armour-material",
+    "name": "armourMaterial",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Armour Material"
+    },
+    "description": {
+        "en": "Pick any armour material from the game's Technology folder for a plate structure in the vehicle designer, sorted by protection, hardness, spall, density, cost or date, with the selected material's numbers shown."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "armourMaterial.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [
+        "hans21223.sprocket-quality-of-life"
+    ],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "utility",
+    "tags": [
+        "armour",
+        "vehicle-designer"
+    ]
+}
