@@ -13,7 +13,7 @@
     },
     "description": {
         "en": "Loaders only draw from ready racks near the breech. While free, a living loader re-racks shells inward from stowage, timed by the game's loader rules and crew efficiency, with a HUD readout. Autoloader racks load the gun without a loader, at a per-rack speed, while the loader keeps them stocked.",
-        "zh": "装填手只从炮尾附近的待发弹架取弹。空闲时，存活的装填手会把弹药从储备架逐架向内倒运，耗时按游戏的装填规则与乘员效率计算，并在 HUD 上显示进度。"
+        "zh": "装填手只从炮尾附近的待发弹架取弹。空闲时，存活的装填手会把弹药从储备架逐架向内倒运，耗时按游戏的装填规则与乘员效率计算，并在 HUD 上显示进度。自动装弹架无需装填手即可为火炮装填，装填速度按每个弹架计算，而装填手负责保持这些弹架弹药充足。"
     },
     "release": {
         "include_prerelease": false,
