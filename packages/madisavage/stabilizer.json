@@ -1,43 +1,52 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "madisavage.stabilizer",
-  "name": "stabilizer",
-  "authors": ["madisavage"],
-  "repository": "madisavage/sprocket-madi-util",
-  "license": "GPL-3.0-only",
-  "display_name": {
-    "en": "Stabilizer"
-  },
-  "description": {
-    "en": "Naive gun stabilization: traverse motors and laying drives turn against the hull's rotation, so the gun holds its direction while the drive aims as usual. Tick Stabilizer on any traverse motor or laying drive; saved with the vehicle."
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["stabilizer.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "madisavage.madi-lib",
-      "version": "*"
-    }
-  ],
-  "recommendations": [],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:plugin"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.stabilizer",
+    "name": "stabilizer",
+    "authors": [
+        "madisavage"
     ],
-    "scan_dlls": false,
-    "exclude": []
-  },
-  "category": "gameplay",
-  "tags": ["turrets", "cannons", "gunnery"]
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Stabilizer"
+    },
+    "description": {
+        "en": "Naive gun stabilization: traverse motors and laying drives turn against the hull's rotation, so the gun holds its direction while the drive aims as usual. Tick Stabilizer on any traverse motor or laying drive; saved with the vehicle."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "stabilizer.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "turrets",
+        "cannons",
+        "gunnery"
+    ]
 }

@@ -1,43 +1,53 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "madisavage.composite",
-  "name": "composite",
-  "authors": ["madisavage"],
-  "repository": "madisavage/sprocket-madi-util",
-  "license": "GPL-3.0-only",
-  "display_name": {
-    "en": "Composite"
-  },
-  "description": {
-    "en": "Pseudo-composite armour: stack thin plates behind selected faces of a freeform compartment, with set layer count, thickness and gap, in add-ons that alternate so each can have its own material."
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["composite.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "madisavage.madi-lib",
-      "version": "*"
-    }
-  ],
-  "recommendations": ["madisavage.armour-material"],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:plugin"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.composite",
+    "name": "composite",
+    "authors": [
+        "madisavage"
     ],
-    "scan_dlls": false,
-    "exclude": []
-  },
-  "category": "utility",
-  "tags": ["armour", "vehicle-designer"]
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Composite"
+    },
+    "description": {
+        "en": "Pseudo-composite armour: stack thin plates behind selected faces of a freeform compartment, with set layer count, thickness and gap, in add-ons that alternate so each can have its own material."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "composite.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [
+        "madisavage.armour-material"
+    ],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "utility",
+    "tags": [
+        "armour",
+        "vehicle-designer"
+    ]
 }

@@ -1,43 +1,52 @@
 {
-  "$schema": "../../schemas/sprocket-mod.schema.json",
-  "schema_version": 3,
-  "id": "madisavage.subcaliber",
-  "name": "subcaliber",
-  "authors": ["madisavage"],
-  "repository": "madisavage/sprocket-madi-util",
-  "license": "GPL-3.0-only",
-  "display_name": {
-    "en": "Subcaliber"
-  },
-  "description": {
-    "en": "Discarding sabot rounds: set a projectile diameter below the gun's caliber. The full-bore charge pushes the lighter projectile faster, and it flies and penetrates at its own diameter. Penetration blends from the game's formula into the Lanz-Odermatt long-rod equation as the penetrator gets longer, and the charge's own mass slows light rounds."
-  },
-  "release": {
-    "include_prerelease": false,
-    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
-    "assets": {
-      "include": ["subcaliber.dll"],
-      "exclude": []
-    }
-  },
-  "dependencies": [
-    {
-      "id": "madisavage.madi-lib",
-      "version": "*"
-    }
-  ],
-  "recommendations": [],
-  "featured": false,
-  "install": {
-    "files": [
-      {
-        "match": "*.dll",
-        "type": "bepinex:plugin"
-      }
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.subcaliber",
+    "name": "subcaliber",
+    "authors": [
+        "madisavage"
     ],
-    "scan_dlls": false,
-    "exclude": []
-  },
-  "category": "gameplay",
-  "tags": ["ammunition", "ballistics", "cannons"]
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Subcaliber"
+    },
+    "description": {
+        "en": "Discarding sabot rounds: set a projectile diameter below the gun's caliber. The full-bore charge pushes the lighter projectile faster, and it flies and penetrates at its own diameter. Penetration blends from the game's formula into the Lanz-Odermatt long-rod equation as the penetrator gets longer, and the charge's own mass slows light rounds."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "subcaliber.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "ammunition",
+        "ballistics",
+        "cannons"
+    ]
 }
