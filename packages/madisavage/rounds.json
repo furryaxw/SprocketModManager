@@ -1,0 +1,51 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.rounds",
+    "name": "rounds",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Rounds"
+    },
+    "description": {
+        "en": "Named rounds per cannon, saved with the vehicle. Each ammo rack holds one of them, the player picks the next round to load with a keybind, and a HUD ammo bar shows each round's icon and shells left, what's loaded and what's next. Other mods add the round types, such as subcaliber's sabot rounds."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "rounds.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "ammunition",
+        "ammo-racks",
+        "cannons"
+    ]
+}
