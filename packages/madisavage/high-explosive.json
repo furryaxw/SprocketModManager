@@ -1,0 +1,57 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.high-explosive",
+    "name": "highExplosive",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "High Explosive"
+    },
+    "description": {
+        "en": "Adds an HE round type to Rounds: a full-bore shell of any mass whose penetration depends on shell mass alone and whose hits spall catastrophically, in heavier fragments. Optionally carries the game's own explosive. Also adds a HEAT round type, whose jet penetrates a set number of calibers at any range, and an APHE round type that bursts into spall forward and back a set fuze delay past the first plate, more filler making more, lighter, faster fragments."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "highExplosive.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": "*",
+            "when": "*"
+        },
+        {
+            "id": "madisavage.rounds",
+            "version": "*",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "ammunition",
+        "cannons",
+        "explosives"
+    ]
+}
