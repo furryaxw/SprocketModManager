@@ -27,7 +27,8 @@
     "dependencies": [
         {
             "id": "madisavage.madi-lib",
-            "version": "*"
+            "version": "*",
+            "when": "*"
         }
     ],
     "recommendations": [],
