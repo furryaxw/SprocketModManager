@@ -1,0 +1,57 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.rocket-propelled",
+    "name": "rocketPropelled",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Rocket Propelled"
+    },
+    "description": {
+        "en": "Rocket motors for any round: set the motor's length and burn time. The gun's charge pushes warhead and motor together, so the round leaves slower, then speeds up under its motor, and hits as its own round type (AP, HE, HEAT, sabot...)."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "rocketPropelled.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": ">=26.11.11",
+            "when": "*"
+        },
+        {
+            "id": "madisavage.rounds",
+            "version": ">=26.11.11",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "ammunition",
+        "ballistics",
+        "cannons"
+    ]
+}

@@ -1,0 +1,62 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.guided-munitions",
+    "name": "guidedMunitions",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Guided Munitions"
+    },
+    "description": {
+        "en": "SACLOS guidance for rocket rounds (rocketPropelled): fired from your vehicle, the round steers onto your sight line, so it hits what you keep the crosshair on, until its wire runs out."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "guidedMunitions.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": ">=26.11.11",
+            "when": "*"
+        },
+        {
+            "id": "madisavage.rounds",
+            "version": ">=26.11.11",
+            "when": "*"
+        },
+        {
+            "id": "madisavage.rocket-propelled",
+            "version": ">=26.11.11",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "ammunition",
+        "ballistics",
+        "cannons"
+    ]
+}
