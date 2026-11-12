@@ -1,0 +1,52 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.hydropneumatic",
+    "name": "hydropneumatic",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Hydropneumatic suspension"
+    },
+    "description": {
+        "en": "Adjustable suspension: hold keys to change your vehicle's ride height, pitch and roll while driving, like a Strv 103. Hull aiming: a fixed gun is aimed at your crosshair by turning and pitching the hull. Tick Adjustable suspension in the tracks' edit panel and Hull aiming in the cannon's; saved with the vehicle."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "hydropneumatic.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": ">=26.11.11",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "suspension",
+        "tracks",
+        "gunnery"
+    ]
+}

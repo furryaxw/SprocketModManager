@@ -1,0 +1,57 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.shell-cam",
+    "name": "shellCam",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Shell cam"
+    },
+    "description": {
+        "en": "Replay your last hits: press a key to watch your shell's path through the armour and every spall fragment grow outward, slowed down and drawn through the armour. Needs rounds."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "shellCam.dll"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [
+        {
+            "id": "madisavage.madi-lib",
+            "version": ">=26.11.11",
+            "when": "*"
+        },
+        {
+            "id": "madisavage.rounds",
+            "version": ">=26.11.11",
+            "when": "*"
+        }
+    ],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "*.dll",
+                "type": "bepinex:plugin"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "penetration",
+        "spall",
+        "replay"
+    ]
+}

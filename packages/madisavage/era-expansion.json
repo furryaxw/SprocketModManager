@@ -1,0 +1,50 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "madisavage.era-expansion",
+    "name": "eraExpansion",
+    "authors": [
+        "madisavage"
+    ],
+    "repository": "madisavage/sprocket-madi-util",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Era Expansion"
+    },
+    "description": {
+        "en": "WILL OVERWRITE CUSTOM ERAS AND TECHNOLOGY. War to modern eras and technology dated by year: Postwar, Early/Mid/Late Cold War, Post-Cold War, Modern and Future eras; gun pressure, engine, drivetrain and traverse tiers pretty well set; and post-war armour materials (ceramics, composites, DU, tungsten). Pairs with madiUtil's year picker. Replaces some of the game's own Eras and Technology files."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "EraExpansion.zip"
+            ],
+            "exclude": []
+        }
+    },
+    "dependencies": [],
+    "recommendations": [
+        "madisavage.madi-util",
+        "madisavage.armour-material"
+    ],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "Sprocket_Data/StreamingAssets/**",
+                "type": "sprocket:streamingassets",
+                "layout": "tree"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "eras",
+        "technology",
+        "armour"
+    ]
+}
