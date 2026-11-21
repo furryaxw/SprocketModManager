@@ -1,0 +1,58 @@
+{
+    "$schema": "../../schemas/sprocket-mod.schema.json",
+    "schema_version": 3,
+    "id": "roanwassink.sprocket-cold-war-pack",
+    "name": "SprocketColdWarPack",
+    "authors": [
+        "RoanWassink"
+    ],
+    "repository": "RoanWassink/SprocketColdWarPack",
+    "license": "GPL-3.0-only",
+    "display_name": {
+        "en": "Sprocket Cold War Pack"
+    },
+    "description": {
+        "en": "Cold War-era expansion pack for Sprocket: Expanded Ballistics (APFSDS, HEAT, ERA, ATGMs, combat report), Plate Destruction, Floppy Parts (cloth/rubber/hinged plates), Thermal Sight, 33 Gun Sights, Carousel Autoloader, Hydropneumatic suspension, Oscillating Turret, Stabilization, Engine Expansion, Smoke Launchers, Telescopic Mast & I/O editor, Emitter, Cupolas, Visual Effects, AI Orders, Cold War eras, Keybinds, UI Kit, and JSON Editor."
+    },
+    "release": {
+        "include_prerelease": false,
+        "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+        "assets": {
+            "include": [
+                "SprocketColdWarPack-v*.zip"
+            ],
+            "exclude": [
+                "*-source.zip",
+                "*symbols*"
+            ]
+        }
+    },
+    "dependencies": [],
+    "recommendations": [],
+    "featured": false,
+    "install": {
+        "files": [
+            {
+                "match": "BepInEx/plugins/**",
+                "type": "bepinex:plugin",
+                "layout": "tree"
+            },
+            {
+                "match": "Sprocket_Data/StreamingAssets/**",
+                "type": "sprocket:streamingassets",
+                "layout": "tree"
+            }
+        ],
+        "scan_dlls": false,
+        "exclude": []
+    },
+    "category": "gameplay",
+    "tags": [
+        "cold-war",
+        "ballistics",
+        "era",
+        "thermals",
+        "autoloader",
+        "bepinex"
+    ]
+}
